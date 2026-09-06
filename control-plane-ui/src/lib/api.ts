@@ -36,6 +36,12 @@ export interface AgentFilesResult {
   files: Record<string, string>;
 }
 
+export interface SecretItem {
+  name: string;
+  description: string | null;
+  has_value: boolean;
+}
+
 export interface Task {
   id: string;
   workflow: string;

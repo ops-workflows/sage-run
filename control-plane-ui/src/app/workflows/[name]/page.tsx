@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { type Agent, type AgentFilesResult, apiFetch } from '@/lib/api';
+import {
+  type Agent,
+  type AgentFilesResult,
+  apiFetch,
+  type SecretItem,
+} from '@/lib/api';
 import {
   getAgentModelBadgeClasses,
   getAgentModelInfo,
@@ -11,12 +16,6 @@ import { PluginPreview } from '@/components/plugin-preview';
 import { useParams } from 'next/navigation';
 
 type Tab = 'preview' | 'config' | 'secrets' | 'schedules';
-
-interface SecretItem {
-  name: string;
-  description: string | null;
-  has_value: boolean;
-}
 
 export default function AgentDetailPage() {
   const params = useParams();
