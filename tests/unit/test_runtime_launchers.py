@@ -104,6 +104,7 @@ def test_docker_launcher_uses_gha_sandbox_mode(monkeypatch):
 def test_docker_launcher_uses_gvisor_compatibility_runtime_without_native_relaxations(monkeypatch):
     monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "linux")
     monkeypatch.setenv("SANDBOX_MODE", "gvisor")
+    monkeypatch.setenv("DOCKER_NETWORK", "ai-ops-network")
     client = MagicMock()
     client.containers.get.side_effect = docker.errors.NotFound("missing")
     peer = MagicMock()
