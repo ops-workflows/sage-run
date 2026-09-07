@@ -4,7 +4,7 @@ import { TopNav } from '@/components/top-nav';
 import { ThemeProvider } from '@/components/theme-provider';
 
 export const metadata: Metadata = {
-  title: 'Agentic Ops — Control Plane',
+  title: 'SAGE Run — Control Plane',
   description: 'Agent management, task queue, session replay, and analytics',
 };
 

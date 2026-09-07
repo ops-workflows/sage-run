@@ -1,8 +1,11 @@
-# Agentic Ops Platform
+# SAGE Run
 
-Agentic Ops is a workflow runtime and control plane for operational AI
-agents: it queues incoming work, launches an isolated Claude Code agent per
-task with the tools and memory that workflow needs, brokers human
+**The governed agent platform for enterprise IT operations.**
+
+SAGE Run (Secure Agent Governance & Execution) is a workflow runtime and
+control plane for AI agents that perform asynchronous IT operations work: it
+queues incoming work, launches an isolated Claude Code agent per task with the
+tools and memory that workflow needs, brokers human
 approvals/clarifications, and gives you a web UI over all of it. Workflow
 implementations (prompts, skills, connector instances, integration policy)
 live in your own workflow repository; this repo is the platform they run on.
