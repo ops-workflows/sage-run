@@ -2,7 +2,7 @@
 
 **The governed agent platform for enterprise IT operations.**
 
-SAGE Run (Secure Agent Governance & Execution) is a workflow runtime and
+SAGE Run (**S**ecure **A**gent **G**overnance & **E**xecution) is a workflow runtime and
 control plane for AI agents that perform asynchronous IT operations work: it
 queues incoming work, launches an isolated Claude Code agent per task with the
 tools and memory that workflow needs, brokers human

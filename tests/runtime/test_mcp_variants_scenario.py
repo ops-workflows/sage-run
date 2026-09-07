@@ -6,7 +6,7 @@ Covers:
 - MCP tool returning a server error (500) is surfaced as is_error=true
 - MCP tool returning a very large result is offloaded to MinIO
 
-Requires Docker + ``ai-ops-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
+Requires Docker + ``sage-run-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
 """
 
 from __future__ import annotations

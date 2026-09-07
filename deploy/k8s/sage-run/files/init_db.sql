@@ -1,4 +1,4 @@
--- Agentic Ops — Database Initialization
+-- SAGE Run — Database Initialization
 -- Creates schemas and tables for task queue, control plane, and hindsight
 
 -- ─── Schemas ─────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@ Markers used here are defined in
 ``tests/fixtures/repo-root/CLAUDE.md`` and the platform-test
 plugin fixture under ``tests/fixtures/repo-root/workflows/platform-test/``.
 
-Requires Docker + ``ai-ops-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
+Requires Docker + ``sage-run-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
 """
 
 from __future__ import annotations

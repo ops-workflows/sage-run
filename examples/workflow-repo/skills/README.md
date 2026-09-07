@@ -2,7 +2,7 @@
 
 This directory is the workflow repo's own shared-skills layer — the
 repo-wide equivalent of the platform's own `skills/` at
-[agentic-ops-platform/skills/](../../../skills/). Skills placed here are
+[sage-run/skills/](../../../skills/). Skills placed here are
 injected into every workflow's bundle alongside the platform's shared skills,
 the same way shared `hooks/` are.
 
@@ -11,7 +11,7 @@ the same way shared `hooks/` are.
 Skill assembly follows the same shadow rule as the rest of a bundle (see
 [Bundle assembly](../../../docs/workflow-authoring.md#bundle-assembly)):
 
-1. **Platform core** — `agentic-ops-platform/skills/*`.
+1. **Platform core** — `sage-run/skills/*`.
 2. **This repo's shared skills** — `skills/*` here.
 3. **Workflow-local skills** — `workflows/<name>/skills/*`.
 

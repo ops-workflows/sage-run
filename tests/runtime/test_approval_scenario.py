@@ -7,7 +7,7 @@ Validates that:
 - ``reject`` prevents execution and the session still completes.
 
 Requires:
-- Docker daemon + built ``ai-ops-agent-runtime:latest``
+- Docker daemon + built ``sage-run-agent-runtime:latest``
 - ``TEST_RUNTIME_ENABLED=1`` and ``TEST_DATABASE_URL``
 """
 
@@ -69,7 +69,7 @@ async def _click_slack_approval_action(fake_mattermost, *, decision: str, task_i
     def _wait_for_action():
         for_post = fake_mattermost.wait_for_post(
             lambda candidate: any(
-                action.get("action_id") == "agentic_ops_approval"
+                action.get("action_id") == "sage_run_approval"
                 and json.loads(str(action.get("value") or "{}")).get("task_id") == task_id
                 and json.loads(str(action.get("value") or "{}")).get("decision") == decision
                 for block in (candidate.props or {}).get("blocks", [])
@@ -85,7 +85,7 @@ async def _click_slack_approval_action(fake_mattermost, *, decision: str, task_i
                 if not isinstance(action, dict):
                     continue
                 context = json.loads(str(action.get("value") or "{}"))
-                if action.get("action_id") == "agentic_ops_approval" and context.get("decision") == decision:
+                if action.get("action_id") == "sage_run_approval" and context.get("decision") == decision:
                     return for_post, context
         return None
 
@@ -101,7 +101,7 @@ async def _click_slack_approval_action(fake_mattermost, *, decision: str, task_i
         await ingress.handle_event(
             InteractiveAction(
                 provider="slack",
-                action_id="agentic_ops_approval",
+                action_id="sage_run_approval",
                 context=context,
                 post_id=post.id,
                 channel_id=post.channel_id,

@@ -103,7 +103,7 @@ def test_publish_object_store_release_advances_pointer_after_manifest(monkeypatc
     )
 
     sync_mod._publish_object_store_release(
-        bucket="agentic-ops-bundles",
+        bucket="sage-run-bundles",
         release_id="commit-123",
         platform_config=config,
         bundles={"platform-test": {"key": "releases/commit-123/bundles/platform-test.tar.gz", "checksum": "sha256:x"}},

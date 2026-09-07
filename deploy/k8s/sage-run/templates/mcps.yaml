@@ -3,7 +3,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "agentic-ops.fullname" $ }}-mcp-{{ $name }}
+  name: {{ include "sage-run.fullname" $ }}-mcp-{{ $name }}
   labels:
     app.kubernetes.io/component: mcp
     app.kubernetes.io/name: {{ $name }}
@@ -19,7 +19,7 @@ spec:
         app.kubernetes.io/component: mcp
         app.kubernetes.io/name: {{ $name }}
     spec:
-      {{- include "agentic-ops.imagePullSecrets" $ | nindent 6 }}
+      {{- include "sage-run.imagePullSecrets" $ | nindent 6 }}
       containers:
         - name: mcp-{{ $name }}
           image: {{ $.Values.images.mcp.repository }}:{{ $.Values.images.mcp.tag }}
@@ -29,7 +29,7 @@ spec:
             - name: http
               containerPort: {{ $mcp.port }}
           env:
-            {{- include "agentic-ops.commonEnv" $ | nindent 12 }}
+            {{- include "sage-run.commonEnv" $ | nindent 12 }}
             {{- if eq $name "knowledge" }}
             - name: KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET
               value: {{ required "knowledgeSources.objectStoreBucket is required" $.Values.knowledgeSources.objectStoreBucket | quote }}
@@ -42,21 +42,21 @@ spec:
             {{- end }}
           {{- if $.Values.bootstrap.existingSecret }}
           envFrom:
-            {{- include "agentic-ops.bootstrapEnvFrom" $ | nindent 12 }}
+            {{- include "sage-run.bootstrapEnvFrom" $ | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- include "agentic-ops.commonVolumeMounts" $ | nindent 12 }}
+            {{- include "sage-run.commonVolumeMounts" $ | nindent 12 }}
             {{- if eq $name "knowledge" }}
             - name: knowledge-serving-cache
               mountPath: {{ $.Values.knowledgeMcp.cacheRoot }}
             {{- end }}
       volumes:
-        {{- include "agentic-ops.commonVolumes" $ | nindent 8 }}
+        {{- include "sage-run.commonVolumes" $ | nindent 8 }}
         {{- if eq $name "knowledge" }}
         - name: knowledge-serving-cache
           {{- if $.Values.knowledgeMcp.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ default (printf "%s-knowledge-cache" (include "agentic-ops.fullname" $)) $.Values.knowledgeMcp.persistence.existingClaim }}
+            claimName: {{ default (printf "%s-knowledge-cache" (include "sage-run.fullname" $)) $.Values.knowledgeMcp.persistence.existingClaim }}
           {{- else }}
           emptyDir: {}
           {{- end }}
@@ -65,7 +65,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agentic-ops.fullname" $ }}-mcp-{{ $name }}
+  name: {{ include "sage-run.fullname" $ }}-mcp-{{ $name }}
 spec:
   selector:
     app.kubernetes.io/component: mcp

@@ -1,7 +1,7 @@
 # Deployment (Example)
 
 This directory shows how to run the public platform's base stack against a
-workflow repo checked out as a sibling directory of `agentic-ops-platform`.
+workflow repo checked out as a sibling directory of `sage-run`.
 This is one of two supported deployment modes — see
 [docs/deployment.md](../../../docs/deployment.md) for the other (`make
 bootstrap` targeting a remote/pinned workflow repo).
@@ -14,12 +14,12 @@ ships — via env vars and `COMPOSE_PROFILES`. **No compose override is needed**
 unless you're adding a *custom* MCP server or connector (see
 [docker-compose.override.yml](docker-compose.override.yml) for that case).
 
-Run `make bootstrap` in `agentic-ops-platform/` first (see its
+Run `make bootstrap` in `sage-run/` first (see its
 `docs/deployment.md`) to generate `compose.env` with the operator bootstrap
 layer (`AGE_IDENTITY`, `LLM_API_KEY`, workflow-repo pointer, pointed
 at your repo's local path). Copy [compose.env.example](compose.env.example) to
 your workflow repo as `deploy/compose.env` and set its non-secret values. Then
-from `agentic-ops-platform/`, run:
+from `sage-run/`, run:
 
 ```sh
 make up
@@ -44,7 +44,6 @@ COMPOSE_PROFILES=custom-example make up
 Set these when the repos are not sibling directories:
 
 ```sh
-export AGENTIC_OPS_PLATFORM_ROOT=/path/to/agentic-ops-platform
 export WORKFLOW_REPO_ROOT=/path/to/my-workflow-repo
 ```
 
@@ -54,7 +53,7 @@ Use the public chart with your own values file:
 
 ```sh
 helm upgrade --install my-workflow-repo \
-  ../agentic-ops-platform/deploy/k8s/agentic-ops \
+  ../sage-run/deploy/k8s/sage-run \
   -f deploy/k8s-values.yaml \
   --namespace my-workflow-namespace --create-namespace
 ```

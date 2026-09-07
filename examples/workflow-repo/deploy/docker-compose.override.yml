@@ -1,7 +1,7 @@
 # Example workflow-repo deployment override
 #
-# Usage from your workflow repo (as a sibling checkout of agentic-ops-platform):
-#   docker compose -f ../agentic-ops-platform/deploy/docker-compose.yml -f deploy/docker-compose.override.yml up --build
+# Usage from your workflow repo (as a sibling checkout of sage-run):
+#   docker compose -f ../sage-run/deploy/docker-compose.yml -f deploy/docker-compose.override.yml up --build
 #
 # An override is only needed to add a *custom* MCP server or connector your
 # workflow repo defines itself (see mcps/custom-mcp-example/ and
@@ -11,9 +11,9 @@
 # base `deploy/docker-compose.yml` via `COMPOSE_PROFILES` and plain env vars,
 # with no override required. See deploy/README.md in this example.
 #
-# Defaults assume your repo and agentic-ops-platform are sibling directories.
-# Set AGENTIC_OPS_PLATFORM_ROOT and WORKFLOW_REPO_ROOT to absolute paths
-# when they are not.
+# Defaults assume your repo and sage-run are sibling directories.
+# Set WORKFLOW_REPO_ROOT to an absolute path when the workflow repository is
+# not in the default sibling location.
 
 services:
   # Example: building your own custom MCP server from mcps/custom-mcp-example/
@@ -32,7 +32,7 @@ services:
     ports:
       - "8110:8110"
     networks:
-      - ai-ops-network
+      - sage-run-network
 
   # Example: running your own custom connector from
   # connectors/custom-connector-example/ in this example repo.
@@ -48,5 +48,5 @@ services:
     volumes:
       - ${WORKFLOW_REPO_ROOT:-../../my-workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     networks:
-      - ai-ops-network
+      - sage-run-network
 

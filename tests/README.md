@@ -88,8 +88,8 @@ The Makefile at the repo root wraps the common commands:
 | `make service-tests`   | Layer 1 — real Postgres |
 | `make runtime-tests`   | Layer 2 — full runtime scenario suite |
 | `make tests`           | All three suites |
-| `make ensure-test-db`  | Create the dedicated `agentic_ops_test` DB on port `55432` |
-| `make runtime-build`   | Build `ai-ops-agent-runtime:latest` |
+| `make ensure-test-db`  | Create the dedicated `sage_run_test` DB on port `55432` |
+| `make runtime-build`   | Build `sage-run-agent-runtime:latest` |
 | `make clean-test-containers` | Remove dangling test session containers |
 
 ### Layer 0 (no infra required)
@@ -108,7 +108,7 @@ via `make ensure-test-db`; manually:
 > ⚠️ **The suite DROPs the `control_plane` and `task_queue` schemas at the
 > start of each session.** It refuses to run unless the database name
 > looks like a test DB (suffix `_test` or prefix `test_`) or you set
-> `TEST_ALLOW_DB_WIPE=1`. Do **not** point this at your dev `agentic_ops`
+> `TEST_ALLOW_DB_WIPE=1`. Do **not** point this at your dev `sage_run`
 > database.
 
 ```
@@ -119,7 +119,7 @@ make service-tests
 ### Layer 2 (runtime scenario — requires Docker + runtime image)
 
 Requires `TEST_RUNTIME_ENABLED=1`, Postgres via `TEST_DATABASE_URL`, a
-running Docker daemon, and `ai-ops-agent-runtime:latest`.
+running Docker daemon, and `sage-run-agent-runtime:latest`.
 
 ```
 # macOS + Rancher Desktop (the docker socket is not at /var/run):
@@ -136,13 +136,13 @@ Runtime tests already use:
 
 - in-process FastAPI fakes on free ports for LLM / Message / Hindsight / MCP
   (no shared network with developer services)
-- a dedicated test DB (`agentic_ops_test`) with a name-suffix safety guard
+- a dedicated test DB (`sage_run_test`) with a name-suffix safety guard
 - per-test TRUNCATE for table isolation
 - per-spawn dynamic platform-config.yaml so model/MCP routing points at
   the test ports
 - a local object-store harness for project-memory backup/restore tests
 
-Set `COMPOSE_PROJECT_NAME=aiops-test` (the Make default) to ensure any
+Set `COMPOSE_PROJECT_NAME=sage-run-test` (the Make default) to ensure any
 compose state created by the run is namespaced apart from the
 developer's normal `docker compose` services.
 

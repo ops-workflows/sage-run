@@ -11,7 +11,7 @@ Covers:
 Several of these reuse Gateway-API task creation to assert that intake
 flows truly drive the runtime end to end.
 
-Requires Docker + ``ai-ops-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
+Requires Docker + ``sage-run-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
 """
 
 from __future__ import annotations

@@ -69,10 +69,10 @@ admission after login.
 
 ## Kubernetes deployment
 
-Bootstrap creates the operator-owned `agentic-ops-bootstrap` Secret and an
-`agentic-ops-platform-config` Secret from the initial checkout. It does not
+Bootstrap creates the operator-owned `sage-run-bootstrap` Secret and an
+`sage-run-config` Secret from the initial checkout. It does not
 create container images, object-store buckets, or the Helm release. Configure
-the chart with `platformConfig.existingSecret=agentic-ops-platform-config`.
+the chart with `platformConfig.existingSecret=sage-run-config`.
 
 Use the following command after creating/pushing the image tags referenced by
 your workflow repo's `deploy/k8s-values.yaml` and provisioning the configured
@@ -80,11 +80,11 @@ object-store bucket for workflow releases and agent memory:
 
 ```sh
 make k8s-deploy \
-   K8S_RELEASE=agentic-ops \
-   K8S_NAMESPACE=agentic-ops \
+   K8S_RELEASE=sage-run \
+   K8S_NAMESPACE=sage-run \
    K8S_VALUES_FILE=/path/to/workflow-repo/deploy/k8s-values.yaml \
    K8S_PLATFORM_CONFIG_FILE=/path/to/workflow-repo/platform-config.yaml \
-   K8S_PLATFORM_CONFIG_SECRET=agentic-ops-platform-config
+   K8S_PLATFORM_CONFIG_SECRET=sage-run-config
 ```
 
 `k8s-deploy` applies the generated bootstrap Secret, upserts the
@@ -135,6 +135,11 @@ or `connectors.enabled` still require an operator deployment action: run
 deployment control plane. The Workflow Repo UI should surface this requirement
 when those settings change.
 
+Legacy Compose database, volume, bucket, runtime-path, and Hindsight storage
+identifiers must be changed through the verified backup and cutover procedure in
+[SAGE Run Stateful Identifier Migration](sage-run-stateful-identifier-migration.md),
+not by direct replacement in a running deployment.
+
 Kubernetes (Helm) does **not** have an equivalent automatic derivation today:
 
 - The Helm chart's `mcps.<id>.enabled` / `connectors.<id>.enabled` booleans in
@@ -182,7 +187,7 @@ it after the public base stack.
 | `set-platform-secret` | Interactively encrypt a secret in the configured `platform-config.yaml`, then sync. |
 | `set-workflow-secret WORKFLOW=<name>` | Interactively encrypt a secret in the selected workflow's `agent.yaml`, then sync. |
 | `compose-build` | Build all Compose services. |
-| `runtime-build` | Build the `ai-ops-agent-runtime` image. |
+| `runtime-build` | Build the `sage-run-agent-runtime` image. |
 | `build` | `runtime-build` + `compose-build`. |
 | `up` / `down` | Start/stop the local Compose stack. |
 | `k8s-deploy` | Apply the bootstrap/config Secrets and install the Helm release. |
@@ -207,7 +212,7 @@ it after the public base stack.
   and `RUNTIME_BUNDLE_ROOT`. Optional profiles: `model-gateway`, `local-llm`,
    `salesforce`, `splunk`, `cloudwatch`, `github`, `jira`, `servicenow`,
    `gcp-pubsub`.
-- `deploy/k8s/agentic-ops` — Kubernetes (Helm) chart; instance values select the
+- `deploy/k8s/sage-run` — Kubernetes (Helm) chart; instance values select the
    platform-config secret/configmap, ephemeral workflow clone/release caches,
    object-store release bucket, bootstrap Secret, and which MCPs/connectors
    run. Postgres, S3-compatible storage, and Hindsight are external by default;

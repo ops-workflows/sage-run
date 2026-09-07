@@ -13,7 +13,7 @@ not configured (``TEST_MINIO_ENDPOINT`` unset), since the platform's
 restore path is tar-based and depends on a live MinIO. Helper-level
 coverage in ``tests/unit/test_memory_sync.py`` keeps that path honest.
 
-Requires Docker + ``ai-ops-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
+Requires Docker + ``sage-run-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
 """
 
 from __future__ import annotations

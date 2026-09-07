@@ -3,7 +3,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "agentic-ops.fullname" $ }}-connector-{{ $name }}
+  name: {{ include "sage-run.fullname" $ }}-connector-{{ $name }}
   labels:
     app.kubernetes.io/component: connector
     app.kubernetes.io/name: {{ $name }}
@@ -19,8 +19,8 @@ spec:
         app.kubernetes.io/component: connector
         app.kubernetes.io/name: {{ $name }}
     spec:
-      {{- include "agentic-ops.imagePullSecrets" $ | nindent 6 }}
-      serviceAccountName: {{ include "agentic-ops.serviceAccountName" $ }}
+      {{- include "sage-run.imagePullSecrets" $ | nindent 6 }}
+      serviceAccountName: {{ include "sage-run.serviceAccountName" $ }}
       containers:
         - name: connector-{{ $name }}
           image: {{ $.Values.images.connector.repository }}:{{ $.Values.images.connector.tag }}
@@ -28,19 +28,19 @@ spec:
           command:
             {{- toYaml $connector.command | nindent 12 }}
           env:
-            {{- include "agentic-ops.commonEnv" $ | nindent 12 }}
+            {{- include "sage-run.commonEnv" $ | nindent 12 }}
             {{- range $key, $value := $connector.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
           {{- if $.Values.bootstrap.existingSecret }}
           envFrom:
-            {{- include "agentic-ops.bootstrapEnvFrom" $ | nindent 12 }}
+            {{- include "sage-run.bootstrapEnvFrom" $ | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- include "agentic-ops.commonVolumeMounts" $ | nindent 12 }}
+            {{- include "sage-run.commonVolumeMounts" $ | nindent 12 }}
       volumes:
-        {{- include "agentic-ops.commonVolumes" $ | nindent 8 }}
+        {{- include "sage-run.commonVolumes" $ | nindent 8 }}
 ---
 {{- end }}
 {{- end }}

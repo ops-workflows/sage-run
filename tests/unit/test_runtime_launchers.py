@@ -48,7 +48,7 @@ def test_docker_launcher_translates_spec_to_container_run(monkeypatch):
     assert kwargs["volumes"]["agent-memory-platform-test"] == {"bind": "/memory", "mode": "rw"}
     assert kwargs["network"] == "test-network"
     assert kwargs["extra_hosts"] == {"host.docker.internal": "host-gateway"}
-    assert kwargs["labels"]["agentic_ops.runtime_provider"] == "docker"
+    assert kwargs["labels"]["sage_run.runtime_provider"] == "docker"
     assert "security_opt" not in kwargs
     assert "cap_add" not in kwargs
 
@@ -104,7 +104,7 @@ def test_docker_launcher_uses_gha_sandbox_mode(monkeypatch):
 def test_docker_launcher_uses_gvisor_compatibility_runtime_without_native_relaxations(monkeypatch):
     monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "linux")
     monkeypatch.setenv("SANDBOX_MODE", "gvisor")
-    monkeypatch.setenv("DOCKER_NETWORK", "ai-ops-network")
+    monkeypatch.setenv("DOCKER_NETWORK", "sage-run-network")
     client = MagicMock()
     client.containers.get.side_effect = docker.errors.NotFound("missing")
     peer = MagicMock()
@@ -112,7 +112,7 @@ def test_docker_launcher_uses_gvisor_compatibility_runtime_without_native_relaxa
     peer.attrs = {
         "NetworkSettings": {
             "Networks": {
-                "ai-ops-network": {
+                "sage-run-network": {
                     "IPAddress": "172.19.0.7",
                     "DNSNames": ["deploy-mcp-salesforce-1", "mcp-salesforce", "peer-id"],
                 }

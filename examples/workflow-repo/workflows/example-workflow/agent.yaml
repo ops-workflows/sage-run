@@ -31,7 +31,7 @@ env: {}
   # AWS_ACCOUNT_ID: "123456789012"
 
 # ── Secrets (age-encrypted, decrypted → container env vars) ─────────
-# Set via: `agentic-ops secrets set {WORKFLOW_NAME} SECRET_NAME`
+# Set via: `sage-run secrets set {WORKFLOW_NAME} SECRET_NAME`
 # SECURITY: Available to Claude Code for ${VAR} expansion in .mcp.json.
 # Constrain Bash via settings.json sandbox + permission rules.
 # Platform-level message-bus credentials belong in
@@ -58,7 +58,7 @@ runtime:
     turn_budget_ratio: 0.7
     time_budget_ratio: 0.75
     recent_question_turn_window: 8
-  container_image: agentic-ops-runtime:latest
+  container_image: sage-run-agent-runtime:latest
   memory_volumes:
     - "agent-memory-{WORKFLOW_NAME}:/workspace/.claude/agent-memory"
 

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to Agentic Ops.
+Thanks for contributing to SAGE Run.
 
 ## Public Core Boundary
 
@@ -39,8 +39,10 @@ npm run build
 For deployment changes, render templates where possible:
 
 ```sh
-docker compose config >/tmp/agentic-ops-compose.yaml
-helm template agentic-ops deploy/k8s/agentic-ops >/tmp/agentic-ops-helm.yaml
+docker compose config >/tmp/sage-run-compose.yaml
+helm template sage-run deploy/k8s/sage-run \
+  --values examples/workflow-repo/deploy/k8s-values.yaml \
+  >/tmp/sage-run-helm.yaml
 ```
 
 ## Workflow Bundle Checks
@@ -50,7 +52,7 @@ Use the bundle CLI to validate workflow repo changes:
 ```sh
 python scripts/build_workflow_bundle.py my-workflow \
   --workflow-root /path/to/workflow-repo \
-  --output /tmp/agentic-ops-bundles
+  --output /tmp/sage-run-bundles
 ```
 
 Bundle validation rejects plaintext-looking secrets. Store sensitive values through encrypted config or deployment secret managers.

@@ -3,16 +3,16 @@ PYTEST := $(PYTHON) -m pytest
 PYTEST_FLAGS ?= $(if $(CI),-q,-vv -ra)
 PYTEST_TIMEOUT_FLAGS ?=
 
-PGUSER ?= agentic_ops
+PGUSER ?= sage_run
 PGPASSWORD ?= localdev-postgres-password
-TEST_DB_NAME ?= agentic_ops_test
+TEST_DB_NAME ?= sage_run_test
 TEST_PG_PORT ?= 55432
 TEST_DATABASE_URL ?= postgresql+asyncpg://$(PGUSER):$(PGPASSWORD)@localhost:$(TEST_PG_PORT)/$(TEST_DB_NAME)
-RUNTIME_IMAGE ?= ai-ops-agent-runtime:latest
-MCP_IMAGE ?= ai-ops-mcp:latest
+RUNTIME_IMAGE ?= sage-run-agent-runtime:latest
+MCP_IMAGE ?= sage-run-mcp:latest
 RUNTIME_BUILD ?= docker build
 SANDBOX_MODE ?= macos
-COMPOSE_PROJECT_NAME ?= aiops-test
+COMPOSE_PROJECT_NAME ?= sage-run-test
 TEST_DOCKER_NETWORK ?= $(COMPOSE_PROJECT_NAME)-network
 COMPOSE_BOOTSTRAP_ENV_FILE ?= compose.env
 WORKFLOW_COMPOSE_ENV_FILE ?= $(shell sed -n 's/^WORKFLOW_COMPOSE_ENV_FILE=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
@@ -24,7 +24,7 @@ GATEWAY_URL ?= http://localhost:8080
 COMPOSE_ENV_FILES := $(if $(wildcard $(WORKFLOW_COMPOSE_ENV_FILE)),--env-file "$(WORKFLOW_COMPOSE_ENV_FILE)") $(if $(wildcard $(COMPOSE_BOOTSTRAP_ENV_FILE)),--env-file "$(COMPOSE_BOOTSTRAP_ENV_FILE)")
 COMPOSE_FILES := -f deploy/docker-compose.yml $(if $(wildcard $(WORKFLOW_COMPOSE_OVERRIDE_FILE)),-f "$(WORKFLOW_COMPOSE_OVERRIDE_FILE)")
 COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) $(COMPOSE_FILES)
-K8S_CHART ?= deploy/k8s/agentic-ops
+K8S_CHART ?= deploy/k8s/sage-run
 K8S_BOOTSTRAP_SCRIPT ?= dist/bootstrap/k8s-secret.sh
 K8S_RELEASE ?=
 K8S_NAMESPACE ?=
@@ -154,7 +154,7 @@ tests: ensure-test-db runtime-build mcp-build ## Run all tests, including unit, 
 		$(PYTEST) tests $(PYTEST_FLAGS)
 
 clean-test-containers: ## Remove dangling test session containers
-	-@docker ps -a --filter "label=agentic_ops.type=agent-session" --format "{{.ID}}" | xargs -r docker rm -f
+	-@docker ps -a --filter "label=sage_run.type=agent-session" --format "{{.ID}}" | xargs -r docker rm -f
 
 format: ## Format code (ruff check + fix)
 	uv run ruff check . --fix && uv run ruff format . && npm --prefix control-plane-ui run format

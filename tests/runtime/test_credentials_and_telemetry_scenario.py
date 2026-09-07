@@ -7,7 +7,7 @@ Covers:
 - Final session result is posted to Message in the right thread
 - Session detail API returns the full event timeline
 
-Requires Docker + ``ai-ops-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
+Requires Docker + ``sage-run-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
 """
 
 from __future__ import annotations

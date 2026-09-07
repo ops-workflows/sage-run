@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-ops.fullname" . }}-platform-config
+  name: {{ include "sage-run.fullname" . }}-platform-config
 data:
   platform-config.yaml: |
     config: {}

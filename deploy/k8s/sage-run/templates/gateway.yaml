@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "agentic-ops.fullname" . }}-gateway
+  name: {{ include "sage-run.fullname" . }}-gateway
   labels:
     app.kubernetes.io/component: gateway
 spec:
@@ -14,8 +14,8 @@ spec:
       labels:
         app.kubernetes.io/component: gateway
     spec:
-      {{- include "agentic-ops.imagePullSecrets" . | nindent 6 }}
-      serviceAccountName: {{ include "agentic-ops.serviceAccountName" . }}
+      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "sage-run.serviceAccountName" . }}
       containers:
         - name: gateway
           image: {{ .Values.images.gateway.repository }}:{{ .Values.images.gateway.tag }}
@@ -24,24 +24,24 @@ spec:
             - name: http
               containerPort: {{ .Values.gateway.port }}
           env:
-            {{- include "agentic-ops.commonEnv" . | nindent 12 }}
+            {{- include "sage-run.commonEnv" . | nindent 12 }}
             - name: RUNTIME_BUNDLE_ROOT
               value: {{ .Values.runtimeBundles.root | quote }}
             - name: RUNTIME_BUNDLE_OBJECT_STORE_BUCKET
               value: {{ .Values.runtimeBundles.objectStoreBucket | quote }}
           {{- if .Values.bootstrap.existingSecret }}
           envFrom:
-            {{- include "agentic-ops.bootstrapEnvFrom" . | nindent 12 }}
+            {{- include "sage-run.bootstrapEnvFrom" . | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- include "agentic-ops.commonVolumeMounts" . | nindent 12 }}
+            {{- include "sage-run.commonVolumeMounts" . | nindent 12 }}
       volumes:
-        {{- include "agentic-ops.commonVolumes" . | nindent 8 }}
+        {{- include "sage-run.commonVolumes" . | nindent 8 }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agentic-ops.fullname" . }}-gateway
+  name: {{ include "sage-run.fullname" . }}-gateway
 spec:
   selector:
     app.kubernetes.io/component: gateway

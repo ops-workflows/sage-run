@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Guided bootstrap for the operator/infra config layer.
 
-Agentic Ops config has three layers (see docs/roadmap for the full picture):
+SAGE Run config has three layers (see docs/roadmap for the full picture):
 
 1. Bootstrap / infra (this script) — the minimum needed to cold-start and
     reach the workflow repo: its URL/ref, an optional one-time clone PAT, the
@@ -197,9 +197,9 @@ def render_compose_env(env: dict[str, str]) -> str:
 def render_k8s_secret_script(
     env: dict[str, str],
     *,
-    secret_name: str = "agentic-ops-bootstrap",  # noqa: S107 - resource name, not a credential
+    secret_name: str = "sage-run-bootstrap",  # noqa: S107 - resource name, not a credential
     platform_config_file: str = "",
-    platform_config_secret_name: str = "agentic-ops-platform-config",  # noqa: S107
+    platform_config_secret_name: str = "sage-run-config",  # noqa: S107
     namespace: str = "default",
 ) -> str:
     literals = " \\\n  ".join(f"--from-literal={key}={_shell_quote(value)}" for key, value in env.items())
@@ -360,7 +360,7 @@ def main() -> int:
     else:
         print(
             f"Run {path} to create the bootstrap and platform-config secrets, then set "
-            "platformConfig.existingSecret=agentic-ops-platform-config and deploy."
+            "platformConfig.existingSecret=sage-run-config and deploy."
         )
     return 0
 

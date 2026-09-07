@@ -446,7 +446,7 @@ class GatewayMessageIngress:
             logger.warning("Unable to post message acknowledgement for %s", message.message_id)
 
     async def _handle_interactive_action(self, action: InteractiveAction) -> None:
-        if action.provider != "slack" or action.action_id != "agentic_ops_approval":
+        if action.provider != "slack" or action.action_id not in {"sage_run_approval", "agentic_ops_approval"}:
             return
         async with async_session_factory() as session:
             try:

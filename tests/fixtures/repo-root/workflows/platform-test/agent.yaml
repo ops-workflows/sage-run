@@ -29,7 +29,7 @@ runtime:
     time_budget_ratio: 0.5
     recent_question_turn_window: 3
   alert_coalesce_window_sec: 60
-  container_image: ai-ops-agent-runtime:latest
+  container_image: sage-run-agent-runtime:latest
   memory_volumes:
     - agent-memory-platform-test:/workspace/.claude/agent-memory
 

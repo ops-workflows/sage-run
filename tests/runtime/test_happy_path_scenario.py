@@ -9,7 +9,7 @@ entrypoint against the mock LLM, and asserts on:
 
 Requires:
 - Docker daemon running
-- ``ai-ops-agent-runtime:latest`` image built
+- ``sage-run-agent-runtime:latest`` image built
 - ``TEST_RUNTIME_ENABLED=1`` and ``TEST_DATABASE_URL`` set
 - Postgres reachable
 """

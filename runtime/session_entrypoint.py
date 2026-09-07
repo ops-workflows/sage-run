@@ -1,7 +1,7 @@
 """
 Session Entrypoint — runs inside ephemeral agent Docker containers.
 
-This script is the CMD of the ai-ops-agent-runtime image. It:
+This script is the CMD of the sage-run-agent-runtime image. It:
 1. Reads the task prompt + metadata from env vars
 2. Loads Claude project settings from .claude/settings.json and wires can_use_tool
 3. Invokes the Claude Agent SDK (which spawns the `claude` CLI binary as a
@@ -72,7 +72,7 @@ WORKFLOW_BUNDLE_PATH = Path(os.environ.get("WORKFLOW_BUNDLE_PATH", "/workflow-bu
 WORKFLOW_BUNDLE_URI = os.environ.get("WORKFLOW_BUNDLE_URI", "").strip()
 WORKFLOW_BUNDLE_CHECKSUM = os.environ.get("WORKFLOW_BUNDLE_CHECKSUM", "").strip()
 MEMORY_DIR = Path(os.environ.get("MEMORY_DIR", "/memory"))
-MEMORY_COMPLETE_MARKER = MEMORY_DIR / ".agentic-ops-memory-complete"
+MEMORY_COMPLETE_MARKER = MEMORY_DIR / ".sage-run-memory-complete"
 
 # Workspace — writable staging area where Claude actually runs.
 # Populated at startup from the read-only plugin source + shared content.

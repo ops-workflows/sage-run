@@ -21,7 +21,7 @@ mcpServers:
   - platform
 ---
 
-You are a **{ROLE}** in an Agentic Ops workflow.
+You are a **{ROLE}** in a SAGE Run workflow.
 
 ## Your Mission
 {Describe what the agent should do when activated}

@@ -12,6 +12,6 @@ RUN pip install --no-cache-dir ".[knowledge-indexer]"
 COPY shared/ ./shared/
 COPY knowledge-indexer/ ./knowledge_indexer/
 
-RUN mkdir -p /var/lib/agentic-ops/knowledge-indexer
+RUN mkdir -p /var/lib/sage-run/knowledge-indexer
 
 CMD ["python", "-m", "knowledge_indexer.main"]
