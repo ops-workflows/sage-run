@@ -107,6 +107,30 @@ def _approval_post_payload(task: Task, approval: Approval) -> tuple[str, dict[st
     return "\n".join(lines), props
 
 
+def approval_resolution_post_payload(
+    task: Task,
+    approval: Approval,
+    *,
+    approved: bool,
+    approved_by: str,
+) -> tuple[str, dict[str, Any]]:
+    """Keep approval request details visible while replacing actions with the decision."""
+    text, _props = _approval_post_payload(task, approval)
+    status_label = "approved" if approved else "rejected"
+    status_icon = ":white_check_mark:" if approved else ":x:"
+    status_message = f"{status_icon} Approval **{status_label}** by @{approved_by}."
+    text = text.replace(
+        ":warning: **Approval Required**",
+        f"{status_icon} **Approval {status_label.title()}**",
+        1,
+    ).replace(
+        "Use the buttons below to approve or reject this action.",
+        "This approval request has been resolved.",
+        1,
+    )
+    return text, {"attachments": [{"text": status_message}]}
+
+
 def _slack_approval_post_payload(task: Task, approval: Approval) -> tuple[str, list[dict[str, Any]]]:
     text, _ = _approval_post_payload(task, approval)
     return text, [

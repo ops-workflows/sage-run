@@ -454,6 +454,7 @@ class GatewayMessageIngress:
                     session,
                     context=action.context,
                     user_id=action.user_id,
+                    username=action.username,
                     post_id=action.post_id,
                     channel_id=action.channel_id,
                     source="slack_interactive",

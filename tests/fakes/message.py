@@ -155,6 +155,10 @@ class FakeMattermost:
         def me():
             return {"id": "bot-user", "username": "ops-bot"}
 
+        @app.get("/api/v4/users/{user_id}")
+        def get_user(user_id: str):
+            return {"id": user_id, "username": "operator"}
+
         @app.get("/api/v4/posts/{root_id}/thread")
         def mattermost_thread(root_id: str):
             with self.state.lock:

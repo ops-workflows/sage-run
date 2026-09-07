@@ -69,3 +69,28 @@ def test_slack_approval_payload_has_provider_action_context() -> None:
     actions = blocks[1]["elements"]
     assert {json.loads(action["value"])["decision"] for action in actions} == {"approve", "reject"}
     assert all("token" not in json.loads(action["value"]) for action in actions)
+
+
+def test_mattermost_resolution_payload_preserves_request_details() -> None:
+    task = SimpleNamespace(id=uuid.uuid4(), prompt="Investigate", workflow="platform-test")
+    approval = SimpleNamespace(
+        id=uuid.uuid4(),
+        task_id=task.id,
+        workflow=task.workflow,
+        tool_name="mcp__individual-provisioning__create_individual",
+        request_preview="birthdate=1990-01-01, first_name=Aino, last_name=Virtanen",
+        approval_metadata={},
+    )
+
+    text, props = approval_broker.approval_resolution_post_payload(
+        task,
+        approval,
+        approved=True,
+        approved_by="alice",
+    )
+
+    assert "**Approval Approved**" in text
+    assert "`mcp__individual-provisioning__create_individual`" in text
+    assert "birthdate=1990-01-01" in text
+    assert "Approval **approved** by @alice." not in text
+    assert props["attachments"] == [{"text": ":white_check_mark: Approval **approved** by @alice."}]
