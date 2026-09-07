@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 MEMORY_HELPER_IMAGE = os.environ.get("MEMORY_HELPER_IMAGE", "alpine:3.20")
 MEMORY_HELPER_PATH = "/memory"
-MEMORY_COMPLETE_MARKER = ".agentic-ops-memory-complete"
+MEMORY_COMPLETE_MARKER = ".sage-run-memory-complete"
 _docker_client: docker.DockerClient | None = None
 
 
@@ -60,7 +60,7 @@ def _create_memory_helper(volume_name: str, *, mode: str):
         name=helper_name,
         detach=True,
         volumes={volume_name: {"bind": MEMORY_HELPER_PATH, "mode": mode}},
-        labels={"ai-ops.memory-helper": "true"},
+        labels={"sage-run.memory-helper": "true"},
     )
     container.start()
     return container

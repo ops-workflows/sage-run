@@ -30,7 +30,7 @@ def test_session_manager_receives_knowledge_source_bucket_in_compose_and_helm():
     assert "OBJECT_STORE_ACCESS_KEY" in session_manager_env
     assert "KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET" in session_manager_env
 
-    helm_template = (REPO_ROOT / "deploy/k8s/agentic-ops/templates/session-manager.yaml").read_text(encoding="utf-8")
+    helm_template = (REPO_ROOT / "deploy/k8s/sage-run/templates/session-manager.yaml").read_text(encoding="utf-8")
     assert "name: KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET" in helm_template
     assert "value: {{ .Values.knowledgeSources.objectStoreBucket | quote }}" in helm_template
 
@@ -135,7 +135,7 @@ def test_normalize_age_identity_passes_through_raw_key():
 
 
 def test_normalize_age_identity_passes_through_existing_file_prefix():
-    assert normalize_age_identity("file:/etc/agentic-ops/key.txt") == "file:/etc/agentic-ops/key.txt"
+    assert normalize_age_identity("file:/etc/sage-run/key.txt") == "file:/etc/sage-run/key.txt"
 
 
 def test_normalize_age_identity_reads_existing_path(tmp_path: Path):
@@ -278,7 +278,7 @@ def test_write_artifact_kubernetes_target_writes_executable_script(tmp_path: Pat
     assert path == tmp_path / "dist" / "bootstrap" / "k8s-secret.sh"
     assert path.exists()
     assert path.stat().st_mode & 0o111  # executable bit set
-    assert "agentic-ops-platform-config" in path.read_text(encoding="utf-8")
+    assert "sage-run-config" in path.read_text(encoding="utf-8")
 
 
 def test_write_artifact_kubernetes_target_uses_configured_namespace(tmp_path: Path):

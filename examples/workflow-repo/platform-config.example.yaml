@@ -1,4 +1,4 @@
-# Agentic Ops platform configuration example.
+# SAGE Run platform configuration example.
 # Copy to platform-config.yaml for local development, or provide equivalent
 # values through your deployment secret/config system.
 #
@@ -10,18 +10,18 @@
 # only needs the public key to encrypt newly entered secrets.
 
 config:
-  INSTANCE_NAME: local-agentic-ops
+  INSTANCE_NAME: local-sage-run
 
   AGE_PUBLIC_KEY: age1examplepublickeyreplacewithyourgeneratedrecipient
 
   PG_HOST: postgres
   PG_PORT: "5432"
-  PG_DB: agentic_ops
-  PG_USER: agentic_ops
+  PG_DB: sage_run
+  PG_USER: sage_run
 
   OBJECT_STORE_PROVIDER: s3
   OBJECT_STORE_ENDPOINT: minio:9000
-  OBJECT_STORE_ACCESS_KEY: agentic_ops
+  OBJECT_STORE_ACCESS_KEY: sage_run
 
   CONTROL_PLANE_UI_URL: http://localhost:3000
   GATEWAY_PUBLIC_BASE_URL: http://localhost:8080
@@ -136,7 +136,7 @@ message_bus:
 
 runtime_bundles:
   storage: s3
-  bucket: agentic-ops-bundles
+  bucket: sage-run-bundles
   retention_versions: 20
 
 # These env vars are injected into every ephemeral agent runtime container.

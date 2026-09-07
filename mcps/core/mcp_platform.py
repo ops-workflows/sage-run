@@ -79,7 +79,7 @@ def create_workflow_task(
     metadata: Annotated[dict[str, Any] | None, "Optional structured metadata for the created task."] = None,
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
-    """Use this to enqueue a follow-up task in another Agentic Ops workflow when visible handoff text is not enough."""
+    """Use this to enqueue a follow-up task in another SAGE Run workflow when visible handoff text is not enough."""
     payload_metadata = dict(metadata or {})
     payload_metadata.setdefault("source", "workflow-handoff")
     if headers.get("x-task-id"):

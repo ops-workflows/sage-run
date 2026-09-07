@@ -30,8 +30,8 @@ RUN curl -fsSL \
 
 FROM python:3.11-slim
 
-LABEL maintainer="ai-ops-platform"
-LABEL description="Agentic Ops runtime — ephemeral container for agent sessions"
+LABEL maintainer="sage-run"
+LABEL description="SAGE Run runtime — ephemeral container for agent sessions"
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

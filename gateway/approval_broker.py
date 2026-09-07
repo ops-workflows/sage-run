@@ -118,7 +118,7 @@ def _slack_approval_post_payload(task: Task, approval: Approval) -> tuple[str, l
                     "type": "button",
                     "text": {"type": "plain_text", "text": "Approve"},
                     "style": "primary",
-                    "action_id": "agentic_ops_approval",
+                    "action_id": "sage_run_approval",
                     "value": json.dumps(
                         _approval_action_context(approval, decision="approve", include_callback_secret=False)
                     ),
@@ -127,7 +127,7 @@ def _slack_approval_post_payload(task: Task, approval: Approval) -> tuple[str, l
                     "type": "button",
                     "text": {"type": "plain_text", "text": "Reject"},
                     "style": "danger",
-                    "action_id": "agentic_ops_approval",
+                    "action_id": "sage_run_approval",
                     "value": json.dumps(
                         _approval_action_context(approval, decision="reject", include_callback_secret=False)
                     ),

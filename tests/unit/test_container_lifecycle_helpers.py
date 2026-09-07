@@ -115,7 +115,7 @@ def test_active_release_selects_matching_config_and_bundle(monkeypatch, tmp_path
         "releases/release-1/manifest.json": json.dumps(manifest).encode(),
         "releases/release-1/platform-config.yaml": b"default_model_profile: synced\n",
     }
-    monkeypatch.setattr(settings, "runtime_bundle_object_store_bucket", "agentic-ops-bundles")
+    monkeypatch.setattr(settings, "runtime_bundle_object_store_bucket", "sage-run-bundles")
     monkeypatch.setattr(settings, "runtime_bundle_root", str(tmp_path))
     monkeypatch.setattr(object_store_mod, "download_bytes", lambda bucket, key: objects.get(key))
     monkeypatch.setattr(
@@ -132,8 +132,7 @@ def test_active_release_selects_matching_config_and_bundle(monkeypatch, tmp_path
     assert Path(config_path).read_text(encoding="utf-8") == "default_model_profile: synced\n"
     assert bundle_path is None
     assert (
-        bundle_uri
-        == "https://objects.test/agentic-ops-bundles/releases/release-1/bundles/platform-test.tar.gz?exp=3600"
+        bundle_uri == "https://objects.test/sage-run-bundles/releases/release-1/bundles/platform-test.tar.gz?exp=3600"
     )
     assert checksum == "sha256:bundle-manifest"
 
@@ -207,7 +206,7 @@ def test_resolve_workflow_bundle_uses_existing_local_bundle(monkeypatch, tmp_pat
 
 def test_resolve_workflow_bundle_uploads_to_object_store_when_configured(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "runtime_bundle_uri_template", "")
-    monkeypatch.setattr(settings, "runtime_bundle_object_store_bucket", "agentic-ops-bundles")
+    monkeypatch.setattr(settings, "runtime_bundle_object_store_bucket", "sage-run-bundles")
     monkeypatch.setattr(settings, "runtime_bundle_presigned_url_expires_sec", 900)
 
     fresh_root = tmp_path / "fresh-root"
@@ -242,10 +241,10 @@ def test_resolve_workflow_bundle_uploads_to_object_store_when_configured(monkeyp
 
     expected_bundle_dir = fresh_root / "platform-test"
     assert bundle_path == str(expected_bundle_dir)
-    assert bundle_uri == "https://fake/agentic-ops-bundles/bundles/platform-test.tar.gz?exp=900"
+    assert bundle_uri == "https://fake/sage-run-bundles/bundles/platform-test.tar.gz?exp=900"
     assert checksum.startswith("sha256:")
-    assert upload_calls == [(expected_bundle_dir, "platform-test", "agentic-ops-bundles", "bundles")]
-    assert presign_calls == [("agentic-ops-bundles", "bundles/platform-test.tar.gz", 900)]
+    assert upload_calls == [(expected_bundle_dir, "platform-test", "sage-run-bundles", "bundles")]
+    assert presign_calls == [("sage-run-bundles", "bundles/platform-test.tar.gz", 900)]
 
 
 def test_resolve_workflow_bundle_reuses_object_store_key_without_reupload(monkeypatch, tmp_path):
@@ -254,7 +253,7 @@ def test_resolve_workflow_bundle_reuses_object_store_key_without_reupload(monkey
     (bundle_dir / "manifest.yaml").write_text("bundle_version: 1\n", encoding="utf-8")
     monkeypatch.setattr(settings, "runtime_bundle_root", str(tmp_path))
     monkeypatch.setattr(settings, "runtime_bundle_uri_template", "")
-    monkeypatch.setattr(settings, "runtime_bundle_object_store_bucket", "agentic-ops-bundles")
+    monkeypatch.setattr(settings, "runtime_bundle_object_store_bucket", "sage-run-bundles")
 
     import shared.lib.object_store as object_store_mod
     import shared.lib.workflow_bundles as workflow_bundles_mod
@@ -273,5 +272,5 @@ def test_resolve_workflow_bundle_reuses_object_store_key_without_reupload(monkey
 
     _, bundle_uri, _ = _resolve_workflow_bundle("platform-test")
 
-    assert bundle_uri == "https://fake/agentic-ops-bundles/bundles/platform-test.tar.gz"
-    assert presign_calls == [("agentic-ops-bundles", "bundles/platform-test.tar.gz", 3600)]
+    assert bundle_uri == "https://fake/sage-run-bundles/bundles/platform-test.tar.gz"
+    assert presign_calls == [("sage-run-bundles", "bundles/platform-test.tar.gz", 3600)]

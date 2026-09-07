@@ -50,7 +50,7 @@ def _assert_safe_test_dsn(dsn: str) -> None:
     """Refuse to drop schemas in any DB that isn't clearly a test DB.
 
     The fixture below DROPs ``control_plane`` and ``task_queue`` schemas.
-    Running it against a developer's local Postgres (e.g. ``agentic_ops``)
+    Running it against a developer's local Postgres (e.g. ``sage_run``)
     silently destroys real data. We require either an explicit opt-in
     (``TEST_ALLOW_DB_WIPE=1``) or a database name that ends in ``_test``.
     """

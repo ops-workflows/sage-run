@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "agentic-ops.fullname" . }}-session-manager
+  name: {{ include "sage-run.fullname" . }}-session-manager
   labels:
     app.kubernetes.io/component: session-manager
 spec:
@@ -14,14 +14,14 @@ spec:
       labels:
         app.kubernetes.io/component: session-manager
     spec:
-      {{- include "agentic-ops.imagePullSecrets" . | nindent 6 }}
-      serviceAccountName: {{ include "agentic-ops.serviceAccountName" . }}
+      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "sage-run.serviceAccountName" . }}
       containers:
         - name: session-manager
           image: {{ .Values.images.sessionManager.repository }}:{{ .Values.images.sessionManager.tag }}
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           env:
-            {{- include "agentic-ops.commonEnv" . | nindent 12 }}
+            {{- include "sage-run.commonEnv" . | nindent 12 }}
             - name: RUNTIME_LAUNCHER
               value: {{ .Values.sessionManager.env.RUNTIME_LAUNCHER | quote }}
             - name: RUNTIME_BUNDLE_URI_TEMPLATE
@@ -38,9 +38,9 @@ spec:
               value: {{ .Values.bootstrap.existingSecret | quote }}
           {{- if .Values.bootstrap.existingSecret }}
           envFrom:
-            {{- include "agentic-ops.bootstrapEnvFrom" . | nindent 12 }}
+            {{- include "sage-run.bootstrapEnvFrom" . | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- include "agentic-ops.commonVolumeMounts" . | nindent 12 }}
+            {{- include "sage-run.commonVolumeMounts" . | nindent 12 }}
       volumes:
-        {{- include "agentic-ops.commonVolumes" . | nindent 8 }}
+        {{- include "sage-run.commonVolumes" . | nindent 8 }}

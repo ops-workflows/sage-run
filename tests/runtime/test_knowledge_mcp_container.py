@@ -154,8 +154,8 @@ async def test_knowledge_mcp_hydrates_minio_bundle_and_serves_source(
     repo_root: Path,
 ) -> None:
     docker_client = docker.from_env()
-    network = os.environ.get("DOCKER_NETWORK", "aiops-test-network")
-    image = os.environ.get("MCP_TEST_IMAGE", "ai-ops-mcp:latest")
+    network = os.environ.get("DOCKER_NETWORK", "sage-run-test-network")
+    image = os.environ.get("MCP_TEST_IMAGE", "sage-run-mcp:latest")
     try:
         docker_client.images.get(image)
     except ImageNotFound:
@@ -242,8 +242,8 @@ async def test_knowledge_mcp_hydrates_minio_bundle_and_serves_source(
                 "PLATFORM_CONFIG_FILE": "/app/platform-config.yaml",
                 "PG_HOST": "postgres",
                 "PG_PORT": "5432",
-                "PG_DB": database_url.database or "agentic_ops_test",
-                "PG_USER": database_url.username or "agentic_ops",
+                "PG_DB": database_url.database or "sage_run_test",
+                "PG_USER": database_url.username or "sage_run",
                 "PG_PASSWORD": database_url.password or "localdev-postgres-password",
                 "OBJECT_STORE_PROVIDER": "s3",
                 "OBJECT_STORE_ENDPOINT": f"{minio_name}:9000",

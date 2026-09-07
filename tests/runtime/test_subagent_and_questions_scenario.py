@@ -7,7 +7,7 @@ Covers:
 - Approval timeout (no operator reply within window)
 - Late-session AskUserQuestion reminder
 
-Requires Docker + ``ai-ops-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
+Requires Docker + ``sage-run-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
 """
 
 from __future__ import annotations

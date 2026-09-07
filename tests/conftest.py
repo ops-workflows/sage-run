@@ -118,8 +118,8 @@ def require_minio() -> tuple[str, str, str]:
         pytest.skip("TEST_MINIO_ENDPOINT not set — skipping MinIO-dependent test")
     return (
         endpoint,
-        os.environ.get("TEST_MINIO_ACCESS_KEY", "agentic_ops"),
-        os.environ.get("TEST_MINIO_SECRET_KEY", "agentic-ops-test-secret"),
+        os.environ.get("TEST_MINIO_ACCESS_KEY", "sage_run"),
+        os.environ.get("TEST_MINIO_SECRET_KEY", "sage-run-test-secret"),
     )
 
 

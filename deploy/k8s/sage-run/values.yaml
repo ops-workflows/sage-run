@@ -26,18 +26,18 @@ infrastructure:
   postgres:
     enabled: false
     image: pgvector/pgvector:pg16
-    database: agentic_ops
-    user: agentic_ops
+    database: sage_run
+    user: sage_run
     storageClass: ""
     storageSize: 20Gi
   objectStore:
     enabled: false
     image: minio/minio:latest
     clientImage: minio/mc:latest
-    accessKey: agentic_ops
+    accessKey: sage_run
     buckets:
       - agent-memory
-      - agentic-ops-bundles
+      - sage-run-bundles
     storageClass: ""
     storageSize: 20Gi
   hindsight:
@@ -53,35 +53,35 @@ infrastructure:
     storageSize: 10Gi
 
 workflowRepo:
-  syncPath: /var/lib/agentic-ops/workflow-repo
+  syncPath: /var/lib/sage-run/workflow-repo
   mountPath: /app/workflow-repos/default
   workflowRoot: ""
   workflowRepoPaths: ""
   existingClaim: ""
 
 runtimeBundles:
-  root: /var/lib/agentic-ops/releases
+  root: /var/lib/sage-run/releases
   uriTemplate: ""
   objectStoreBucket: ""
 
 images:
   gateway:
-    repository: agentic-ops-gateway
+    repository: sage-run-gateway
     tag: latest
   sessionManager:
-    repository: agentic-ops-session-manager
+    repository: sage-run-session-manager
     tag: latest
   knowledgeIndexer:
-    repository: agentic-ops-knowledge-indexer
+    repository: sage-run-knowledge-indexer
     tag: latest
   controlPlaneUi:
-    repository: agentic-ops-control-plane-ui
+    repository: sage-run-control-plane-ui
     tag: latest
   mcp:
-    repository: agentic-ops-mcps
+    repository: sage-run-mcps
     tag: latest
   connector:
-    repository: agentic-ops-gateway
+    repository: sage-run-gateway
     tag: latest
 
 gateway:
@@ -99,12 +99,12 @@ knowledgeSources:
 
 knowledgeIndexer:
   replicas: 1
-  cacheRoot: /var/lib/agentic-ops/knowledge-indexer
+  cacheRoot: /var/lib/sage-run/knowledge-indexer
   pollIntervalSec: 30
   staleRunSec: 3600
 
 knowledgeMcp:
-  cacheRoot: /var/lib/agentic-ops/knowledge
+  cacheRoot: /var/lib/sage-run/knowledge
   refreshIntervalSec: 30
   versionsToKeep: 2
   persistence:

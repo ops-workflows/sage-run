@@ -70,7 +70,7 @@ def test_background_jobs_have_typed_knowledge_source_context():
 
 def test_bootstrap_sql_copies_share_the_knowledge_source_schema():
     shared_sql = (REPO_ROOT / "shared/lib/init_db.sql").read_text()
-    deployment_sql = (REPO_ROOT / "deploy/k8s/agentic-ops/files/init_db.sql").read_text()
+    deployment_sql = (REPO_ROOT / "deploy/k8s/sage-run/files/init_db.sql").read_text()
 
     assert shared_sql == deployment_sql
     for contract in (

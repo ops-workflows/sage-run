@@ -1,24 +1,24 @@
-{{- define "agentic-ops.name" -}}
+{{- define "sage-run.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "agentic-ops.fullname" -}}
+{{- define "sage-run.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- printf "%s-%s" .Release.Name (include "agentic-ops.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-%s" .Release.Name (include "sage-run.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "agentic-ops.serviceAccountName" -}}
+{{- define "sage-run.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
-{{- default (include "agentic-ops.fullname" .) .Values.serviceAccount.name -}}
+{{- default (include "sage-run.fullname" .) .Values.serviceAccount.name -}}
 {{- else -}}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "agentic-ops.platformConfigVolume" -}}
+{{- define "sage-run.platformConfigVolume" -}}
 {{- if .Values.platformConfig.existingSecret }}
 secret:
   secretName: {{ .Values.platformConfig.existingSecret }}
@@ -27,11 +27,11 @@ configMap:
   name: {{ .Values.platformConfig.existingConfigMap }}
 {{- else }}
 configMap:
-  name: {{ include "agentic-ops.fullname" . }}-platform-config
+  name: {{ include "sage-run.fullname" . }}-platform-config
 {{- end }}
 {{- end -}}
 
-{{- define "agentic-ops.commonEnv" -}}
+{{- define "sage-run.commonEnv" -}}
 - name: PLATFORM_CONFIG_FILE
   value: /app/config/platform-config.yaml
 - name: WORKFLOW_ROOT
@@ -42,7 +42,7 @@ configMap:
   value: {{ .Values.workflowRepo.syncPath | quote }}
 {{- if .Values.infrastructure.postgres.enabled }}
 - name: PG_HOST
-  value: {{ include "agentic-ops.postgresName" . | quote }}
+  value: {{ include "sage-run.postgresName" . | quote }}
 - name: PG_PORT
   value: "5432"
 - name: PG_DB
@@ -54,13 +54,13 @@ configMap:
 - name: OBJECT_STORE_PROVIDER
   value: s3
 - name: OBJECT_STORE_ENDPOINT
-  value: {{ printf "%s:9000" (include "agentic-ops.objectStoreName" .) | quote }}
+  value: {{ printf "%s:9000" (include "sage-run.objectStoreName" .) | quote }}
 - name: OBJECT_STORE_ACCESS_KEY
   value: {{ .Values.infrastructure.objectStore.accessKey | quote }}
 {{- end }}
 {{- if .Values.infrastructure.hindsight.enabled }}
 - name: HINDSIGHT_URL
-  value: {{ printf "http://%s:8888" (include "agentic-ops.hindsightName" .) | quote }}
+  value: {{ printf "http://%s:8888" (include "sage-run.hindsightName" .) | quote }}
 {{- end }}
 {{- range $key, $value := .Values.platformEnv }}
 - name: {{ $key }}
@@ -68,35 +68,35 @@ configMap:
 {{- end }}
 {{- end -}}
 
-{{- define "agentic-ops.postgresName" -}}
-{{- printf "%s-postgres" (include "agentic-ops.fullname" .) -}}
+{{- define "sage-run.postgresName" -}}
+{{- printf "%s-postgres" (include "sage-run.fullname" .) -}}
 {{- end -}}
 
-{{- define "agentic-ops.objectStoreName" -}}
-{{- printf "%s-object-store" (include "agentic-ops.fullname" .) -}}
+{{- define "sage-run.objectStoreName" -}}
+{{- printf "%s-object-store" (include "sage-run.fullname" .) -}}
 {{- end -}}
 
-{{- define "agentic-ops.hindsightName" -}}
-{{- printf "%s-hindsight" (include "agentic-ops.fullname" .) -}}
+{{- define "sage-run.hindsightName" -}}
+{{- printf "%s-hindsight" (include "sage-run.fullname" .) -}}
 {{- end -}}
 
-{{- define "agentic-ops.bootstrapEnvFrom" -}}
+{{- define "sage-run.bootstrapEnvFrom" -}}
 {{- if .Values.bootstrap.existingSecret }}
 - secretRef:
     name: {{ .Values.bootstrap.existingSecret }}
 {{- end }}
 {{- end -}}
 
-{{- define "agentic-ops.imagePullSecrets" -}}
+{{- define "sage-run.imagePullSecrets" -}}
 {{- with .Values.imagePullSecrets }}
 imagePullSecrets:
 {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end -}}
 
-{{- define "agentic-ops.commonVolumes" -}}
+{{- define "sage-run.commonVolumes" -}}
 - name: platform-config
-  {{- include "agentic-ops.platformConfigVolume" . | nindent 2 }}
+  {{- include "sage-run.platformConfigVolume" . | nindent 2 }}
 - name: workflow-repo-cache
   emptyDir: {}
 - name: release-cache
@@ -108,7 +108,7 @@ imagePullSecrets:
 {{- end }}
 {{- end -}}
 
-{{- define "agentic-ops.commonVolumeMounts" -}}
+{{- define "sage-run.commonVolumeMounts" -}}
 - name: platform-config
   mountPath: /app/config
   readOnly: true

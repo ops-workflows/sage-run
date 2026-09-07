@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Agentic Ops Agent YAML Schema",
-  "description": "Platform-level config for Agentic Ops workflows. Claude Code files (.mcp.json, settings.json, agents/*.md, skills/, hooks/hooks.json) are authored directly — not generated from this file.",
+  "title": "SAGE Run Agent YAML Schema",
+  "description": "Platform-level config for SAGE Run workflows. Claude Code files (.mcp.json, settings.json, agents/*.md, skills/, hooks/hooks.json) are authored directly — not generated from this file.",
   "type": "object",
   "required": ["name", "description"],
   "properties": {

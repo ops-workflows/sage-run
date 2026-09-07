@@ -1,6 +1,6 @@
 # Architecture
 
-Agentic Ops is a workflow runtime and control plane for operational AI agents. This
+SAGE Run is a workflow runtime and control plane for operational AI agents. This
 document describes the components that ship in this repo and how a task moves
 through them end to end.
 

@@ -9,8 +9,8 @@ config:
   AGE_PUBLIC_KEY: ""
   PG_HOST: localhost
   PG_PORT: "5432"
-  PG_DB: agentic_ops
-  PG_USER: agentic_ops
+  PG_DB: sage_run
+  PG_USER: sage_run
   PG_PASSWORD: localdev-postgres-password
   CONTROL_PLANE_UI_URL: http://localhost:3000
 

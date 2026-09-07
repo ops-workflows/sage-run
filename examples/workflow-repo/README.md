@@ -1,7 +1,7 @@
 # Example Workflow Repo
 
 This directory mirrors the exact structure a **workflow repo** must have to
-work with the Agentic Ops platform. Copy it (or just the pieces you need) to
+work with SAGE Run. Copy it (or just the pieces you need) to
 bootstrap your own workflow repo:
 
 ```sh

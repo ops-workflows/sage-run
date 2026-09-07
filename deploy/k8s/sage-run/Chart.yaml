@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sage-run
+version: 0.1.0
+appVersion: "0.1.0"
+description: Bundle-first SAGE Run platform deployment chart
+type: application

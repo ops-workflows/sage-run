@@ -10,7 +10,7 @@ actually fire inside the runtime container:
 - SubagentStop hook fires when the helper subagent ends
 - A failing hook (non-zero exit) does not kill the session
 
-Requires Docker + ``ai-ops-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
+Requires Docker + ``sage-run-agent-runtime:latest`` + TEST_RUNTIME_ENABLED=1.
 """
 
 from __future__ import annotations

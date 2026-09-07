@@ -25,7 +25,7 @@ def test_read_platform_config_returns_parsed_agent_yaml(test_plugin_dir: Path) -
     cfg = read_platform_config(test_plugin_dir)
     assert cfg["name"] == "platform-test"
     assert cfg["session"]["max_turns"] == 8
-    assert cfg["runtime"]["container_image"] == "ai-ops-agent-runtime:latest"
+    assert cfg["runtime"]["container_image"] == "sage-run-agent-runtime:latest"
 
 
 def test_read_platform_config_missing_returns_empty(tmp_path: Path) -> None:

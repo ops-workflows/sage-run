@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "agentic-ops.fullname" . }}-control-plane-ui
+  name: {{ include "sage-run.fullname" . }}-control-plane-ui
   labels:
     app.kubernetes.io/component: control-plane-ui
 spec:
@@ -14,7 +14,7 @@ spec:
       labels:
         app.kubernetes.io/component: control-plane-ui
     spec:
-      {{- include "agentic-ops.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: control-plane-ui
           image: {{ .Values.images.controlPlaneUi.repository }}:{{ .Values.images.controlPlaneUi.tag }}
@@ -24,12 +24,12 @@ spec:
               containerPort: {{ .Values.controlPlaneUi.port }}
           env:
             - name: INTERNAL_GATEWAY_URL
-              value: http://{{ include "agentic-ops.fullname" . }}-gateway:{{ .Values.gateway.port }}
+              value: http://{{ include "sage-run.fullname" . }}-gateway:{{ .Values.gateway.port }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agentic-ops.fullname" . }}-control-plane-ui
+  name: {{ include "sage-run.fullname" . }}-control-plane-ui
 spec:
   selector:
     app.kubernetes.io/component: control-plane-ui

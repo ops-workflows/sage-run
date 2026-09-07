@@ -20,7 +20,7 @@ from shared.lib.config import settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DOCKER_NETWORK = "ai-ops-network"
+DEFAULT_DOCKER_NETWORK = "sage-run-network"
 
 
 def _sandbox_mode() -> str:
@@ -183,10 +183,10 @@ class DockerRuntimeLauncher:
             "detach": True,
             "name": container_name,
             "labels": {
-                "agentic_ops.task_id": spec.task_id,
-                "agentic_ops.workflow": spec.workflow,
-                "agentic_ops.type": "agent-session",
-                "agentic_ops.runtime_provider": self.provider,
+                "sage_run.task_id": spec.task_id,
+                "sage_run.workflow": spec.workflow,
+                "sage_run.type": "agent-session",
+                "sage_run.runtime_provider": self.provider,
             },
         }
         if sys.platform == "linux":
@@ -214,11 +214,11 @@ class DockerRuntimeLauncher:
         )
 
     def list_sessions(self) -> list[RuntimeSessionStatus]:
-        containers = self.client.containers.list(all=True, filters={"label": "agentic_ops.type=agent-session"})
+        containers = self.client.containers.list(all=True, filters={"label": "sage_run.type=agent-session"})
         statuses: list[RuntimeSessionStatus] = []
         for container in containers:
-            task_id = container.labels.get("agentic_ops.task_id", "")
-            workflow = container.labels.get("agentic_ops.workflow", "")
+            task_id = container.labels.get("sage_run.task_id", "")
+            workflow = container.labels.get("sage_run.workflow", "")
             exit_code = None
             logs = ""
             if container.status == "exited":
@@ -251,7 +251,7 @@ class DockerRuntimeLauncher:
             except docker.errors.NotFound:
                 return False
         elif task_id:
-            containers = self.client.containers.list(all=True, filters={"label": f"agentic_ops.task_id={task_id}"})
+            containers = self.client.containers.list(all=True, filters={"label": f"sage_run.task_id={task_id}"})
         else:
             return False
 
@@ -342,7 +342,7 @@ class KubernetesRuntimeLauncher:
         )
         template = self.client.V1PodTemplateSpec(
             metadata=self.client.V1ObjectMeta(
-                labels={"agentic_ops.task_id": spec.task_id, "agentic_ops.workflow": spec.workflow}
+                labels={"sage_run.task_id": spec.task_id, "sage_run.workflow": spec.workflow}
             ),
             spec=pod_spec,
         )
@@ -351,9 +351,9 @@ class KubernetesRuntimeLauncher:
             metadata=self.client.V1ObjectMeta(
                 name=job_name,
                 labels={
-                    "agentic_ops.task_id": spec.task_id,
-                    "agentic_ops.workflow": spec.workflow,
-                    "agentic_ops.type": "agent-session",
+                    "sage_run.task_id": spec.task_id,
+                    "sage_run.workflow": spec.workflow,
+                    "sage_run.type": "agent-session",
                 },
             ),
             spec=job_spec,
@@ -363,7 +363,7 @@ class KubernetesRuntimeLauncher:
         return RuntimeHandle(runtime_id, runtime_id[:12], self.provider, spec.task_id, spec.workflow)
 
     def list_sessions(self) -> list[RuntimeSessionStatus]:
-        jobs = self.batch.list_namespaced_job(namespace=self.namespace, label_selector="agentic_ops.type=agent-session")
+        jobs = self.batch.list_namespaced_job(namespace=self.namespace, label_selector="sage_run.type=agent-session")
         statuses: list[RuntimeSessionStatus] = []
         for job in jobs.items:
             labels = job.metadata.labels or {}
@@ -376,8 +376,8 @@ class KubernetesRuntimeLauncher:
                     id=job.metadata.name,
                     short_id=job.metadata.name[:12],
                     provider=self.provider,
-                    task_id=str(labels.get("agentic_ops.task_id") or ""),
-                    workflow=str(labels.get("agentic_ops.workflow") or ""),
+                    task_id=str(labels.get("sage_run.task_id") or ""),
+                    workflow=str(labels.get("sage_run.workflow") or ""),
                     status=state,
                     exit_code=exit_code,
                     logs="Kubernetes pod logs are available via kubectl/log aggregation.",

@@ -9,8 +9,8 @@ or moved.
 - **Service (Layer 1):** 34 tests — Postgres required (`TEST_DATABASE_URL`).
 - **Runtime (Layer 2):** 40 tests — require
   `TEST_RUNTIME_ENABLED=1`, a running Docker daemon (`DOCKER_HOST` pointing
-  at your socket), and a freshly built `ai-ops-agent-runtime:latest`
-  image (`docker build -t ai-ops-agent-runtime:latest -f runtime/Dockerfile .`).
+  at your socket), and a freshly built `sage-run-agent-runtime:latest`
+  image (`docker build -t sage-run-agent-runtime:latest -f runtime/Dockerfile .`).
   On macOS with Rancher Desktop:
   `export DOCKER_HOST=unix:///Users/$USER/.rd/docker.sock`.
 

@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Agentic Ops — Gateway",
+    title="SAGE Run — Gateway",
     description="Web-facing gateway: webhooks, event collector, control-plane API",
     version="0.1.0",
     lifespan=lifespan,

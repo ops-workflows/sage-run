@@ -7,9 +7,9 @@ test server) and assert on the end-to-end session outcome.
 ## Prerequisites
 
 ```
-docker build -t ai-ops-agent-runtime:latest -f runtime/Dockerfile .
+docker build -t sage-run-agent-runtime:latest -f runtime/Dockerfile .
 make ensure-test-db
-export TEST_DATABASE_URL=postgresql+asyncpg://agentic_ops:localdev-postgres-password@localhost:55432/agentic_ops_test
+export TEST_DATABASE_URL=postgresql+asyncpg://sage_run:localdev-postgres-password@localhost:55432/sage_run_test
 export TEST_RUNTIME_ENABLED=1
 ```
 

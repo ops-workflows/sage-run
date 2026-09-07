@@ -11,7 +11,7 @@ and exits.  Tests then assert on DB state and the fakes' recorded data.
 
 Requirements for running:
 - Docker daemon must be running
-- ``ai-ops-agent-runtime:latest`` image must be built
+- ``sage-run-agent-runtime:latest`` image must be built
 - ``TEST_RUNTIME_ENABLED=1`` and ``TEST_DATABASE_URL`` must be set
 - Postgres (from docker-compose) must be reachable
 """
@@ -307,7 +307,7 @@ def local_memory_store(tmp_path):
     object_store_mod.download_file = store.download_file
     memory_sync_mod.upload_file = store.upload_file
     memory_sync_mod.download_file = store.download_file
-    memory_sync_mod.MEMORY_HELPER_IMAGE = "ai-ops-agent-runtime:latest"
+    memory_sync_mod.MEMORY_HELPER_IMAGE = "sage-run-agent-runtime:latest"
 
     try:
         yield store
@@ -366,8 +366,8 @@ def _write_test_platform_config(
             "AGE_PUBLIC_KEY": "",
             "PG_HOST": "localhost",
             "PG_PORT": "5432",
-            "PG_DB": "agentic_ops",
-            "PG_USER": "agentic_ops",
+            "PG_DB": "sage_run",
+            "PG_USER": "sage_run",
             "PG_PASSWORD": "localdev-postgres-password",
             "CONTROL_PLANE_UI_URL": "",
         },

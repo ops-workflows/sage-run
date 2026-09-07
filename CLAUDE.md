@@ -1,4 +1,4 @@
-# Agentic Ops — Shared Instructions
+# SAGE Run — Shared Instructions
 
 ## Investigation
 

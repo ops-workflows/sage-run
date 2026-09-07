@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 def test_plugin_agent_yaml_has_expected_shape(test_plugin_dir: Path) -> None:
     cfg = yaml.safe_load((test_plugin_dir / "agent.yaml").read_text())
     assert cfg["name"] == "platform-test"
-    assert cfg["runtime"]["container_image"] == "ai-ops-agent-runtime:latest"
+    assert cfg["runtime"]["container_image"] == "sage-run-agent-runtime:latest"
     assert cfg["messaging"]["channels"] == ["platform-test-channel"]
     assert cfg["schedules"][0]["cron"] == "0 9 * * *"
     assert cfg["session"]["max_turns"] == 8

@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "agentic-ops.postgresName" . }}-init
+  name: {{ include "sage-run.postgresName" . }}-init
   labels:
     app.kubernetes.io/component: postgres
 data:
@@ -12,7 +12,7 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agentic-ops.postgresName" . }}
+  name: {{ include "sage-run.postgresName" . }}
 spec:
   selector:
     app.kubernetes.io/component: postgres
@@ -24,9 +24,9 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "agentic-ops.postgresName" . }}
+  name: {{ include "sage-run.postgresName" . }}
 spec:
-  serviceName: {{ include "agentic-ops.postgresName" . }}
+  serviceName: {{ include "sage-run.postgresName" . }}
   replicas: 1
   selector:
     matchLabels:
@@ -36,7 +36,7 @@ spec:
       labels:
         app.kubernetes.io/component: postgres
     spec:
-      {{- include "agentic-ops.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: postgres
           image: {{ .Values.infrastructure.postgres.image }}
@@ -63,7 +63,7 @@ spec:
       volumes:
         - name: init-db
           configMap:
-            name: {{ include "agentic-ops.postgresName" . }}-init
+            name: {{ include "sage-run.postgresName" . }}-init
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -81,7 +81,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agentic-ops.objectStoreName" . }}
+  name: {{ include "sage-run.objectStoreName" . }}
 spec:
   selector:
     app.kubernetes.io/component: object-store
@@ -96,9 +96,9 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "agentic-ops.objectStoreName" . }}
+  name: {{ include "sage-run.objectStoreName" . }}
 spec:
-  serviceName: {{ include "agentic-ops.objectStoreName" . }}
+  serviceName: {{ include "sage-run.objectStoreName" . }}
   replicas: 1
   selector:
     matchLabels:
@@ -108,7 +108,7 @@ spec:
       labels:
         app.kubernetes.io/component: object-store
     spec:
-      {{- include "agentic-ops.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: minio
           image: {{ .Values.infrastructure.objectStore.image }}
@@ -144,13 +144,13 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "agentic-ops.objectStoreName" . }}-buckets
+  name: {{ include "sage-run.objectStoreName" . }}-buckets
 spec:
   backoffLimit: 12
   template:
     spec:
       restartPolicy: OnFailure
-      {{- include "agentic-ops.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: create-buckets
           image: {{ .Values.infrastructure.objectStore.clientImage }}
@@ -158,7 +158,7 @@ spec:
             - /bin/sh
             - -ec
             - |
-              until mc alias set local http://{{ include "agentic-ops.objectStoreName" . }}:9000 "$OBJECT_STORE_ACCESS_KEY" "$OBJECT_STORE_SECRET_KEY"; do sleep 2; done
+              until mc alias set local http://{{ include "sage-run.objectStoreName" . }}:9000 "$OBJECT_STORE_ACCESS_KEY" "$OBJECT_STORE_SECRET_KEY"; do sleep 2; done
               {{- range .Values.infrastructure.objectStore.buckets }}
               mc mb --ignore-existing local/{{ . }}
               {{- end }}
@@ -176,7 +176,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "agentic-ops.hindsightName" . }}
+  name: {{ include "sage-run.hindsightName" . }}
 spec:
   selector:
     app.kubernetes.io/component: hindsight
@@ -188,7 +188,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "agentic-ops.hindsightName" . }}
+  name: {{ include "sage-run.hindsightName" . }}
 spec:
   replicas: 1
   selector:
@@ -199,7 +199,7 @@ spec:
       labels:
         app.kubernetes.io/component: hindsight
     spec:
-      {{- include "agentic-ops.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: hindsight
           image: {{ .Values.infrastructure.hindsight.image }}
@@ -209,7 +209,7 @@ spec:
           env:
             - name: PG_HOST
               {{- if .Values.infrastructure.postgres.enabled }}
-              value: {{ include "agentic-ops.postgresName" . | quote }}
+              value: {{ include "sage-run.postgresName" . | quote }}
               {{- else }}
               value: {{ required "platformEnv.PG_HOST is required when managed Postgres is disabled" .Values.platformEnv.PG_HOST | quote }}
               {{- end }}
@@ -270,12 +270,12 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "agentic-ops.hindsightName" . }}
+            claimName: {{ include "sage-run.hindsightName" . }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "agentic-ops.hindsightName" . }}
+  name: {{ include "sage-run.hindsightName" . }}
 spec:
   accessModes: ["ReadWriteOnce"]
   {{- with .Values.infrastructure.hindsight.storageClass }}

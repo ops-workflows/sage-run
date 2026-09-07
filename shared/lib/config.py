@@ -13,8 +13,8 @@ from shared.lib.platform_secrets import MessageBusConfig, load_message_bus_confi
 class DatabaseSettings(BaseSettings):
     pg_host: str = "postgres"
     pg_port: int = 5432
-    pg_db: str = "agentic_ops"
-    pg_user: str = "agentic_ops"
+    pg_db: str = "sage_run"
+    pg_user: str = "sage_run"
     pg_password: str = ""
 
     @property
@@ -33,7 +33,7 @@ class ObjectStoreSettings(BaseSettings):
     # target (compose or kubernetes).
     object_store_provider: str = "s3"
     object_store_endpoint: str = "minio:9000"
-    object_store_access_key: str = "agentic_ops"
+    object_store_access_key: str = "sage_run"
     object_store_secret_key: str = ""
     object_store_secure: bool = False
     # gcs only — optional; the client can also infer the project from ADC.
@@ -87,12 +87,12 @@ class Settings(
     runtime_bundle_object_store_bucket: str = ""
     runtime_bundle_presigned_url_expires_sec: int = 3600
     knowledge_source_object_store_bucket: str = ""
-    knowledge_source_indexer_cache_root: str = "/var/lib/agentic-ops/knowledge-indexer"
+    knowledge_source_indexer_cache_root: str = "/var/lib/sage-run/knowledge-indexer"
     knowledge_source_graphify_binary: str = "graphify"
     knowledge_source_graphify_timeout_sec: int = 1800
     knowledge_source_stale_run_sec: int = 3600
     knowledge_source_indexer_poll_interval_sec: int = 30
-    knowledge_source_serving_cache_root: str = "/var/lib/agentic-ops/knowledge"
+    knowledge_source_serving_cache_root: str = "/var/lib/sage-run/knowledge"
     knowledge_source_refresh_interval_sec: int = 30
     knowledge_source_cache_versions_to_keep: int = 2
     kubernetes_memory_helper_image: str = ""

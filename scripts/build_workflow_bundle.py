@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an Agentic Ops workflow runtime bundle."""
+"""Build a SAGE Run workflow runtime bundle."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Plugin directory helpers for Agentic Ops.
+"""Plugin directory helpers for SAGE Run.
 
 Plugins use a flat layout convention:
 
