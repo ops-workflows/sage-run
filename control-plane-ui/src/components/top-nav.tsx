@@ -147,9 +147,9 @@ export function TopNav() {
               Control Plane
             </span>
             <span className="font-sans text-[22px] leading-none">
-              <span className="text-[#9B9184] font-light">Agentic </span>
+              <span className="text-[#9B9184] font-light">SAGE </span>
               <span className="text-[var(--color-text-primary)] font-medium">
-                Ops
+                Run
               </span>
             </span>
           </div>
