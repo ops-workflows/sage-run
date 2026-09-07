@@ -179,6 +179,8 @@ def test_build_bootstrap_env_local_compose_sets_host_bind_mount_vars():
     assert env["WORKFLOW_COMPOSE_ENV_FILE"] == "/home/op/corp-workflows/deploy/compose.env"
     assert env["WORKFLOW_COMPOSE_OVERRIDE_FILE"] == "/home/op/corp-workflows/deploy/docker-compose.override.yml"
     assert env["CONTROL_PLANE_UI_URL"] == "http://localhost:3000"
+    assert env["CONTROL_PLANE_UI_BIND_ADDRESS"] == "127.0.0.1"
+    assert env["CONTROL_PLANE_UI_PORT"] == "3000"
     assert env["GATEWAY_PUBLIC_BASE_URL"] == "https://gateway.example.test"
     assert env["SANDBOX_MODE"] == "macos"
     assert env["AUTH_INGRESS_REPLICAS"] == "0"
