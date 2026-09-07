@@ -143,6 +143,27 @@ async def get_authenticated_user_id(
     return str(response.json().get("id") or "")
 
 
+async def get_user_username(
+    client: httpx.AsyncClient,
+    *,
+    api_url: str,
+    bot_token: str,
+    user_id: str,
+) -> str:
+    """Return the Mattermost username for a user id visible to the bot."""
+    if not user_id:
+        return ""
+    response = await client.get(
+        f"{api_url.rstrip('/')}/api/v4/users/{user_id}",
+        headers=_auth_headers(bot_token),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise MattermostAPIError("Mattermost user response was not an object")
+    return str(payload.get("username") or "").strip()
+
+
 async def _get_channel_by_team_id(
     client: httpx.AsyncClient,
     *,

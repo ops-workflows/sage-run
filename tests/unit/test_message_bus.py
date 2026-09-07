@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from shared.lib.mattermost_api import MattermostAPIError
+from shared.lib.mattermost_api import MattermostAPIError, get_user_username
 from shared.lib.message_bus import (
     MattermostMessageBus,
     SlackMessageBus,
@@ -147,6 +147,22 @@ async def test_slack_channel_name_resolution_uses_visible_channel_id():
     url, kwargs = client.calls[0]
     assert url.endswith("/conversations.list")
     assert kwargs["params"]["types"] == "public_channel,private_channel"
+
+
+async def test_mattermost_user_lookup_returns_username():
+    client = _FakeClient({"id": "user-123", "username": "alice"})
+
+    username = await get_user_username(
+        client,
+        api_url="https://mattermost.example.test",
+        bot_token="test-token",
+        user_id="user-123",
+    )
+
+    assert username == "alice"
+    url, kwargs = client.calls[0]
+    assert url.endswith("/api/v4/users/user-123")
+    assert kwargs["headers"] == {"Authorization": "Bearer test-token"}
 
 
 async def test_mattermost_post_preserves_provider_failure(monkeypatch):

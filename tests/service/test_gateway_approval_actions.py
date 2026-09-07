@@ -82,6 +82,11 @@ async def test_gateway_owned_approval_request_and_callback_resolution(db_session
             )
         )
         assert action_response["ephemeral_text"] == "You approved this approval request."
+        assert "**Request Preview**:" in action_response["update"]["message"]
+        assert "echo approval-needed from service test" in action_response["update"]["message"]
+        assert "Approval **approved** by @operator." not in action_response["update"]["message"]
+        attachments = action_response["update"]["props"]["attachments"]
+        assert attachments == [{"text": ":white_check_mark: Approval **approved** by @operator."}]
 
         status = await get_runtime_approval_status(
             task_id=str(task.id),
@@ -89,6 +94,7 @@ async def test_gateway_owned_approval_request_and_callback_resolution(db_session
             request_id="req-service-test",
         )
         assert status.status == "approved"
+        assert status.resolved_by == "operator"
         assert status.resolved_by_user_id == "operator-user"
     finally:
         settings.message_bus.api_url = original_message_bus_api_url

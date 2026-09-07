@@ -8,13 +8,15 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway.approval_broker import get_runtime_approval, record_approval_result
+from gateway.approval_broker import approval_resolution_post_payload, get_runtime_approval, record_approval_result
 from shared.lib.config import settings
 from shared.lib.db import async_session_factory
+from shared.lib.mattermost_api import MattermostAPIError, get_user_username
 from shared.lib.models import Approval, SessionEvent, Task
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,7 @@ def _interactive_error(message: str) -> dict[str, Any]:
 @dataclass(frozen=True)
 class ApprovalActionResolution:
     approval: Approval
+    task: Task
     approved: bool | None
     status_message: str
 
@@ -53,6 +56,7 @@ async def resolve_approval_action(
     *,
     context: dict[str, Any],
     user_id: str,
+    username: str = "",
     post_id: str,
     channel_id: str,
     source: str,
@@ -95,11 +99,13 @@ async def resolve_approval_action(
     if approval.status != "pending":
         return ApprovalActionResolution(
             approval=approval,
+            task=task,
             approved=None,
             status_message=f":lock: Approval already resolved as **{approval.status}**.",
         )
 
     approved = decision == "approve"
+    approved_by = username.strip() or user_id or "operator"
     session.add(
         SessionEvent(
             task_id=task.id,
@@ -109,6 +115,7 @@ async def resolve_approval_action(
                 "tool_name": approval.tool_name,
                 "decision": decision,
                 "user_id": user_id,
+                "username": approved_by,
                 "post_id": post_id,
                 "channel_id": channel_id,
             },
@@ -119,8 +126,8 @@ async def resolve_approval_action(
         task,
         approval,
         approved=approved,
-        reason=None if approved else f"Approval rejected in message provider by {user_id or 'operator'}",
-        approved_by=user_id or None,
+        reason=None if approved else f"Approval rejected in message provider by {approved_by}",
+        approved_by=approved_by,
         approved_by_user_id=user_id or None,
         approval_reply=decision,
         source=source,
@@ -129,11 +136,26 @@ async def resolve_approval_action(
     status_label = "approved" if approved else "rejected"
     return ApprovalActionResolution(
         approval=approval,
+        task=task,
         approved=approved,
-        status_message=(
-            f":white_check_mark: Approval **{status_label}** for `{approval.tool_name}` by @{user_id or 'operator'}."
-        ),
+        status_message=f":white_check_mark: Approval **{status_label}** for `{approval.tool_name}` by @{approved_by}.",
     )
+
+
+async def _resolve_mattermost_username(user_id: str) -> str:
+    if not user_id:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            return await get_user_username(
+                client,
+                api_url=settings.message_bus.api_url,
+                bot_token=settings.message_bus.bot_token,
+                user_id=user_id,
+            )
+    except (MattermostAPIError, httpx.HTTPError) as exc:
+        logger.warning("Could not resolve Mattermost username for approval action: %s", exc)
+        return ""
 
 
 @router.post("/message/actions/approval")
@@ -142,12 +164,14 @@ async def message_approval_action(payload: MattermostInteractiveAction):
     if not _verify_interactive_action_token(str(context.get("token") or "")):
         return _interactive_error("Invalid approval action token")
 
+    username = await _resolve_mattermost_username(payload.user_id)
     async with async_session_factory() as session:
         try:
             resolution = await resolve_approval_action(
                 session,
                 context=context,
                 user_id=payload.user_id,
+                username=username,
                 post_id=payload.post_id,
                 channel_id=payload.channel_id,
                 source="mattermost_interactive",
@@ -157,13 +181,22 @@ async def message_approval_action(payload: MattermostInteractiveAction):
 
     if resolution.approved is None:
         ephemeral_text = f"This approval is already {resolution.approval.status}."
+        message = resolution.status_message
+        props: dict[str, Any] = {}
     else:
         status_label = "approved" if resolution.approved else "rejected"
         ephemeral_text = f"You {status_label} this approval request."
+        approved_by = username or payload.user_id or "operator"
+        message, props = approval_resolution_post_payload(
+            resolution.task,
+            resolution.approval,
+            approved=resolution.approved,
+            approved_by=approved_by,
+        )
     return {
         "update": {
-            "message": resolution.status_message,
-            "props": {},
+            "message": message,
+            "props": props,
         },
         "ephemeral_text": ephemeral_text,
         "skip_slack_parsing": True,
