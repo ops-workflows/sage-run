@@ -11,9 +11,9 @@ Prompts:
 
 1. **Deployment target** — `compose` or `kubernetes`.
 2. **Compose mode** — `local` or `production`. Local mode asks for the
-   internet-reachable Gateway URL used by signed approval callbacks, keeps the
-   browser UI on `http://localhost:3000`, selects the local sandbox mode, and
-   disables private auth ingress.
+   internet-reachable Gateway URL used by signed approval callbacks, binds the
+   browser UI to `127.0.0.1:3000`, selects the local sandbox mode, and disables
+   private auth ingress.
 3. **Workflow source** — `remote` (git URL + ref + initial checkout path) or
    `local` (an existing filesystem checkout path). Compose bind-mounts the
    checkout; Kubernetes uses the checkout's config for cold start and then

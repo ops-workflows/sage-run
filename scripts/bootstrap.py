@@ -163,6 +163,8 @@ def build_bootstrap_env(config: BootstrapConfig) -> dict[str, str]:
         env.update(
             {
                 "CONTROL_PLANE_UI_URL": "http://localhost:3000",
+                "CONTROL_PLANE_UI_BIND_ADDRESS": "127.0.0.1",
+                "CONTROL_PLANE_UI_PORT": "3000",
                 "GATEWAY_PUBLIC_BASE_URL": config.gateway_public_base_url.rstrip("/"),
                 "SANDBOX_MODE": "macos",
                 "AUTH_INGRESS_REPLICAS": "0",
