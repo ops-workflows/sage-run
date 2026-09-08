@@ -19,7 +19,7 @@ COPY schemas/ ./schemas/
 COPY gateway/ ./gateway/
 COPY session-manager/ ./session_manager/
 COPY connectors/ ./connectors/
-COPY examples/workflow-repo/platform-config.example.yaml ./platform-config.example.yaml
+COPY examples/workflow-repo/platform-config.yaml ./platform-config.yaml
 RUN mkdir -p /app/workflows
 
 EXPOSE 8080

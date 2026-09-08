@@ -17,7 +17,7 @@ COPY hooks/ ./hooks/
 COPY mcps/ ./mcps/
 COPY gateway/ ./gateway/
 COPY session-manager/ ./session_manager/
-COPY examples/workflow-repo/platform-config.example.yaml ./platform-config.example.yaml
+COPY examples/workflow-repo/platform-config.yaml ./platform-config.yaml
 RUN mkdir -p /app/workflows
 
 # Create volumes directory

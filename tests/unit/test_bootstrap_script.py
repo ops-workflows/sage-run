@@ -40,8 +40,9 @@ def test_compose_services_receive_workflow_repository_metadata():
 
     gateway_environment = compose["services"]["gateway"]["environment"]
     assert gateway_environment["WORKFLOW_REPO_SOURCE"] == "${WORKFLOW_REPO_SOURCE:-local}"
+    assert gateway_environment["WORKFLOW_REPO_DISPLAY_PATH"] == "${HOST_WORKFLOW_REPO_PATH:-}"
     assert (
-        "${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo/workflows}:/app/workflows"
+        "${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}:/app/workflows"
         in compose["services"]["gateway"]["volumes"]
     )
 
@@ -49,7 +50,9 @@ def test_compose_services_receive_workflow_repository_metadata():
         environment = compose["services"][service_name]["environment"]
         assert environment["WORKFLOW_REPO_URL"] == "${WORKFLOW_REPO_URL:-}"
         assert environment["WORKFLOW_REPO_REF"] == "${WORKFLOW_REPO_REF:-}"
-        assert environment["WORKFLOW_REPO_LOCAL_PATH"] == "/app/workflows"
+        assert "WORKFLOW_ROOT" not in environment
+        assert "WORKFLOW_REPO_PATHS" not in environment
+        assert "WORKFLOW_REPO_LOCAL_PATH" not in environment
 
     assert compose["services"]["session-manager"]["environment"]["WORKFLOW_REPO_SOURCE"] == "local"
 
@@ -188,6 +191,9 @@ def test_build_bootstrap_env_remote_compose_retains_repository_metadata():
     assert env["WORKFLOW_REPO_URL"] == "https://github.com/acme/workflows.git"
     assert env["WORKFLOW_REPO_REF"] == "v1.2.3"
     assert env["HOST_WORKFLOW_REPO_PATH"] == "/home/op/corp-workflows"
+    assert "HOST_PLATFORM_CONFIG_FILE" not in env
+    assert "WORKFLOW_COMPOSE_ENV_FILE" not in env
+    assert "WORKFLOW_COMPOSE_OVERRIDE_FILE" not in env
 
 
 def test_build_bootstrap_env_remote_source_omits_pat_when_blank():
@@ -203,9 +209,9 @@ def test_build_bootstrap_env_local_compose_sets_host_bind_mount_vars():
     assert env["WORKFLOW_REPO_URL"] == "https://github.com/acme/corp-workflows.git"
     assert "WORKFLOW_REPO_PAT" not in env
     assert env["HOST_WORKFLOW_REPO_PATH"] == "/home/op/corp-workflows"
-    assert env["HOST_PLATFORM_CONFIG_FILE"] == "/home/op/corp-workflows/platform-config.yaml"
-    assert env["WORKFLOW_COMPOSE_ENV_FILE"] == "/home/op/corp-workflows/deploy/compose.env"
-    assert env["WORKFLOW_COMPOSE_OVERRIDE_FILE"] == "/home/op/corp-workflows/deploy/docker-compose.override.yml"
+    assert "HOST_PLATFORM_CONFIG_FILE" not in env
+    assert "WORKFLOW_COMPOSE_ENV_FILE" not in env
+    assert "WORKFLOW_COMPOSE_OVERRIDE_FILE" not in env
     assert env["CONTROL_PLANE_UI_URL"] == "http://localhost:3000"
     assert env["CONTROL_PLANE_UI_BIND_ADDRESS"] == "127.0.0.1"
     assert env["CONTROL_PLANE_UI_PORT"] == "3000"

@@ -1922,11 +1922,12 @@ async def _fetch_github_tags(repo_url: str) -> list[WorkflowRepoVersionResponse]
 
 
 def _workflow_repo_response(state: Any | None) -> WorkflowRepoResponse:
+    source_is_remote = settings.workflow_repo_source.strip().lower() != "local"
     remote_source_url = settings.workflow_repo_url.strip() or None
     return WorkflowRepoResponse(
-        source_url=remote_source_url,
-        source_path=(None if remote_source_url else settings.workflow_repo_display_path.strip() or None),
-        source_mode="remote" if remote_source_url else "local",
+        source_url=remote_source_url if source_is_remote else None,
+        source_path=None if source_is_remote else settings.workflow_repo_display_path.strip() or None,
+        source_mode="remote" if source_is_remote else "local",
         default_ref=settings.workflow_repo_ref.strip() or None,
         pinned_ref=state.pinned_ref if state else None,
         last_synced_ref=state.last_synced_ref if state else None,

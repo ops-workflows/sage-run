@@ -69,7 +69,7 @@ def _sync_configured_workflow_repo(*, ref_override: str | None = None, raise_on_
     local_path = Path(settings.workflow_repo_local_path).expanduser()
     try:
         with github_git_auth_environment(token) as git_environment:
-            if not local_path.exists():
+            if not local_path.exists() or not any(local_path.iterdir()):
                 local_path.parent.mkdir(parents=True, exist_ok=True)
                 subprocess.run(  # noqa: S603 - operator-configured workflow repo sync command.
                     [git_binary, "clone", repo_url, str(local_path)],
@@ -77,6 +77,11 @@ def _sync_configured_workflow_repo(*, ref_override: str | None = None, raise_on_
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=dict(git_environment),
+                )
+            elif not (local_path / ".git").exists():
+                raise RuntimeError(
+                    f"Workflow repo path {local_path} is not a Git checkout. "
+                    "Set HOST_WORKFLOW_REPO_PATH to the repository root, including .git, not its workflows directory."
                 )
             else:
                 subprocess.run(  # noqa: S603 - operator-configured workflow repo sync command.

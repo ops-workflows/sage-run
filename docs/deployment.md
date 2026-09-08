@@ -107,7 +107,7 @@ Compose gates every optional MCP server and connector behind a profile (see
 `platform-config.yaml` to decide this automatically for you. `make up` derives
 the right profile set with `scripts/compose_profiles.py`, which reads the
 instance's `platform-config.yaml`
-(`$PLATFORM_CONFIG_FILE`/`$HOST_PLATFORM_CONFIG_FILE`, or the bundled example)
+(`$PLATFORM_CONFIG_FILE`, or the bundled starter config)
 and maps its `mcps.enabled`, `connectors.enabled` (by connector `type`), and
 `model_profiles` (by `ANTHROPIC_BASE_URL`) to the matching profile names:
 
@@ -168,14 +168,12 @@ request and limit through the deployment's resource policy.
 ## Local development (uncommitted working tree)
 
 In the bootstrap prompt, choose the `local` workflow source so
-`WORKFLOW_REPO_PATHS` (or, for compose,
-`HOST_WORKFLOW_REPO_PATH`/`HOST_PLATFORM_CONFIG_FILE`) points at a plain
-filesystem checkout. **Sync now** rebuilds the bundle from whatever is
-currently on disk — no git fetch, no commit, no pinned tag required. Object
-storage is optional in this mode; a local `RUNTIME_BUNDLE_ROOT` works fine.
+`HOST_WORKFLOW_REPO_PATH` points at a plain filesystem checkout. **Sync now**
+rebuilds the bundle from whatever is currently on disk — no git fetch, no
+commit, no pinned tag required. Object storage is optional in this mode; a
+local `RUNTIME_BUNDLE_ROOT` works fine.
 When the workflow repository contains `deploy/docker-compose.override.yml`,
-bootstrap records it as `WORKFLOW_COMPOSE_OVERRIDE_FILE` and the Makefile loads
-it after the public base stack.
+the Makefile loads it after the public base stack.
 
 For a remote Compose source, the gateway manages the mounted workflow-repository
 checkout: **Sync now** fetches the configured or pinned ref and checks out its
@@ -213,9 +211,8 @@ and newly built task bundles describe the same revision.
 
 - `deploy/docker-compose.yml` — the public base stack (Postgres, MinIO,
   gateway, session-manager, runtime image, control-plane UI, core MCPs).
-  Mounts `HOST_PLATFORM_CONFIG_FILE` (default
-  `../examples/workflow-repo/platform-config.example.yaml`),
-  `HOST_WORKFLOW_REPO_PATH` (default `../examples/workflow-repo/workflows`),
+   Mounts `HOST_WORKFLOW_REPO_PATH` and derives its `platform-config.yaml`
+   (default `../examples/workflow-repo`),
   and `RUNTIME_BUNDLE_ROOT`. Optional profiles: `model-gateway`, `local-llm`,
    `salesforce`, `splunk`, `cloudwatch`, `github`, `jira`, `servicenow`,
    `gcp-pubsub`.

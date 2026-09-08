@@ -11,16 +11,15 @@
 # base `deploy/docker-compose.yml` via `COMPOSE_PROFILES` and plain env vars,
 # with no override required. See deploy/README.md in this example.
 #
-# Defaults assume your repo and sage-run are sibling directories.
-# Set WORKFLOW_REPO_ROOT to an absolute path when the workflow repository is
-# not in the default sibling location.
+# Set HOST_WORKFLOW_REPO_PATH to the workflow repository root before using this
+# override. The public SAGE Run Makefile exports it automatically.
 
 services:
   # Example: building your own custom MCP server from mcps/custom-mcp-example/
   # in this example repo. Remove or adapt once you've written your own.
   mcp-custom-example:
     build:
-      context: ${WORKFLOW_REPO_ROOT:-../../my-workflow-repo}
+      context: ${HOST_WORKFLOW_REPO_PATH:?Set HOST_WORKFLOW_REPO_PATH to the workflow repository root}
       dockerfile: mcps/custom-mcp-example/Dockerfile
     command: ["python", "-m", "uvicorn", "mcp_custom_example:app", "--host", "0.0.0.0", "--port", "8110"]
     profiles: ["custom-example"]
@@ -28,7 +27,7 @@ services:
     environment:
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${WORKFLOW_REPO_ROOT:-../../my-workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:?Set HOST_WORKFLOW_REPO_PATH to the workflow repository root}/platform-config.yaml:/app/platform-config.yaml:ro
     ports:
       - "8110:8110"
     networks:
@@ -38,7 +37,7 @@ services:
   # connectors/custom-connector-example/ in this example repo.
   custom-connector-example:
     build:
-      context: ${WORKFLOW_REPO_ROOT:-../../my-workflow-repo}
+      context: ${HOST_WORKFLOW_REPO_PATH:?Set HOST_WORKFLOW_REPO_PATH to the workflow repository root}
       dockerfile: connectors/custom-connector-example/Dockerfile
     profiles: ["custom-example"]
     restart: unless-stopped
@@ -46,7 +45,7 @@ services:
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
       CONNECTOR_INSTANCE_ID: my-connector-instance
     volumes:
-      - ${WORKFLOW_REPO_ROOT:-../../my-workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:?Set HOST_WORKFLOW_REPO_PATH to the workflow repository root}/platform-config.yaml:/app/platform-config.yaml:ro
     networks:
       - sage-run-network
 

@@ -15,10 +15,12 @@ SANDBOX_MODE ?= macos
 COMPOSE_PROJECT_NAME ?= sage-run-test
 TEST_DOCKER_NETWORK ?= $(COMPOSE_PROJECT_NAME)-network
 COMPOSE_BOOTSTRAP_ENV_FILE ?= compose.env
-WORKFLOW_COMPOSE_ENV_FILE ?= $(shell sed -n 's/^WORKFLOW_COMPOSE_ENV_FILE=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
-WORKFLOW_COMPOSE_OVERRIDE_FILE ?= $(shell sed -n 's/^WORKFLOW_COMPOSE_OVERRIDE_FILE=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
 HOST_WORKFLOW_REPO_PATH ?= $(shell sed -n 's/^HOST_WORKFLOW_REPO_PATH=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
-HOST_PLATFORM_CONFIG_FILE ?= $(shell sed -n 's/^HOST_PLATFORM_CONFIG_FILE=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
+HOST_WORKFLOW_REPO_PATH := $(or $(HOST_WORKFLOW_REPO_PATH),$(CURDIR)/examples/workflow-repo)
+WORKFLOW_PLATFORM_CONFIG_FILE := $(HOST_WORKFLOW_REPO_PATH)/platform-config.yaml
+WORKFLOW_COMPOSE_ENV_FILE := $(HOST_WORKFLOW_REPO_PATH)/deploy/compose.env
+WORKFLOW_COMPOSE_OVERRIDE_FILE := $(HOST_WORKFLOW_REPO_PATH)/deploy/docker-compose.override.yml
+export HOST_WORKFLOW_REPO_PATH
 AGE_IDENTITY ?= $(shell sed -n 's/^AGE_IDENTITY=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
 GATEWAY_URL ?= http://localhost:8080
 COMPOSE_ENV_FILES := $(if $(wildcard $(WORKFLOW_COMPOSE_ENV_FILE)),--env-file "$(WORKFLOW_COMPOSE_ENV_FILE)") $(if $(wildcard $(COMPOSE_BOOTSTRAP_ENV_FILE)),--env-file "$(COMPOSE_BOOTSTRAP_ENV_FILE)")
@@ -52,11 +54,10 @@ sync: ## Sync platform config and workflows through the running gateway
 		$(PYTHON) -c 'import json, sys; payload = json.load(sys.stdin); status = payload.get("last_sync_status"); message = "Workflow sync completed." if status == "ok" else "Workflow sync failed: " + str(payload.get("last_sync_error") or "unknown error"); print(message, file=sys.stdout if status == "ok" else sys.stderr); raise SystemExit(status != "ok")'
 
 set-platform-secret: ## Encrypt a secret in the configured platform-config.yaml
-	@test -n "$(HOST_PLATFORM_CONFIG_FILE)" || (echo "HOST_PLATFORM_CONFIG_FILE is not configured; run make bootstrap." >&2; exit 1)
-	@test -f "$(HOST_PLATFORM_CONFIG_FILE)" || (echo "Platform config not found: $(HOST_PLATFORM_CONFIG_FILE)" >&2; exit 1)
+	@test -f "$(WORKFLOW_PLATFORM_CONFIG_FILE)" || (echo "Platform config not found: $(WORKFLOW_PLATFORM_CONFIG_FILE)" >&2; exit 1)
 	@AGE_IDENTITY="$(AGE_IDENTITY)" $(PYTHON) scripts/set_secret.py \
 		--scope shared \
-		--platform-file "$(HOST_PLATFORM_CONFIG_FILE)"
+		--platform-file "$(WORKFLOW_PLATFORM_CONFIG_FILE)"
 	@$(MAKE) sync
 
 set-workflow-secret: ## Encrypt a secret in WORKFLOW=<workflow>/agent.yaml
@@ -73,7 +74,7 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "%-28s %s\n", $$1, $$2}'
 
 compose-build: ## Build all docker compose services
-	@profiles="$$(HOST_PLATFORM_CONFIG_FILE="$(HOST_PLATFORM_CONFIG_FILE)" $(PYTHON) scripts/compose_profiles.py)"; \
+	@profiles="$$(PLATFORM_CONFIG_FILE="$(WORKFLOW_PLATFORM_CONFIG_FILE)" $(PYTHON) scripts/compose_profiles.py)"; \
 	echo "Computed COMPOSE_PROFILES=$$profiles"; \
 	COMPOSE_PROFILES="$$profiles" $(COMPOSE) build
 
@@ -86,7 +87,7 @@ mcp-build: ## Build the shared MCP server container image used by runtime smoke 
 build: runtime-build compose-build ## Build all docker images
 
 up: ## Start the local Compose stack with profiles derived from platform-config.yaml
-	@profiles="$$(HOST_PLATFORM_CONFIG_FILE="$(HOST_PLATFORM_CONFIG_FILE)" $(PYTHON) scripts/compose_profiles.py)"; \
+	@profiles="$$(PLATFORM_CONFIG_FILE="$(WORKFLOW_PLATFORM_CONFIG_FILE)" $(PYTHON) scripts/compose_profiles.py)"; \
 	echo "Computed COMPOSE_PROFILES=$$profiles"; \
 	COMPOSE_PROFILES="$$profiles" $(COMPOSE) up -d
 
