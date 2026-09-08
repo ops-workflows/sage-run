@@ -142,17 +142,14 @@ services:
     environment:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
-      WORKFLOW_ROOT: /app/workflows
-      WORKFLOW_REPO_PATHS: ${WORKFLOW_REPO_PATHS:-/app/workflows}
       WORKFLOW_REPO_SOURCE: ${WORKFLOW_REPO_SOURCE:-local}
       WORKFLOW_REPO_URL: ${WORKFLOW_REPO_URL:-}
       WORKFLOW_REPO_REF: ${WORKFLOW_REPO_REF:-}
-      WORKFLOW_REPO_LOCAL_PATH: /app/workflows
       WORKFLOW_REPO_DISPLAY_PATH: ${HOST_WORKFLOW_REPO_PATH:-}
       RUNTIME_BUNDLE_ROOT: ${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
-      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo/workflows}:/app/workflows
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}:/app/workflows
       - ${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}:${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}
       - ../connectors:/app/connectors:ro
       - ../shared:/app/shared:ro
@@ -176,12 +173,9 @@ services:
       <<: *platform-bootstrap-env
       POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-2}
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
-      WORKFLOW_ROOT: /app/workflows
-      WORKFLOW_REPO_PATHS: ${WORKFLOW_REPO_PATHS:-/app/workflows}
       WORKFLOW_REPO_SOURCE: local
       WORKFLOW_REPO_URL: ${WORKFLOW_REPO_URL:-}
       WORKFLOW_REPO_REF: ${WORKFLOW_REPO_REF:-}
-      WORKFLOW_REPO_LOCAL_PATH: /app/workflows
       RUNTIME_BUNDLE_ROOT: ${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}
       HOST_REPO_ROOT: ${PWD}
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -192,8 +186,8 @@ services:
       KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET: ${KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET:-sage-run-knowledge-sources}
       SANDBOX_MODE: ${SANDBOX_MODE:-}
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
-      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo/workflows}:/app/workflows:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}:/app/workflows:ro
       - ${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}:${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}
       - ../shared:/app/shared:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -213,8 +207,6 @@ services:
     environment:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
-      WORKFLOW_ROOT: /app/workflows
-      WORKFLOW_REPO_PATHS: ${WORKFLOW_REPO_PATHS:-/app/workflows}
       OBJECT_STORE_ENDPOINT: minio:9000
       OBJECT_STORE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-sage_run}
       KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET: ${KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET:-sage-run-knowledge-sources}
@@ -222,7 +214,7 @@ services:
       KNOWLEDGE_SOURCE_INDEXER_POLL_INTERVAL_SEC: ${KNOWLEDGE_SOURCE_INDEXER_POLL_INTERVAL_SEC:-30}
       KNOWLEDGE_SOURCE_STALE_RUN_SEC: ${KNOWLEDGE_SOURCE_STALE_RUN_SEC:-3600}
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
       - knowledge-indexer-cache:/var/lib/sage-run/knowledge-indexer
     depends_on:
       postgres:
@@ -257,7 +249,7 @@ services:
       GATEWAY_URL: http://gateway:8080
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:8100:8100"
     networks:
@@ -273,7 +265,7 @@ services:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     depends_on:
       - hindsight
     ports:
@@ -297,8 +289,8 @@ services:
       KNOWLEDGE_SOURCE_REFRESH_INTERVAL_SEC: ${KNOWLEDGE_SOURCE_REFRESH_INTERVAL_SEC:-30}
       KNOWLEDGE_SOURCE_CACHE_VERSIONS_TO_KEEP: ${KNOWLEDGE_SOURCE_CACHE_VERSIONS_TO_KEEP:-2}
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
-      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo/workflows}:/app/workflows:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}:/app/workflows:ro
       - knowledge-serving-cache:/var/lib/sage-run/knowledge
     depends_on:
       postgres:
@@ -321,7 +313,7 @@ services:
       GATEWAY_URL: http://gateway:8080
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     depends_on:
       - gateway
     ports:
@@ -342,7 +334,7 @@ services:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:8102:8102"
     networks:
@@ -359,7 +351,7 @@ services:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:8101:8101"
     networks:
@@ -376,7 +368,7 @@ services:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:8104:8104"
     networks:
@@ -393,7 +385,7 @@ services:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:8106:8106"
     networks:
@@ -410,7 +402,7 @@ services:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:8107:8107"
     networks:
@@ -428,10 +420,9 @@ services:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
       CONNECTOR_INSTANCE_ID: ${SERVICENOW_CONNECTOR_INSTANCE_ID:-}
-      WORKFLOW_REPO_PATHS: ${WORKFLOW_REPO_PATHS:-/app/workflows}
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
-      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo/workflows}:/app/workflows:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}:/app/workflows:ro
       - ../shared:/app/shared:ro
     depends_on:
       postgres:
@@ -449,7 +440,7 @@ services:
       <<: *platform-bootstrap-env
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
     volumes:
-      - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
       - ../shared:/app/shared:ro
     depends_on:
       postgres:

@@ -200,7 +200,7 @@ export const MOCK_AGENTS: Agent[] = [
 
 export const MOCK_WORKFLOW_REPO_STATUS: WorkflowRepoStatus = {
   source_url: 'https://github.corp.internal/cloud-ops/agentic-workflows.git',
-  source_path: '/repos/cloud-ops-workflows',
+  source_path: null,
   source_mode: 'remote',
   default_ref: 'main',
   pinned_ref: 'v2.4.0-prod',

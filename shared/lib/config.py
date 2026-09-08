@@ -70,9 +70,7 @@ class Settings(
     workflow_repo_source: str = ""
     workflow_repo_url: str = ""
     workflow_repo_ref: str = ""
-    workflow_repo_local_path: str = "/workspace/workflows"
-    # Operator-provided host path for UI display only; runtime code uses the
-    # container-local workflow_repo_local_path above.
+    workflow_repo_local_path: str = "/app/workflows"
     workflow_repo_display_path: str = ""
 
     # ── Runtime launcher and memory sync ─────────────────────────

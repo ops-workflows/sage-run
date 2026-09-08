@@ -33,6 +33,8 @@ live in your own workflow repository; this repo is the platform they run on.
 - **Hindsight memory integration** — long-term recall and pattern reflection
   across past incidents, plus per-agent memory volumes backed up to object
   storage.
+- **Knowledge Sources** — workflow-scoped access to immutable, commit-pinned
+  source repositories, indexed into searchable code and symbol graphs.
 - **Web control plane** — tasks, session replay, schedules, approvals,
   analytics, and platform catalogs (MCPs, connectors, memory, workflow-repo
   sync/versioning).
@@ -49,7 +51,6 @@ bus/approvals → completion → memory sync → control-plane UI).
 ## Quick start
 
 ```sh
-cp examples/workflow-repo/platform-config.example.yaml platform-config.yaml
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
@@ -58,7 +59,6 @@ This runs the base stack against
 point at your own workflow repo instead:
 
 ```sh
-HOST_PLATFORM_CONFIG_FILE=/path/to/workflow-repo/platform-config.yaml \
 HOST_WORKFLOW_REPO_PATH=/path/to/workflow-repo \
 docker compose -f deploy/docker-compose.yml up --build
 ```

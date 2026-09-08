@@ -140,23 +140,14 @@ def build_bootstrap_env(config: BootstrapConfig) -> dict[str, str]:
     if config.source == "remote":
         env["WORKFLOW_REPO_URL"] = config.repo_url
         env["WORKFLOW_REPO_REF"] = config.repo_ref
-        if config.target == "compose":
-            local_path = str(Path(config.local_path).expanduser())
-            env["HOST_WORKFLOW_REPO_PATH"] = local_path
-            env["HOST_PLATFORM_CONFIG_FILE"] = str(Path(local_path) / "platform-config.yaml")
-            env["WORKFLOW_COMPOSE_ENV_FILE"] = str(Path(local_path) / "deploy" / "compose.env")
-            env["WORKFLOW_COMPOSE_OVERRIDE_FILE"] = str(Path(local_path) / "deploy" / "docker-compose.override.yml")
     else:
-        local_path = str(Path(config.local_path).expanduser())
         if config.repo_url:
             env["WORKFLOW_REPO_URL"] = config.repo_url
-        if config.target == "compose":
-            env["HOST_WORKFLOW_REPO_PATH"] = local_path
-            env["HOST_PLATFORM_CONFIG_FILE"] = str(Path(local_path) / "platform-config.yaml")
-            env["WORKFLOW_COMPOSE_ENV_FILE"] = str(Path(local_path) / "deploy" / "compose.env")
-            env["WORKFLOW_COMPOSE_OVERRIDE_FILE"] = str(Path(local_path) / "deploy" / "docker-compose.override.yml")
-        else:
-            env["WORKFLOW_REPO_PATHS"] = local_path
+    local_path = str(Path(config.local_path).expanduser())
+    if config.target == "compose":
+        env["HOST_WORKFLOW_REPO_PATH"] = local_path
+    elif config.source == "local":
+        env["WORKFLOW_REPO_PATHS"] = local_path
     if config.target == "kubernetes":
         env["KUBERNETES_NAMESPACE"] = config.namespace
     elif config.compose_mode == "local":

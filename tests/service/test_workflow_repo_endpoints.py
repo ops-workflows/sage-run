@@ -16,6 +16,7 @@ pytestmark = pytest.mark.service
 async def _make_client(
     fixture_workflows_dir: Path,
     *,
+    workflow_repo_source: str = "local",
     workflow_repo_url: str = "",
     workflow_repo_ref: str = "",
 ) -> httpx.AsyncClient:
@@ -24,7 +25,7 @@ async def _make_client(
     settings.workflow_repo_paths = str(fixture_workflows_dir)
     settings.workflow_repo_local_path = str(fixture_workflows_dir)
     settings.workflow_repo_display_path = str(fixture_workflows_dir)
-    settings.workflow_repo_source = "local"
+    settings.workflow_repo_source = workflow_repo_source
     settings.workflow_repo_url = workflow_repo_url
     settings.workflow_repo_ref = workflow_repo_ref
     settings.hindsight_url = "http://127.0.0.1:1"
@@ -67,6 +68,7 @@ async def test_workflow_repo_status_displays_mounted_remote_repository(
 ) -> None:
     async with await _make_client(
         fixture_workflows_dir,
+        workflow_repo_source="remote",
         workflow_repo_url="https://github.com/acme/workflows.git",
         workflow_repo_ref="main",
     ) as client:
@@ -78,6 +80,23 @@ async def test_workflow_repo_status_displays_mounted_remote_repository(
     assert payload["source_url"] == "https://github.com/acme/workflows.git"
     assert payload["source_path"] is None
     assert payload["default_ref"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_workflow_repo_status_keeps_a_local_checkout_local_when_a_url_is_configured(
+    async_engine, fixture_workflows_dir: Path
+) -> None:
+    async with await _make_client(
+        fixture_workflows_dir,
+        workflow_repo_url="https://github.com/acme/workflows.git",
+    ) as client:
+        response = await client.get("/api/platform/workflow-repo")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["source_mode"] == "local"
+    assert payload["source_url"] is None
+    assert payload["source_path"] == str(fixture_workflows_dir)
 
 
 @pytest.mark.asyncio

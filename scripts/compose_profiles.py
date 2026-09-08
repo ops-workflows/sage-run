@@ -13,8 +13,8 @@ Usage:
     COMPOSE_PROFILES="$(python scripts/compose_profiles.py)" \\
         docker compose -f deploy/docker-compose.yml up -d
 
-`--config` defaults to $PLATFORM_CONFIG_FILE / $HOST_PLATFORM_CONFIG_FILE, or
-the bundled example, matching deploy/docker-compose.yml's own default.
+`--config` defaults to $PLATFORM_CONFIG_FILE or the bundled starter config,
+matching deploy/docker-compose.yml's own default.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG = REPO_ROOT / "examples" / "workflow-repo" / "platform-config.example.yaml"
+DEFAULT_CONFIG = REPO_ROOT / "examples" / "workflow-repo" / "platform-config.yaml"
 
 # mcps.enabled name -> compose profile name. Only servers gated by a profile
 # in deploy/docker-compose.yml belong here -- core servers (message, memory,
@@ -59,7 +59,7 @@ MODEL_BACKEND_PROFILES = {
 def _config_path(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit)
-    env_value = os.environ.get("PLATFORM_CONFIG_FILE") or os.environ.get("HOST_PLATFORM_CONFIG_FILE")
+    env_value = os.environ.get("PLATFORM_CONFIG_FILE")
     if env_value:
         return Path(env_value)
     return DEFAULT_CONFIG

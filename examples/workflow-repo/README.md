@@ -22,7 +22,7 @@ for the config-layer model, and the platform root
 
 ```
 examples/workflow-repo/
-├── platform-config.example.yaml   # instance config template (mcps, connectors,
+├── platform-config.yaml           # instance config template (mcps, connectors,
 │                                   # message bus, memory banks, model profiles)
 ├── litellm.config.example.yaml    # model-gateway (LiteLLM) config template
 ├── connectors/

@@ -44,7 +44,7 @@ COMPOSE_PROFILES=custom-example make up
 Set these when the repos are not sibling directories:
 
 ```sh
-export WORKFLOW_REPO_ROOT=/path/to/my-workflow-repo
+export HOST_WORKFLOW_REPO_PATH=/path/to/my-workflow-repo
 ```
 
 ## Kubernetes (Helm)

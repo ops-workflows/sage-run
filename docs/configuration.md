@@ -28,12 +28,18 @@ repo-owned config.
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `WORKFLOW_REPO_URL` | `""` | Canonical Git URL of the workflow repo. A remote source syncs it; a local source uses it for GitHub version lookup and reflection PRs while continuing to use its mounted checkout. |
-| `WORKFLOW_REPO_REF` | `""` | Git ref (tag/SHA) to sync; the bootstrap default until an operator pins a different ref from the UI. |
-| `WORKFLOW_REPO_PATHS` | `""` | `os.pathsep`-separated list of mounted workflow roots (local-path source mode). Each entry can be a single workflow dir, a directory of workflows, or a repo root containing `workflows/`. |
-| `WORKFLOW_REPO_LOCAL_PATH` | `/workspace/workflows` | Container-side path the workflow repo is synced/mounted to. |
+| `WORKFLOW_REPO_SOURCE` | `local` | `local` reads the mounted checkout; `remote` fetches the configured Git ref during Sync. |
+| `WORKFLOW_REPO_URL` | `""` | Canonical Git URL for a remote source. A local checkout may also set it for GitHub-backed reflection actions. |
+| `WORKFLOW_REPO_REF` | `""` | Default Git branch, tag, or SHA for a remote Sync. A UI pin overrides it until changed. |
+| `WORKFLOW_REPO_LOCAL_PATH` | `/app/workflows` | Container-side remote clone location or local checkout mount. Compose uses this default. |
+| `WORKFLOW_REPO_PATHS` | `""` | Advanced, `os.pathsep`-separated additional workflow roots, primarily for Kubernetes deployments with separately mounted storage. |
 | `REPO_PATH` | `""` | Path to a checked-out/mounted workflow repo root. |
 | `HOST_REPO_ROOT` | `""` | Host-side bind-mount path used by the Compose convenience override. |
+
+Compose mounts the single workflow checkout at `/app/workflows`, so it does not
+set `WORKFLOW_ROOT`, `WORKFLOW_REPO_PATHS`, or `WORKFLOW_REPO_LOCAL_PATH`.
+Operators configure the host-side `HOST_WORKFLOW_REPO_PATH` in the generated
+`compose.env`; Compose maps it to that fixed container path.
 
 ### GitHub App connections
 
@@ -345,7 +351,7 @@ an explicit bootstrap env var always wins over the repo's config file.
 ## Layer 2 — `platform-config.yaml` reference
 
 This file lives in the workflow repo (see
-[examples/workflow-repo/platform-config.example.yaml](../examples/workflow-repo/platform-config.example.yaml)
+[examples/workflow-repo/platform-config.yaml](../examples/workflow-repo/platform-config.yaml)
 for the public template) and is read only after the platform has
 cloned/synced the repo.
 

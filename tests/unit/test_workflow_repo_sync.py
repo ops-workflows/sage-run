@@ -34,6 +34,7 @@ def test_remote_branch_sync_checks_out_the_fetched_remote_commit(monkeypatch, tm
 
     checkout = tmp_path / "workflows"
     checkout.mkdir()
+    (checkout / ".git").mkdir()
     commands: list[list[str]] = []
 
     monkeypatch.setattr(settings, "workflow_repo_url", "https://github.com/acme/workflows.git")
@@ -57,6 +58,23 @@ def test_remote_branch_sync_checks_out_the_fetched_remote_commit(monkeypatch, tm
         "--detach",
         "newest-commit",
     ]
+
+
+def test_remote_sync_rejects_a_non_git_workflow_directory(monkeypatch, tmp_path):
+    from shared.lib import workflow_paths
+    from shared.lib.config import settings
+
+    checkout = tmp_path / "workflows"
+    checkout.mkdir()
+    (checkout / "individual-provisioning").mkdir()
+    monkeypatch.setattr(settings, "workflow_repo_url", "https://github.com/acme/workflows.git")
+    monkeypatch.setattr(settings, "workflow_repo_source", "remote")
+    monkeypatch.setattr(settings, "workflow_repo_local_path", str(checkout))
+    monkeypatch.setattr(workflow_paths.shutil, "which", lambda _name: "/usr/bin/git")
+    monkeypatch.setattr(workflow_paths, "load_workflow_repo_github_connection", lambda _path: "")
+
+    with pytest.raises(RuntimeError, match="not a Git checkout"):
+        workflow_paths.sync_workflow_repo_to_ref("main")
 
 
 # ── check_bundle_compatibility ───────────────────────────────────────

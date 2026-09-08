@@ -1,6 +1,6 @@
-# SAGE Run platform configuration example.
-# Copy to platform-config.yaml for local development, or provide equivalent
-# values through your deployment secret/config system.
+# SAGE Run starter platform configuration.
+# Provide equivalent values through your deployment secret/config system when
+# deploying outside Compose.
 #
 # Edit the plain `config:` values directly for local development.
 # Keep sensitive values in `secrets:` encrypted with age.
