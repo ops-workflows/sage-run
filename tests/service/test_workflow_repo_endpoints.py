@@ -13,13 +13,20 @@ from shared.lib.models import Agent, WorkflowRepoState
 pytestmark = pytest.mark.service
 
 
-async def _make_client(fixture_workflows_dir: Path) -> httpx.AsyncClient:
+async def _make_client(
+    fixture_workflows_dir: Path,
+    *,
+    workflow_repo_url: str = "",
+    workflow_repo_ref: str = "",
+) -> httpx.AsyncClient:
     from shared.lib.config import settings
 
     settings.workflow_repo_paths = str(fixture_workflows_dir)
     settings.workflow_repo_local_path = str(fixture_workflows_dir)
     settings.workflow_repo_display_path = str(fixture_workflows_dir)
-    settings.workflow_repo_url = ""
+    settings.workflow_repo_source = "local"
+    settings.workflow_repo_url = workflow_repo_url
+    settings.workflow_repo_ref = workflow_repo_ref
     settings.hindsight_url = "http://127.0.0.1:1"
     if not getattr(settings, "object_store_secret_key", ""):
         settings.object_store_secret_key = "test-secret"
@@ -52,6 +59,25 @@ async def test_workflow_repo_status_returns_local_source_mode_by_default(
         assert payload["source_path"] == str(fixture_workflows_dir)
         assert payload["pinned_ref"] is None
         assert payload["discovered_workflows"] == []
+
+
+@pytest.mark.asyncio
+async def test_workflow_repo_status_displays_mounted_remote_repository(
+    async_engine, fixture_workflows_dir: Path
+) -> None:
+    async with await _make_client(
+        fixture_workflows_dir,
+        workflow_repo_url="https://github.com/acme/workflows.git",
+        workflow_repo_ref="main",
+    ) as client:
+        response = await client.get("/api/platform/workflow-repo")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["source_mode"] == "remote"
+    assert payload["source_url"] == "https://github.com/acme/workflows.git"
+    assert payload["source_path"] is None
+    assert payload["default_ref"] == "main"
 
 
 @pytest.mark.asyncio

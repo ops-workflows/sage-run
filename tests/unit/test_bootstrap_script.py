@@ -35,6 +35,17 @@ def test_session_manager_receives_knowledge_source_bucket_in_compose_and_helm():
     assert "value: {{ .Values.knowledgeSources.objectStoreBucket | quote }}" in helm_template
 
 
+def test_compose_services_receive_workflow_repository_metadata():
+    compose = yaml.safe_load((REPO_ROOT / "deploy/docker-compose.yml").read_text(encoding="utf-8"))
+
+    for service_name in ("gateway", "session-manager"):
+        environment = compose["services"][service_name]["environment"]
+        assert environment["WORKFLOW_REPO_SOURCE"] == "${WORKFLOW_REPO_SOURCE:-local}"
+        assert environment["WORKFLOW_REPO_URL"] == "${WORKFLOW_REPO_URL:-}"
+        assert environment["WORKFLOW_REPO_REF"] == "${WORKFLOW_REPO_REF:-}"
+        assert environment["WORKFLOW_REPO_LOCAL_PATH"] == "/app/workflows"
+
+
 def _remote_config(**overrides) -> BootstrapConfig:
     base = {
         "target": "kubernetes",
@@ -160,6 +171,15 @@ def test_build_bootstrap_env_remote_source_includes_repo_pointer():
     assert env["LLM_API_KEY"] == "sk-model-key"
     assert env["PG_PASSWORD"] == "postgres-secret"
     assert env["OBJECT_STORE_SECRET_KEY"] == "object-store-secret"
+
+
+def test_build_bootstrap_env_remote_compose_retains_repository_metadata():
+    env = build_bootstrap_env(_remote_config(target="compose", compose_mode="production"))
+
+    assert env["WORKFLOW_REPO_SOURCE"] == "local"
+    assert env["WORKFLOW_REPO_URL"] == "https://github.com/acme/workflows.git"
+    assert env["WORKFLOW_REPO_REF"] == "v1.2.3"
+    assert env["HOST_WORKFLOW_REPO_PATH"] == "/home/op/corp-workflows"
 
 
 def test_build_bootstrap_env_remote_source_omits_pat_when_blank():
