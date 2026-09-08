@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SubagentStop hook — auto-retain RCA findings in Hindsight.
+"""Stop/SubagentStop hook — auto-retain RCA findings in Hindsight.
 
 Writes two memories on investigator completion:
 - a business-facing RCA record for incident recall and digesting
@@ -30,7 +30,7 @@ TOOL_INPUT_PREVIEW_LIMIT = 180
 TOOL_RESULT_PREVIEW_LIMIT = 100
 
 
-def emit_hook_event(*, status: str, detail: str = ""):
+def emit_hook_event(*, status: str, detail: str = "", hook_event: str = "SubagentStop"):
     task_id = os.environ.get("TASK_ID", "")
     if not GATEWAY_EVENT_URL or not task_id:
         print(f"[retain_hook] skipping emit: URL={GATEWAY_EVENT_URL!r} TASK_ID={task_id!r}", file=sys.stderr)
@@ -44,7 +44,7 @@ def emit_hook_event(*, status: str, detail: str = ""):
                 "event_type": "hook_event",
                 "data": {
                     "hook_name": "retain_incident",
-                    "hook_event": "SubagentStop",
+                    "hook_event": hook_event,
                     "status": status,
                     "detail": detail[:1000],
                 },
@@ -273,13 +273,14 @@ def _retain_memory(*, bank_id: str, content: str, context: str, document_id: str
 
 
 def main():
-    """Read SubagentStop event from stdin, retain in Hindsight."""
+    """Read a Stop or SubagentStop event from stdin and retain selected memory."""
     try:
         event = json.loads(sys.stdin.read())
     except (json.JSONDecodeError, EOFError):
         print(json.dumps({"continue": True}))
         return
 
+    hook_event = str(event.get("hook_event_name") or "SubagentStop")
     agent_type = event.get("agent_type", "")
     result_text = str(event.get("last_assistant_message") or event.get("last_result_text") or "").strip()
     if not result_text:
@@ -297,40 +298,48 @@ def main():
 
     business_bank_id = resolve_bank_id(task_workflow, "business")
     learning_bank_id = resolve_bank_id(task_workflow, "learning")
+    retain_scope = str(os.environ.get("RETAIN_MEMORY_SCOPE") or "both").strip().lower()
 
     try:
-        business_operation_id = _retain_memory(
-            bank_id=business_bank_id,
-            content=_business_content(issue, result_text),
-            context=f"Incident RCA for {case_id}",
-            document_id=task_id or case_id,
-            metadata={
-                "case_id": case_id,
-                "task_id": task_id,
-                "type": "rca_analysis",
-                "workflow": task_workflow,
-                "bank_kind": "business",
-                "issue": issue,
-            },
-        )
-        learning_operation_id = _retain_memory(
-            bank_id=learning_bank_id,
-            content=_learning_content(issue, trace, result_text),
-            context=f"Workflow learning trace for {case_id}",
-            document_id=(task_id or case_id) + ":learning",
-            metadata={
-                "case_id": case_id,
-                "task_id": task_id,
-                "type": "workflow_learning_trace",
-                "workflow": task_workflow,
-                "bank_kind": "learning",
-                "issue": issue,
-                "result": _result_summary(result_text),
-                "repeated_tools": "; ".join(trace.get("repeated_tools") or []),
-                "successful_tools": "; ".join(trace.get("successful_tools") or []),
-                "tool_error_count": len(trace.get("tool_errors") or []),
-            },
-        )
+        if retain_scope not in {"both", "business", "learning"}:
+            raise ValueError("RETAIN_MEMORY_SCOPE must be both, business, or learning")
+        business_operation_id = ""
+        learning_operation_id = ""
+        if retain_scope in {"both", "business"}:
+            business_operation_id = _retain_memory(
+                bank_id=business_bank_id,
+                content=_business_content(issue, result_text),
+                context=f"Incident RCA for {case_id}",
+                document_id=task_id or case_id,
+                metadata={
+                    "case_id": case_id,
+                    "task_id": task_id,
+                    "type": "rca_analysis",
+                    "workflow": task_workflow,
+                    "bank_kind": "business",
+                    "issue": issue,
+                },
+            )
+        if retain_scope in {"both", "learning"}:
+            learning_operation_id = _retain_memory(
+                bank_id=learning_bank_id,
+                content=_learning_content(issue, trace, result_text),
+                context=f"Workflow learning trace for {case_id}",
+                document_id=(task_id or case_id) + f":learning:{agent_type or 'unknown'}",
+                metadata={
+                    "case_id": case_id,
+                    "task_id": task_id,
+                    "agent_type": agent_type,
+                    "type": "workflow_learning_trace",
+                    "workflow": task_workflow,
+                    "bank_kind": "learning",
+                    "issue": issue,
+                    "result": _result_summary(result_text),
+                    "repeated_tools": "; ".join(trace.get("repeated_tools") or []),
+                    "successful_tools": "; ".join(trace.get("successful_tools") or []),
+                    "tool_error_count": len(trace.get("tool_errors") or []),
+                },
+            )
         emit_hook_event(
             status="success",
             detail=(
@@ -339,10 +348,11 @@ def main():
                 + (f" learning_operation_id={learning_operation_id}" if learning_operation_id else "")
                 + (f" from agent_type={agent_type}" if agent_type else "")
             ),
+            hook_event=hook_event,
         )
         print(f"Queued RCA retain for {case_id}", file=sys.stderr)
     except Exception as exc:
-        emit_hook_event(status="error", detail=str(exc))
+        emit_hook_event(status="error", detail=str(exc), hook_event=hook_event)
         print(f"[retain_hook] Failed to retain: {exc}", file=sys.stderr)
 
     print(json.dumps({"continue": True}))

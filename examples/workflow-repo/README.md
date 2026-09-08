@@ -8,6 +8,11 @@ bootstrap your own workflow repo:
 cp -r examples/workflow-repo /path/to/my-workflow-repo
 ```
 
+Keep `sage-run` checked out beside the copied repository, then run `make lint`
+to check Python, JSON/YAML syntax, and workflow package schemas. Run
+`make format` to apply Ruff fixes and Python formatting. Set `SAGE_RUN_DIR` when
+the platform checkout is elsewhere.
+
 See [docs/workflow-authoring.md](../../docs/workflow-authoring.md) for the
 full package/bundle reference, [docs/configuration.md](../../docs/configuration.md)
 for the config-layer model, and the platform root
