@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 GRAPHIFY_PACKAGE = "graphifyy"
-GRAPHIFY_VERSION = "0.9.40"
+GRAPHIFY_VERSION = "0.9.56"
 GRAPHIFY_GRAPH_FILE = "graph.json"
 GRAPHIFY_MANIFEST_FILE = "manifest.json"
 GRAPHIFY_REPORT_FILE = "GRAPH_REPORT.md"

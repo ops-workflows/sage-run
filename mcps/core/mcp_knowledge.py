@@ -15,27 +15,17 @@ from fastmcp.server.lifespan import lifespan
 from mcps.common import bootstrap_platform_env
 from shared.lib.config import settings
 from shared.lib.db import async_session_factory, ensure_runtime_schema
-from shared.lib.knowledge_source_serving import (
-    KnowledgeSourceServingRegistry,
-)
-from shared.lib.knowledge_source_serving import (
-    find_paths as find_local_paths,
-)
-from shared.lib.knowledge_source_serving import (
-    get_neighbors as get_local_neighbors,
-)
-from shared.lib.knowledge_source_serving import (
-    get_source_excerpt as get_local_source_excerpt,
-)
-from shared.lib.knowledge_source_serving import (
-    get_symbol as get_local_symbol,
-)
-from shared.lib.knowledge_source_serving import (
-    search_source as search_local_source,
-)
-from shared.lib.knowledge_source_serving import (
-    search_symbols as search_local_symbols,
-)
+from shared.lib.knowledge_source_serving import KnowledgeSourceServingRegistry
+from shared.lib.knowledge_source_serving import explain_node as explain_local_node
+from shared.lib.knowledge_source_serving import find_paths as find_local_paths
+from shared.lib.knowledge_source_serving import get_graph_overview as get_local_graph_overview
+from shared.lib.knowledge_source_serving import get_neighbors as get_local_neighbors
+from shared.lib.knowledge_source_serving import get_source_excerpt as get_local_source_excerpt
+from shared.lib.knowledge_source_serving import get_symbol as get_local_symbol
+from shared.lib.knowledge_source_serving import query_graph as query_local_graph
+from shared.lib.knowledge_source_serving import search_source as search_local_source
+from shared.lib.knowledge_source_serving import search_symbols as search_local_symbols
+from shared.lib.knowledge_source_serving import shortest_path as find_local_shortest_path
 
 bootstrap_platform_env()
 logger = logging.getLogger(__name__)
@@ -99,6 +89,84 @@ def list_sources(headers: dict[str, str] = CurrentHeaders()) -> list[dict[str, A
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+def query_graph(
+    source_alias: Annotated[str, "Approved canonical Knowledge Source alias."],
+    question: Annotated[
+        str,
+        "Natural-language code question grounded in provider evidence. The service ranks Graphify nodes and "
+        "returns a bounded BFS or DFS graph traversal; it never scans source files as a fallback.",
+    ],
+    headers: dict[str, str] = CurrentHeaders(),
+    mode: Annotated[str, "bfs for local context or dfs for a specific dependency chain."] = "bfs",
+    depth: Annotated[int, "Traversal depth, from 1 through 6."] = 3,
+    token_budget: Annotated[int, "Approximate maximum output tokens, from 200 through 5000."] = 2000,
+    context_filters: Annotated[
+        list[str] | None,
+        "Optional Graphify relationship filters such as call, import, inherit, or reference.",
+    ] = None,
+) -> dict[str, Any]:
+    """Run Graphify's ranked query and traversal against one commit-pinned graph."""
+    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+        return query_local_graph(
+            snapshot,
+            question,
+            mode=mode,
+            depth=depth,
+            token_budget=token_budget,
+            context_filters=context_filters,
+        )
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+def explain_node(
+    source_alias: Annotated[str, "Approved canonical Knowledge Source alias."],
+    concept: Annotated[
+        str,
+        "Graphify node ID, repository-relative path, or precise symbol label returned by query_graph.",
+    ],
+    headers: dict[str, str] = CurrentHeaders(),
+    limit: Annotated[int, "Maximum connected nodes to return, from 1 through 50."] = 20,
+) -> dict[str, Any]:
+    """Resolve and explain one Graphify concept, including ambiguity and its strongest connections."""
+    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+        return explain_local_node(snapshot, concept, limit=limit)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+def shortest_path(
+    source_alias: Annotated[str, "Approved canonical Knowledge Source alias."],
+    source_concept: Annotated[str, "Precise starting symbol label, path, or Graphify node ID."],
+    target_concept: Annotated[str, "Precise target symbol label, path, or Graphify node ID."],
+    headers: dict[str, str] = CurrentHeaders(),
+    max_hops: Annotated[int, "Maximum path length, from 1 through 12."] = 8,
+    undirected: Annotated[
+        bool,
+        "False follows stored caller-to-callee direction; true is a deliberate fallback that ignores direction.",
+    ] = False,
+) -> dict[str, Any]:
+    """Resolve two concepts and return Graphify's deterministic shortest relationship path."""
+    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+        return find_local_shortest_path(
+            snapshot,
+            source_concept,
+            target_concept,
+            max_hops=max_hops,
+            undirected=undirected,
+        )
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
+def get_graph_overview(
+    source_alias: Annotated[str, "Approved canonical Knowledge Source alias."],
+    headers: dict[str, str] = CurrentHeaders(),
+    limit: Annotated[int, "Maximum high-degree graph nodes to return, from 1 through 20."] = 10,
+) -> dict[str, Any]:
+    """Get commit-pinned graph size and high-degree nodes for broad source orientation."""
+    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+        return get_local_graph_overview(snapshot, limit=limit)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 def search_symbols(
     source_alias: Annotated[str, "Approved canonical Knowledge Source alias."],
     query: Annotated[
@@ -109,7 +177,7 @@ def search_symbols(
     headers: dict[str, str] = CurrentHeaders(),
     limit: Annotated[int, "Maximum results, from 1 through 50."] = 20,
 ) -> list[dict[str, Any]]:
-    """Search symbols, falling back to typed source matches when the graph has no results."""
+    """Use exact graph lookup only when query_graph misses a provider-known identifier."""
     with registry.pin(source_alias, _workflow(headers)) as snapshot:
         return search_local_symbols(snapshot, query, limit=limit)
 
@@ -125,7 +193,7 @@ def search_source(
     headers: dict[str, str] = CurrentHeaders(),
     limit: Annotated[int, "Maximum matching source lines, from 1 through 50."] = 20,
 ) -> dict[str, Any]:
-    """Search one literal anchor in immutable source and return bounded path, line, preview, and commit provenance."""
+    """Use literal source lookup only for a provider-known exact string after graph retrieval misses."""
     with registry.pin(source_alias, _workflow(headers)) as snapshot:
         return search_local_source(snapshot, query, limit=limit)
 
@@ -133,7 +201,7 @@ def search_source(
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 def get_symbol(
     source_alias: Annotated[str, "Approved canonical Knowledge Source alias."],
-    symbol_id: Annotated[str, "Exact Graphify symbol ID returned by search_symbols."],
+    symbol_id: Annotated[str, "Exact Graphify symbol ID returned by query_graph, explain_node, or search_symbols."],
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Get one symbol with repository, commit, and source provenance."""

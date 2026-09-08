@@ -275,6 +275,20 @@ async def test_knowledge_mcp_hydrates_minio_bundle_and_serves_source(
         )
         async with Client(transport, timeout=30) as client:
             listed = await client.call_tool("list_sources", {})
+            queried = await client.call_tool(
+                "query_graph",
+                {
+                    "source_alias": source.canonical_alias,
+                    "question": "Where is knowledge_smoke defined?",
+                    "mode": "bfs",
+                    "depth": 1,
+                    "token_budget": 500,
+                },
+            )
+            explained = await client.call_tool(
+                "explain_node",
+                {"source_alias": source.canonical_alias, "concept": "function:knowledge_smoke"},
+            )
             searched = await client.call_tool(
                 "search_source",
                 {"source_alias": source.canonical_alias, "query": "object-store-backed"},
@@ -288,6 +302,11 @@ async def test_knowledge_mcp_hydrates_minio_bundle_and_serves_source(
                 "status": "ready",
             }
         ]
+        assert queried.data["status"] == "matched"
+        assert queried.data["commit_sha"] == version.commit_sha
+        assert "NODE knowledge_smoke" in queried.data["context"]
+        assert explained.data["status"] == "resolved"
+        assert explained.data["node"]["id"] == "function:knowledge_smoke"
         assert searched.data["matches"][0]["path"] == "app.py"
         assert searched.data["matches"][0]["preview"] == "return 'object-store-backed'"
         assert mcp.exec_run(["test", "-f", f"/tmp/knowledge-cache/{source.id}/{version.id}/.ready"]).exit_code == 0

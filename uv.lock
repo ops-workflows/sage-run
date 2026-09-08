@@ -1104,7 +1104,7 @@ grpc = [
 
 [[package]]
 name = "graphifyy"
-version = "0.9.40"
+version = "0.9.56"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "networkx" },
@@ -1138,9 +1138,9 @@ dependencies = [
     { name = "tree-sitter-verilog" },
     { name = "tree-sitter-zig" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/df/04/7a5dd380cade64dd31474a6f4b33e7179ec92fbb80047b4fbcd8986894da/graphifyy-0.9.40.tar.gz", hash = "sha256:2268955c1cf36e139577222666481c97d332c3c726314899a11a8696655c2a6a", size = 1824094, upload-time = "2026-08-11T14:31:26.941Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/bb/15c8f4732a2ceb4de6b45ae73406ad8660c523995fc19969a22864469e8a/graphifyy-0.9.56.tar.gz", hash = "sha256:33cffc752151ee9f68bac1e9e53c8bba073934d970fb62cad97839fad44b485c", size = 2148747, upload-time = "2026-09-07T19:57:56.829Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/74/9d43292e4ccab74ce2fb473171f08b9f4c27ad59395146a88185b0110139/graphifyy-0.9.40-py3-none-any.whl", hash = "sha256:eb1d2dda00ff599a7e46123996a6559d6300863c4d95cb701f1dbc92e0db1af7", size = 1275722, upload-time = "2026-08-11T14:31:24.868Z" },
+    { url = "https://files.pythonhosted.org/packages/06/7a/8a52785db54d926b9eaf9d3661a9ce062d64bc755ee0c99a916505466be2/graphifyy-0.9.56-py3-none-any.whl", hash = "sha256:4ea42e90d2fdaf932d9ca0c5606da7dc3552b042e1705f6e82964d4d092e8c75", size = 1402428, upload-time = "2026-09-07T19:57:55.122Z" },
 ]
 
 [[package]]
@@ -3118,7 +3118,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.0.0" },
     { name = "google-cloud-pubsub", marker = "extra == 'connectors'", specifier = ">=2.23.0" },
     { name = "google-cloud-storage", marker = "extra == 'connectors'", specifier = ">=2.18.0" },
-    { name = "graphifyy", marker = "extra == 'knowledge-indexer'", specifier = "==0.9.40" },
+    { name = "graphifyy", marker = "extra == 'knowledge-indexer'", specifier = "==0.9.56" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "jsonschema", specifier = ">=4.23.0" },
     { name = "kubernetes", marker = "extra == 'kubernetes'", specifier = ">=30.0.0" },

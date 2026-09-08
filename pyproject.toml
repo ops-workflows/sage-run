@@ -43,7 +43,7 @@ kubernetes = [
     "kubernetes>=30.0.0",
 ]
 knowledge-indexer = [
-    "graphifyy==0.9.40",
+    "graphifyy==0.9.56",
     "zstandard==0.25.0",
 ]
 
