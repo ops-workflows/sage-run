@@ -3,12 +3,40 @@ from __future__ import annotations
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from shared.lib.workflow_bundles import WorkflowRepoMetadata, build_workflow_bundle
 
 pytestmark = pytest.mark.unit
+
+
+def test_git_commit_for_path_trusts_a_bind_mounted_checkout(monkeypatch, tmp_path: Path):
+    from shared.lib import workflow_bundles
+
+    checkout = tmp_path / "workflow-repo"
+    checkout.mkdir()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(workflow_bundles.shutil, "which", lambda _name: "/usr/bin/git")
+    monkeypatch.setattr(
+        workflow_bundles.subprocess,
+        "run",
+        lambda command, **_kwargs: commands.append(command) or SimpleNamespace(stdout="abc123\n"),
+    )
+
+    assert workflow_bundles.git_commit_for_path(checkout) == "abc123"
+    assert commands == [
+        [
+            "/usr/bin/git",
+            "-c",
+            f"safe.directory={checkout.resolve()}",
+            "-C",
+            str(checkout),
+            "rev-parse",
+            "HEAD",
+        ]
+    ]
 
 
 def test_build_workflow_bundle_merges_core_team_and_workflow_assets(
