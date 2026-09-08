@@ -36,6 +36,11 @@ def _split_path_list(value: str) -> list[Path]:
     return [Path(part).expanduser() for part in value.split(os.pathsep) if part.strip()]
 
 
+def _git_repo_command(git_binary: str, local_path: Path, *arguments: str) -> list[str]:
+    """Build a Git command that trusts only this configured checkout."""
+    return [git_binary, "-c", f"safe.directory={local_path.resolve()}", "-C", str(local_path), *arguments]
+
+
 def _sync_configured_workflow_repo(*, ref_override: str | None = None, raise_on_error: bool = False) -> Path | None:
     """Clone/fetch an optional external workflow repo and return its local path.
 
@@ -84,15 +89,21 @@ def _sync_configured_workflow_repo(*, ref_override: str | None = None, raise_on_
                     "Set HOST_WORKFLOW_REPO_PATH to the repository root, including .git, not its workflows directory."
                 )
             else:
-                subprocess.run(  # noqa: S603 - operator-configured workflow repo sync command.
-                    [git_binary, "-C", str(local_path), "remote", "set-url", "origin", repo_url],
+                origin_result = subprocess.run(  # noqa: S603 - reads the configured repository origin.
+                    _git_repo_command(git_binary, local_path, "remote", "get-url", "origin"),
                     check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    capture_output=True,
                     env=dict(git_environment),
                 )
+                origin_url = origin_result.stdout.strip()
+                if origin_url != repo_url:
+                    raise RuntimeError(
+                        f"Workflow repo path {local_path} has origin {origin_url or '<none>'}, not {repo_url}. "
+                        "Set HOST_WORKFLOW_REPO_PATH to a checkout of the configured repository."
+                    )
                 subprocess.run(  # noqa: S603 - operator-configured workflow repo sync command.
-                    [git_binary, "-C", str(local_path), "fetch", "--all", "--prune"],
+                    _git_repo_command(git_binary, local_path, "fetch", "--all", "--prune"),
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -102,7 +113,7 @@ def _sync_configured_workflow_repo(*, ref_override: str | None = None, raise_on_
             if ref:
                 remote_ref = f"refs/remotes/origin/{ref}^{{commit}}"
                 remote_ref_result = subprocess.run(  # noqa: S603 - validates an operator-selected Git ref locally.
-                    [git_binary, "-C", str(local_path), "rev-parse", "--verify", "--quiet", remote_ref],
+                    _git_repo_command(git_binary, local_path, "rev-parse", "--verify", "--quiet", remote_ref),
                     check=False,
                     text=True,
                     capture_output=True,
@@ -110,7 +121,7 @@ def _sync_configured_workflow_repo(*, ref_override: str | None = None, raise_on_
                 )
                 checkout_ref = remote_ref_result.stdout.strip() or ref
                 subprocess.run(  # noqa: S603 - operator-configured workflow repo sync command.
-                    [git_binary, "-C", str(local_path), "checkout", "--detach", checkout_ref],
+                    _git_repo_command(git_binary, local_path, "checkout", "--detach", checkout_ref),
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,

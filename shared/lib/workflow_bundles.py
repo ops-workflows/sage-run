@@ -351,7 +351,7 @@ def git_commit_for_path(path: Path) -> str:
         return ""
     try:
         result = subprocess.run(  # noqa: S603 - read-only git metadata lookup for operator-provided repo path.
-            [git_binary, "-C", str(path), "rev-parse", "HEAD"],
+            [git_binary, "-c", f"safe.directory={path.resolve()}", "-C", str(path), "rev-parse", "HEAD"],
             check=True,
             text=True,
             capture_output=True,

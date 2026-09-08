@@ -46,6 +46,8 @@ def test_remote_branch_sync_checks_out_the_fetched_remote_commit(monkeypatch, tm
 
     def fake_run(command, **_kwargs):
         commands.append(command)
+        if command[-3:] == ["remote", "get-url", "origin"]:
+            return SimpleNamespace(stdout="https://github.com/acme/workflows.git\n")
         if "rev-parse" in command:
             return SimpleNamespace(stdout="newest-commit\n")
         return SimpleNamespace(stdout="")
@@ -58,6 +60,31 @@ def test_remote_branch_sync_checks_out_the_fetched_remote_commit(monkeypatch, tm
         "--detach",
         "newest-commit",
     ]
+    repo_commands = [command for command in commands if "-C" in command]
+    assert repo_commands
+    assert all(command[1:3] == ["-c", f"safe.directory={checkout.resolve()}"] for command in repo_commands)
+
+
+def test_remote_sync_rejects_a_checkout_with_a_different_origin(monkeypatch, tmp_path):
+    from shared.lib import workflow_paths
+    from shared.lib.config import settings
+
+    checkout = tmp_path / "workflows"
+    checkout.mkdir()
+    (checkout / ".git").mkdir()
+    monkeypatch.setattr(settings, "workflow_repo_url", "https://github.com/acme/workflows.git")
+    monkeypatch.setattr(settings, "workflow_repo_source", "remote")
+    monkeypatch.setattr(settings, "workflow_repo_local_path", str(checkout))
+    monkeypatch.setattr(workflow_paths.shutil, "which", lambda _name: "/usr/bin/git")
+    monkeypatch.setattr(workflow_paths, "load_workflow_repo_github_connection", lambda _path: "")
+    monkeypatch.setattr(
+        workflow_paths.subprocess,
+        "run",
+        lambda _command, **_kwargs: SimpleNamespace(stdout="https://github.com/acme/other-workflows.git\n"),
+    )
+
+    with pytest.raises(RuntimeError, match="has origin https://github.com/acme/other-workflows.git"):
+        workflow_paths.sync_workflow_repo_to_ref("main")
 
 
 def test_remote_sync_rejects_a_non_git_workflow_directory(monkeypatch, tmp_path):
