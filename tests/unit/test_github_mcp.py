@@ -153,6 +153,60 @@ def test_issue_and_pr_search_are_separate_with_zero_and_merge_semantics(monkeypa
     assert any(path.endswith("/pulls/7") for path, _params in calls)
 
 
+def test_get_issue_returns_bounded_body_and_recent_comments(monkeypatch, tmp_path) -> None:
+    github = _reload_with_policy(monkeypatch, tmp_path)
+    _configure_connection(github, monkeypatch)
+    calls = []
+
+    def request(_context, path, **_kwargs):
+        assert path.endswith("/issues/12")
+        return {
+            "number": 12,
+            "title": "Existing incident",
+            "body": "x" * (github.MAX_ISSUE_READ_BODY_CHARS + 10),
+            "state": "open",
+            "labels": [{"name": "incident"}],
+            "html_url": "https://github.com/example/online/issues/12",
+            "comments": 7,
+        }
+
+    def request_list(_context, path, *, params=None):
+        calls.append((path, params))
+        page = params["page"]
+        first = 1 if page == 1 else 6
+        last = 5 if page == 1 else 7
+        return [
+            {
+                "user": {"login": f"operator-{index}"},
+                "created_at": "2026-09-01T10:00:00Z",
+                "updated_at": "2026-09-01T10:00:00Z",
+                "html_url": f"https://github.com/example/online/issues/12#issuecomment-{index}",
+                "body": f"status {index}",
+            }
+            for index in range(first, last + 1)
+        ]
+
+    monkeypatch.setattr(github, "_request", request)
+    monkeypatch.setattr(github, "_request_list", request_list)
+
+    result = github.get_issue("online", 12, max_comments=5, headers=_headers())
+
+    assert len(result["issue"]["body"]) == github.MAX_ISSUE_READ_BODY_CHARS
+    assert result["issue"]["comment_count"] == 7
+    assert [comment["author"] for comment in result["issue"]["comments"]] == [
+        "operator-3",
+        "operator-4",
+        "operator-5",
+        "operator-6",
+        "operator-7",
+    ]
+    assert calls == [
+        ("/repos/example/online/issues/12/comments", {"per_page": 5, "page": 1}),
+        ("/repos/example/online/issues/12/comments", {"per_page": 5, "page": 2}),
+    ]
+    assert "positive" in github.get_issue("online", 0, headers=_headers())["error"]
+
+
 def test_issue_writes_require_opt_in_and_send_bounded_payloads(monkeypatch, tmp_path) -> None:
     github = _reload_with_policy(monkeypatch, tmp_path)
     _configure_connection(github, monkeypatch)

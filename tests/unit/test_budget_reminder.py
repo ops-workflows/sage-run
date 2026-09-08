@@ -43,6 +43,14 @@ def _get_sep():
     return sep
 
 
+def test_session_details_url_targets_task_page(monkeypatch):
+    sep = _get_sep()
+    monkeypatch.setattr(sep, "CONTROL_PLANE_UI_URL", "https://sage.example")
+    monkeypatch.setattr(sep, "TASK_ID", "task-123")
+
+    assert sep._session_details_url() == "https://sage.example/tasks/task-123"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("wait_kind", ["user_input", "approval"])
 async def test_query_progress_watchdog_waits_while_human_input_is_active(monkeypatch, wait_kind):

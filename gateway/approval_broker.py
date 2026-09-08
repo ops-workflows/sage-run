@@ -32,7 +32,7 @@ def _session_details_url(task_id: uuid.UUID) -> str | None:
     base = settings.control_plane_ui_url.strip().rstrip("/")
     if not base:
         return None
-    return f"{base}/sessions/{task_id}"
+    return f"{base}/tasks/{task_id}"
 
 
 def _approval_action_context(

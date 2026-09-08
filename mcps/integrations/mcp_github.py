@@ -39,6 +39,9 @@ MAX_CONTEXT_CHARS = 16_384
 MAX_QUERY_CHARS = 256
 MAX_ISSUE_TITLE_CHARS = 256
 MAX_ISSUE_BODY_CHARS = 65_536
+MAX_ISSUE_READ_BODY_CHARS = 16_384
+MAX_ISSUE_COMMENT_CHARS = 2_000
+MAX_ISSUE_COMMENTS = 10
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _OWNER_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -159,14 +162,14 @@ def _validate_labels(labels: list[str]) -> list[str]:
     return [_validate_issue_text(label, field="label", maximum=50) for label in labels]
 
 
-def _request(
+def _request_payload(
     context: RepositoryContext,
     path: str,
     *,
     method: str = "GET",
     params: dict[str, Any] | None = None,
     json_body: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> Any:
     try:
         token = github_installation_token(
             context.connection_name,
@@ -195,7 +198,31 @@ def _request(
         raise ValueError(f"GitHub API request failed with status {exc.response.status_code}") from exc
     except (httpx.HTTPError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError(f"GitHub API request failed: {exc}") from exc
+    return payload
+
+
+def _request(
+    context: RepositoryContext,
+    path: str,
+    *,
+    method: str = "GET",
+    params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = _request_payload(context, path, method=method, params=params, json_body=json_body)
     if not isinstance(payload, dict):
+        raise ValueError("GitHub API returned an unexpected response")
+    return payload
+
+
+def _request_list(
+    context: RepositoryContext,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> list[Any]:
+    payload = _request_payload(context, path, params=params)
+    if not isinstance(payload, list):
         raise ValueError("GitHub API returned an unexpected response")
     return payload
 
@@ -380,6 +407,61 @@ def search_issues(
         "count": len(issues),
         "zero_result_semantics": "no_match_for_this_query" if not issues else "matches_found",
     }
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+def get_issue(
+    repository: Annotated[str, "Workflow-configured repository alias."],
+    issue_number: Annotated[int, "Positive issue number returned by issue search."],
+    max_comments: Annotated[int, "Maximum number of recent comments to return."] = 5,
+    headers: dict[str, str] = CurrentHeaders(),
+) -> dict[str, Any]:
+    """Return bounded current issue details and the most recent comments."""
+    try:
+        context = _parse_repository_context(headers, repository)
+        if issue_number < 1:
+            raise ValueError("GitHub issue number must be positive")
+        comment_limit = max(0, min(max_comments, MAX_ISSUE_COMMENTS))
+        payload = _request(context, _repo_path(context, f"/issues/{issue_number}"))
+        comment_count = max(0, int(payload.get("comments") or 0))
+        comments: list[dict[str, Any]] = []
+        if comment_limit and comment_count:
+            page = (comment_count - 1) // comment_limit + 1
+            raw_comments: list[Any] = []
+            if page > 1 and comment_count % comment_limit:
+                raw_comments.extend(
+                    _request_list(
+                        context,
+                        _repo_path(context, f"/issues/{issue_number}/comments"),
+                        params={"per_page": comment_limit, "page": page - 1},
+                    )
+                )
+            raw_comments.extend(
+                _request_list(
+                    context,
+                    _repo_path(context, f"/issues/{issue_number}/comments"),
+                    params={"per_page": comment_limit, "page": page},
+                )
+            )
+            comments = [
+                {
+                    "author": str((item.get("user") or {}).get("login") or ""),
+                    "created_at": str(item.get("created_at") or ""),
+                    "updated_at": str(item.get("updated_at") or ""),
+                    "url": str(item.get("html_url") or ""),
+                    "body": str(item.get("body") or "")[:MAX_ISSUE_COMMENT_CHARS],
+                }
+                for item in raw_comments[-comment_limit:]
+                if isinstance(item, dict)
+            ]
+    except (TypeError, ValueError) as exc:
+        return {"error": str(exc)}
+
+    issue = _project_issue(payload)
+    issue["body"] = str(payload.get("body") or "")[:MAX_ISSUE_READ_BODY_CHARS]
+    issue["comments"] = comments
+    issue["comment_count"] = comment_count
+    return {"repository": context.alias, "issue": issue}
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})

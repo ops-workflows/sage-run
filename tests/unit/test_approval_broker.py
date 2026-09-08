@@ -71,6 +71,28 @@ def test_slack_approval_payload_has_provider_action_context() -> None:
     assert all("token" not in json.loads(action["value"]) for action in actions)
 
 
+def test_approval_payloads_link_to_task_page(monkeypatch) -> None:
+    task = SimpleNamespace(id=uuid.uuid4(), prompt="Investigate", workflow="platform-test")
+    approval = SimpleNamespace(
+        id=uuid.uuid4(),
+        task_id=task.id,
+        workflow=task.workflow,
+        tool_name="Bash",
+        request_preview="echo approval-needed",
+        approval_metadata={},
+    )
+    monkeypatch.setattr(approval_broker.settings, "control_plane_ui_url", "https://sage.example/")
+
+    mattermost_text, _props = approval_broker._approval_post_payload(task, approval)
+    slack_text, _blocks = approval_broker._slack_approval_post_payload(task, approval)
+
+    expected_url = f"https://sage.example/tasks/{task.id}"
+    assert expected_url in mattermost_text
+    assert expected_url in slack_text
+    assert "/sessions/" not in mattermost_text
+    assert "/sessions/" not in slack_text
+
+
 def test_mattermost_resolution_payload_preserves_request_details() -> None:
     task = SimpleNamespace(id=uuid.uuid4(), prompt="Investigate", workflow="platform-test")
     approval = SimpleNamespace(

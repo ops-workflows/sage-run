@@ -19,7 +19,7 @@ remember to call the tools:
 | Hook | Event | Behavior |
 | --- | --- | --- |
 | `hooks/auto_recall_hook.py` | `SessionStart` | Queries long-term memory for entries relevant to the coordinator task prompt and injects them as invisible `additionalContext` (labeled `[Long-term memory — similar past incidents]`), so the main agent starts with that context without an explicit `recall_similar` call. It skips subagents. |
-| `hooks/retain_incident_hook.py` | `SubagentStop` | On investigator completion, writes two memories: a business-facing RCA record (for recall and digests) and a workflow-learning trace (for later reflection). Never blocks the session. |
+| `hooks/retain_incident_hook.py` | `Stop` or `SubagentStop` | Writes a business-facing RCA record, a workflow-learning trace, or both according to `RETAIN_MEMORY_SCOPE`. This lets workflows retain a final coordinator synthesis separately from partial specialist traces. Never blocks the session. |
 
 Explicit tools remain available for targeted retrieval — e.g. a digest
 workflow calls `recall_for_digest` over a recent window, and the weekly

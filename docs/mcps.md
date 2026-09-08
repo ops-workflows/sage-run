@@ -239,6 +239,7 @@ no match.
 | `search_code` | Return bounded path candidates within the repository path allowlist. |
 | `get_file_excerpt` | Return a bounded UTF-8 excerpt at an exact commit SHA. |
 | `search_issues` | Search issues only by bounded query, state, and optional labels. |
+| `get_issue` | Return bounded current issue details and recent comments. |
 | `search_pull_requests` | Search PRs separately and return authoritative merge status. |
 | `create_issue` | Create a bounded issue when the repository alias sets `issue_write: true`. |
 | `update_issue` | Update title, body, state, or labels when the alias sets `issue_write: true`. |

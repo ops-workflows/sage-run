@@ -867,7 +867,7 @@ def _session_details_url() -> str:
     """Return a session detail URL when the control-plane UI base URL is configured."""
     if not CONTROL_PLANE_UI_URL:
         return ""
-    return f"{CONTROL_PLANE_UI_URL}/sessions/{TASK_ID}"
+    return f"{CONTROL_PLANE_UI_URL}/tasks/{TASK_ID}"
 
 
 async def _post_thread_message(text: str) -> dict[str, Any] | None:
