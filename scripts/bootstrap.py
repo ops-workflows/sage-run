@@ -135,7 +135,7 @@ def build_bootstrap_env(config: BootstrapConfig) -> dict[str, str]:
         "LLM_API_KEY": config.llm_api_key,
         "PG_PASSWORD": config.pg_password,
         "OBJECT_STORE_SECRET_KEY": config.object_store_secret_key,
-        "WORKFLOW_REPO_SOURCE": "local" if config.target == "compose" else config.source,
+        "WORKFLOW_REPO_SOURCE": config.source,
     }
     if config.source == "remote":
         env["WORKFLOW_REPO_URL"] = config.repo_url
