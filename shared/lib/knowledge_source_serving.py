@@ -7,13 +7,21 @@ import json
 import shutil
 import threading
 import uuid
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from graphify.build import edge_datas
+from graphify.serve import (
+    _query_graph_text,
+    _query_terms,
+    _resolve_single_node,
+    _shortest_path_text,
+)
+from networkx.readwrite import json_graph
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +43,8 @@ MAX_SOURCE_SEARCH_QUERY_CHARS = 256
 MAX_SOURCE_SEARCH_FILE_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_SEARCH_PREVIEW_CHARS = 500
 SOURCE_SEARCH_SKIP_DIRS = frozenset({".git", ".serena", ".next", "build", "dist", "node_modules", "target"})
+MAX_GRAPH_QUERY_CHARS = 512
+MAX_GRAPH_QUERY_DEPTH = 6
 
 
 @dataclass(frozen=True)
@@ -45,6 +55,7 @@ class ServingSnapshot:
     commit_sha: str
     graph: dict[str, Any]
     source_root: Path
+    graphify_graph: Any | None = None
 
 
 class KnowledgeSourceServingRegistry:
@@ -191,20 +202,7 @@ def search_symbols(snapshot: ServingSnapshot, query: str, *, limit: int = 20) ->
             matches.append(_node_result(snapshot, node))
             if len(matches) == bounded_limit:
                 break
-    if matches:
-        return matches
-
-    source_result = search_source(snapshot, query, limit=bounded_limit)
-    return [
-        {
-            "result_type": "source_match",
-            "source": source_result["source"],
-            "commit_sha": source_result["commit_sha"],
-            "query": source_result["query"],
-            **match,
-        }
-        for match in source_result["matches"]
-    ]
+    return matches
 
 
 def search_source(snapshot: ServingSnapshot, query: str, *, limit: int = 20) -> dict[str, Any]:
@@ -248,6 +246,193 @@ def search_source(snapshot: ServingSnapshot, query: str, *, limit: int = 20) -> 
         "count": min(len(matches), bounded_limit),
         "truncated": len(matches) > bounded_limit,
     }
+
+
+def query_graph(
+    snapshot: ServingSnapshot,
+    question: str,
+    *,
+    mode: str = "bfs",
+    depth: int = 3,
+    token_budget: int = 2000,
+    context_filters: list[str] | None = None,
+) -> dict[str, Any]:
+    """Query a pinned source with Graphify's official scoring and traversal.
+
+    This intentionally does not fall back to source-file search: excerpts are a
+    separate evidence-verification step after Graphify identifies context.
+    """
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("Graph query question is required")
+    if len(question) > MAX_GRAPH_QUERY_CHARS or any(ord(char) < 32 for char in question):
+        raise ValueError(f"Graph query must be one line of at most {MAX_GRAPH_QUERY_CHARS} characters")
+    if mode not in {"bfs", "dfs"}:
+        raise ValueError("Graph query mode must be bfs or dfs")
+    if not 1 <= depth <= MAX_GRAPH_QUERY_DEPTH:
+        raise ValueError(f"Graph query depth must be between 1 and {MAX_GRAPH_QUERY_DEPTH}")
+    if not 200 <= token_budget <= 5000:
+        raise ValueError("Graph query token budget must be between 200 and 5000")
+    context = _query_graph_text(
+        _graphify_graph(snapshot),
+        question,
+        mode=mode,
+        depth=depth,
+        token_budget=token_budget,
+        context_filters=context_filters,
+    )
+    return {
+        "source": snapshot.canonical_alias,
+        "commit_sha": snapshot.commit_sha,
+        "question": question,
+        "query_terms": _query_terms(question),
+        "mode": mode,
+        "depth": depth,
+        "context_filters": context_filters or [],
+        "status": "no_match" if context == "No matching nodes found." else "matched",
+        "context": context,
+    }
+
+
+def explain_node(snapshot: ServingSnapshot, concept: str, *, limit: int = 20) -> dict[str, Any]:
+    """Resolve and explain one concept using Graphify's official node matching."""
+    if not isinstance(concept, str) or not concept.strip():
+        raise ValueError("Graph concept is required")
+    bounded_limit = _bounded_limit(limit, maximum=50)
+    graph = _graphify_graph(snapshot)
+    node_id, error = _resolve_single_node(graph, concept)
+    if error or node_id is None:
+        return {
+            "source": snapshot.canonical_alias,
+            "commit_sha": snapshot.commit_sha,
+            "concept": concept,
+            "status": "not_resolved",
+            "detail": error or "Graphify could not resolve the concept.",
+        }
+
+    graph_node = graph.nodes[node_id]
+    connections = []
+    seen: set[tuple[str, str, str]] = set()
+    for first, second in (*graph.out_edges(node_id), *graph.in_edges(node_id)):
+        neighbor_id = second if first == node_id else first
+        for edge in edge_datas(graph, first, second):
+            source_id = str(edge.get("_src") or first)
+            target_id = str(edge.get("_tgt") or second)
+            key = (source_id, target_id, str(edge.get("relation") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            neighbor = _node_result(snapshot, graph.nodes[neighbor_id])
+            neighbor["id"] = neighbor_id
+            connections.append(
+                {
+                    "direction": "outgoing" if source_id == node_id else "incoming",
+                    "relation": _public_link(edge),
+                    "symbol": neighbor,
+                }
+            )
+    connections.sort(
+        key=lambda item: (
+            item["direction"],
+            str(item["relation"].get("relation") or ""),
+            str(item["symbol"].get("id") or ""),
+        )
+    )
+    node = _node_result(snapshot, graph_node)
+    node["id"] = node_id
+    node["degree"] = graph.degree(node_id)
+    return {
+        "source": snapshot.canonical_alias,
+        "commit_sha": snapshot.commit_sha,
+        "concept": concept,
+        "status": "resolved",
+        "node": node,
+        "connections": connections[:bounded_limit],
+        "truncated": len(connections) > bounded_limit,
+    }
+
+
+def shortest_path(
+    snapshot: ServingSnapshot,
+    source_concept: str,
+    target_concept: str,
+    *,
+    max_hops: int = 8,
+    undirected: bool = False,
+) -> dict[str, Any]:
+    """Trace two concepts with Graphify's official endpoint and path logic."""
+    if not source_concept.strip() or not target_concept.strip():
+        raise ValueError("Both graph path concepts are required")
+    if not 1 <= max_hops <= 12:
+        raise ValueError("Maximum graph path hops must be between 1 and 12")
+    context = _shortest_path_text(
+        _graphify_graph(snapshot),
+        {
+            "source": source_concept,
+            "target": target_concept,
+            "max_hops": max_hops,
+            "undirected": undirected,
+        },
+    )
+    if "Shortest path (" in context:
+        status = "resolved"
+    elif context.startswith("No node") or "both resolved to the same node" in context:
+        status = "not_resolved"
+    else:
+        status = "not_connected"
+    return {
+        "source": snapshot.canonical_alias,
+        "commit_sha": snapshot.commit_sha,
+        "source_concept": source_concept,
+        "target_concept": target_concept,
+        "status": status,
+        "context": context,
+    }
+
+
+def get_graph_overview(snapshot: ServingSnapshot, *, limit: int = 10) -> dict[str, Any]:
+    """Return commit-pinned graph size and its highest-degree graph nodes."""
+    bounded_limit = _bounded_limit(limit, maximum=20)
+    degrees: Counter[str] = Counter()
+    for link in snapshot.graph["links"]:
+        degrees[link["source"]] += 1
+        degrees[link["target"]] += 1
+    nodes = _nodes_by_id(snapshot)
+    hubs = []
+    for node_id in sorted(nodes, key=lambda item: (-degrees[item], item))[:bounded_limit]:
+        result = _node_result(snapshot, nodes[node_id])
+        result["degree"] = degrees[node_id]
+        hubs.append(result)
+    return {
+        "source": snapshot.canonical_alias,
+        "commit_sha": snapshot.commit_sha,
+        "node_count": len(nodes),
+        "link_count": len(snapshot.graph["links"]),
+        "hyperedge_count": len(snapshot.graph["hyperedges"]),
+        "hub_nodes": hubs,
+    }
+
+
+def _graphify_graph(snapshot: ServingSnapshot):
+    if snapshot.graphify_graph is not None:
+        return snapshot.graphify_graph
+    return _build_graphify_graph(snapshot.graph)
+
+
+def _build_graphify_graph(source: dict[str, Any]):
+    data = dict(source)
+    if "links" not in data and "edges" in data:
+        data["links"] = data["edges"]
+    data["nodes"] = [
+        {**node, "label": node.get("label") or node.get("name") or node["id"]} for node in data.get("nodes", [])
+    ]
+    logical_directed = bool(data.get("directed", False))
+    data["directed"] = True
+    try:
+        graph = json_graph.node_link_graph(data, edges="links")
+    except TypeError:
+        graph = json_graph.node_link_graph(data)
+    graph.graph["_logical_directed"] = logical_directed
+    return graph
 
 
 def get_symbol(snapshot: ServingSnapshot, symbol_id: str) -> dict[str, Any]:
@@ -355,6 +540,7 @@ def _load_snapshot(
         commit_sha=version.commit_sha,
         graph=graph,
         source_root=hydrated.source_root,
+        graphify_graph=_build_graphify_graph(graph),
     )
 
 

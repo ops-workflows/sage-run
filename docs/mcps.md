@@ -74,12 +74,16 @@ successfully indexed.
 | Tool | Purpose |
 | --- | --- |
 | `list_sources` | List authorized, locally ready source aliases. |
-| `search_source` | Search literal text in an authorized immutable source snapshot and return bounded path/line previews. |
-| `search_symbols` | Search one authorized immutable source version. |
-| `get_symbol` | Read one source symbol and provenance. |
-| `get_neighbors` | Inspect bounded graph relationships. |
-| `find_paths` | Find bounded symbol paths in one source graph. |
+| `query_graph` | Run Graphify's ranked natural-language query with bounded BFS or DFS traversal and no raw-source fallback. |
+| `explain_node` | Resolve a node ID, repository path, or precise label with Graphify ambiguity handling and return its bounded connections. |
+| `shortest_path` | Resolve two concepts and return Graphify's deterministic directed path; optionally retry undirected for structural proximity. |
+| `get_graph_overview` | Return graph size and high-degree nodes for source orientation. |
+| `get_symbol` | Verify one graph candidate and provenance by its exact ID. |
+| `get_neighbors` | Verify bounded graph relationships for one exact candidate. |
+| `find_paths` | Verify bounded paths between two exact graph candidates. |
 | `get_source_excerpt` | Read a bounded, commit-pinned source excerpt. |
+| `search_symbols` | Secondary exact graph lookup for a provider-known identifier after graph retrieval misses. |
+| `search_source` | Secondary literal lookup for an exact provider-known source string after graph retrieval misses. |
 
 ### `platform` — platform self-service
 

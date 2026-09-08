@@ -9,3 +9,4 @@ asyncpg>=0.29.0
 minio>=7.2.0
 sqlalchemy[asyncio]>=2.0.30
 zstandard==0.25.0
+graphifyy==0.9.56

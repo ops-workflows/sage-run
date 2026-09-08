@@ -8,16 +8,21 @@ from types import SimpleNamespace
 
 import pytest
 
+import shared.lib.knowledge_source_serving as knowledge_serving
 from shared.lib.knowledge_source_serving import (
     KnowledgeSourceAccessError,
     KnowledgeSourceServingRegistry,
     ServingSnapshot,
     _workflow_has_knowledge_mcp,
+    explain_node,
     find_paths,
+    get_graph_overview,
     get_neighbors,
     get_source_excerpt,
+    query_graph,
     search_source,
     search_symbols,
+    shortest_path,
 )
 
 pytestmark = pytest.mark.unit
@@ -95,24 +100,12 @@ def test_source_search_is_literal_bounded_and_skips_generated_content(tmp_path: 
         search_source(snapshot, "needle\nsecond line")
 
 
-def test_symbol_search_falls_back_to_typed_source_matches(tmp_path: Path) -> None:
+def test_symbol_search_does_not_fall_back_to_source_scan(tmp_path: Path) -> None:
     snapshot = _snapshot(tmp_path)
 
     result = search_symbols(snapshot, "return helper()")
 
-    assert result == [
-        {
-            "result_type": "source_match",
-            "source": "org/example",
-            "commit_sha": "a" * 40,
-            "query": "return helper()",
-            "path": "app.py",
-            "line": 2,
-            "column": 5,
-            "preview": "return helper()",
-        }
-    ]
-    assert "id" not in result[0]
+    assert result == []
 
 
 def test_symbol_search_does_not_mix_graph_and_source_matches(tmp_path: Path) -> None:
@@ -122,6 +115,83 @@ def test_symbol_search_does_not_mix_graph_and_source_matches(tmp_path: Path) -> 
 
     assert [match["id"] for match in result] == ["function:main"]
     assert all("result_type" not in match for match in result)
+
+
+def test_query_graph_ranks_and_traverses_commit_pinned_graph(tmp_path: Path) -> None:
+    snapshot = _snapshot(tmp_path)
+
+    result = query_graph(snapshot, "How does main call helper?", mode="bfs", depth=1, token_budget=1000)
+
+    assert result["status"] == "matched"
+    assert result["source"] == "org/example"
+    assert result["commit_sha"] == "a" * 40
+    assert result["query_terms"] == ["main", "call", "helper"]
+    assert "Traversal: BFS depth=1" in result["context"]
+    assert "Start: ['main', 'helper']" in result["context"]
+    assert "NODE main [src=app.py" in result["context"]
+    assert "NODE helper [src=app.py" in result["context"]
+
+    main_result = query_graph(snapshot, "main", mode="bfs", depth=1, token_budget=1000)
+    assert "Start: ['main']" in main_result["context"]
+    assert "NODE main [src=app.py" in main_result["context"]
+    assert "NODE helper [src=app.py" in main_result["context"]
+
+
+def test_explain_node_uses_graphify_resolution_and_returns_provenance(tmp_path: Path) -> None:
+    snapshot = _snapshot(tmp_path)
+
+    result = explain_node(snapshot, "main")
+
+    assert result["status"] == "resolved"
+    assert result["source"] == "org/example"
+    assert result["commit_sha"] == "a" * 40
+    assert result["node"]["id"] == "function:main"
+    assert result["connections"][0]["direction"] == "outgoing"
+    assert result["connections"][0]["symbol"]["id"] == "function:helper"
+
+
+def test_shortest_path_uses_graphify_resolution_and_edge_direction(tmp_path: Path) -> None:
+    snapshot = _snapshot(tmp_path)
+
+    result = shortest_path(snapshot, "main", "helper")
+    reverse = shortest_path(snapshot, "helper", "main")
+
+    assert result["status"] == "resolved"
+    assert result["source"] == "org/example"
+    assert result["commit_sha"] == "a" * 40
+    assert "Shortest path (1 hops)" in result["context"]
+    assert "main --CALLS--> helper" in result["context"]
+    assert reverse["status"] == "not_connected"
+    assert "No directed path" in reverse["context"]
+
+
+def test_graph_overview_returns_commit_pinned_hubs(tmp_path: Path) -> None:
+    snapshot = _snapshot(tmp_path)
+
+    overview = get_graph_overview(snapshot)
+
+    assert overview["source"] == "org/example"
+    assert overview["commit_sha"] == "a" * 40
+    assert overview["node_count"] == 2
+    assert overview["link_count"] == 1
+    assert [(node["id"], node["degree"]) for node in overview["hub_nodes"]] == [
+        ("function:helper", 1),
+        ("function:main", 1),
+    ]
+
+
+def test_query_graph_never_falls_back_to_source_search(tmp_path: Path, monkeypatch) -> None:
+    snapshot = _snapshot(tmp_path)
+
+    def _unexpected_source_search(*args, **kwargs):
+        raise AssertionError("query_graph must not inspect raw source files")
+
+    monkeypatch.setattr(knowledge_serving, "search_source", _unexpected_source_search)
+
+    result = query_graph(snapshot, "main", mode="bfs", depth=1, token_budget=1000)
+
+    assert result["status"] == "matched"
+    assert "NODE main [src=app.py" in result["context"]
 
 
 def test_registry_authorizes_and_pins_workflow_with_knowledge_mcp(tmp_path: Path, monkeypatch) -> None:

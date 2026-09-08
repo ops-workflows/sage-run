@@ -74,7 +74,7 @@ def test_run_graphify_uses_one_pinned_code_only_command(monkeypatch: pytest.Monk
         timeout_sec=90,
     )
 
-    assert GRAPHIFY_VERSION == "0.9.40"
+    assert GRAPHIFY_VERSION == "0.9.56"
     assert observed["commands"] == [
         [
             "/opt/graphify/bin/graphify",
