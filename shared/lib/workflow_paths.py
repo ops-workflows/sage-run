@@ -95,8 +95,17 @@ def _sync_configured_workflow_repo(*, ref_override: str | None = None, raise_on_
                 )
 
             if ref:
+                remote_ref = f"refs/remotes/origin/{ref}^{{commit}}"
+                remote_ref_result = subprocess.run(  # noqa: S603 - validates an operator-selected Git ref locally.
+                    [git_binary, "-C", str(local_path), "rev-parse", "--verify", "--quiet", remote_ref],
+                    check=False,
+                    text=True,
+                    capture_output=True,
+                    env=dict(git_environment),
+                )
+                checkout_ref = remote_ref_result.stdout.strip() or ref
                 subprocess.run(  # noqa: S603 - operator-configured workflow repo sync command.
-                    [git_binary, "-C", str(local_path), "checkout", ref],
+                    [git_binary, "-C", str(local_path), "checkout", "--detach", checkout_ref],
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,6 +26,37 @@ def test_github_git_auth_uses_ephemeral_askpass_environment():
         assert environment["GIT_TERMINAL_PROMPT"] == "0"
         assert environment["GITHUB_APP_INSTALLATION_TOKEN"] == "installation-token"
     assert not script_path.exists()
+
+
+def test_remote_branch_sync_checks_out_the_fetched_remote_commit(monkeypatch, tmp_path):
+    from shared.lib import workflow_paths
+    from shared.lib.config import settings
+
+    checkout = tmp_path / "workflows"
+    checkout.mkdir()
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(settings, "workflow_repo_url", "https://github.com/acme/workflows.git")
+    monkeypatch.setattr(settings, "workflow_repo_source", "remote")
+    monkeypatch.setattr(settings, "workflow_repo_ref", "main")
+    monkeypatch.setattr(settings, "workflow_repo_local_path", str(checkout))
+    monkeypatch.setattr(workflow_paths.shutil, "which", lambda _name: "/usr/bin/git")
+    monkeypatch.setattr(workflow_paths, "load_workflow_repo_github_connection", lambda _path: "")
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        if "rev-parse" in command:
+            return SimpleNamespace(stdout="newest-commit\n")
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(workflow_paths.subprocess, "run", fake_run)
+
+    assert workflow_paths.sync_workflow_repo_to_ref("main") == checkout
+    assert next(command[-3:] for command in commands if "checkout" in command) == [
+        "checkout",
+        "--detach",
+        "newest-commit",
+    ]
 
 
 # ── check_bundle_compatibility ───────────────────────────────────────

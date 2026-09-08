@@ -177,6 +177,13 @@ When the workflow repository contains `deploy/docker-compose.override.yml`,
 bootstrap records it as `WORKFLOW_COMPOSE_OVERRIDE_FILE` and the Makefile loads
 it after the public base stack.
 
+For a remote Compose source, the gateway manages the mounted workflow-repository
+checkout: **Sync now** fetches the configured or pinned ref and checks out its
+resolved commit before building bundles. Mount the repository root (including
+`.git`), not its `workflows/` subdirectory. The gateway can update that checkout;
+the session manager consumes the same checkout read-only, so workflow details
+and newly built task bundles describe the same revision.
+
 ## `make` targets
 
 | Target | Does |
@@ -262,8 +269,10 @@ button — runs one pipeline (`shared/lib/workflow_repo_sync.py::sync_workflow_r
    errors, sync status/error, timestamp — to the `control_plane.workflow_repo_state`
    singleton row.
 
-"Update" always means re-syncing to an explicitly pinned ref — never a silent
-pull of `main`. Sync never touches bootstrap secrets (repo URL/PAT,
+For a remote source, Sync fetches the configured ref (such as `main`) or a
+version pinned from the UI. A pin stays in effect for later syncs until changed.
+Local-path mode never fetches and simply rebuilds from the mounted files. Sync
+never touches bootstrap secrets (repo URL/PAT,
 `AGE_IDENTITY`, `LLM_API_KEY`); changing those means re-running
 `make bootstrap`.
 

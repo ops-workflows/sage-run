@@ -160,10 +160,6 @@ function WorkflowRepoSyncSection() {
   }
 
   const bundleErrorEntries = status ? Object.entries(status.bundle_errors) : [];
-  const activeRef = status
-    ? status.last_synced_ref || status.pinned_ref || status.default_ref || '-'
-    : '-';
-
   return (
     <section className="border-t border-ops-border pt-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -203,7 +199,7 @@ function WorkflowRepoSyncSection() {
             </h3>
             <SyncStatusBadge status={status.last_sync_status} />
           </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
             <ExpandableMeta
               label={
                 status.source_mode === 'remote' ? 'Source' : 'Local source'
@@ -214,7 +210,6 @@ function WorkflowRepoSyncSection() {
                   : status.source_path || 'Local checkout'
               }
             />
-            <ExpandableMeta label="Active ref" value={activeRef} />
             <ExpandableMeta
               label="Commit"
               value={status.last_synced_commit || '-'}

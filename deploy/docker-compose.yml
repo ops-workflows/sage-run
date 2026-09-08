@@ -152,7 +152,7 @@ services:
       RUNTIME_BUNDLE_ROOT: ${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}
     volumes:
       - ${HOST_PLATFORM_CONFIG_FILE:-../examples/workflow-repo/platform-config.example.yaml}:/app/platform-config.yaml:ro
-      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo/workflows}:/app/workflows:ro
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo/workflows}:/app/workflows
       - ${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}:${RUNTIME_BUNDLE_ROOT:-/tmp/sage-run-runtime-bundles}
       - ../connectors:/app/connectors:ro
       - ../shared:/app/shared:ro
@@ -178,7 +178,7 @@ services:
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
       WORKFLOW_ROOT: /app/workflows
       WORKFLOW_REPO_PATHS: ${WORKFLOW_REPO_PATHS:-/app/workflows}
-      WORKFLOW_REPO_SOURCE: ${WORKFLOW_REPO_SOURCE:-local}
+      WORKFLOW_REPO_SOURCE: local
       WORKFLOW_REPO_URL: ${WORKFLOW_REPO_URL:-}
       WORKFLOW_REPO_REF: ${WORKFLOW_REPO_REF:-}
       WORKFLOW_REPO_LOCAL_PATH: /app/workflows
