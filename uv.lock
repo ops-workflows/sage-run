@@ -3070,6 +3070,7 @@ dependencies = [
     { name = "docker" },
     { name = "fastapi" },
     { name = "fastmcp" },
+    { name = "graphifyy" },
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "minio" },
@@ -3099,7 +3100,6 @@ dev = [
     { name = "zstandard" },
 ]
 knowledge-indexer = [
-    { name = "graphifyy" },
     { name = "zstandard" },
 ]
 kubernetes = [
@@ -3118,7 +3118,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.0.0" },
     { name = "google-cloud-pubsub", marker = "extra == 'connectors'", specifier = ">=2.23.0" },
     { name = "google-cloud-storage", marker = "extra == 'connectors'", specifier = ">=2.18.0" },
-    { name = "graphifyy", marker = "extra == 'knowledge-indexer'", specifier = "==0.9.56" },
+    { name = "graphifyy", specifier = "==0.9.56" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "jsonschema", specifier = ">=4.23.0" },
     { name = "kubernetes", marker = "extra == 'kubernetes'", specifier = ">=30.0.0" },
