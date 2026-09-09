@@ -8,9 +8,20 @@ import json
 
 import pytest
 
-from mcps.integrations.mcp_splunk import compact_splunk_evidence
+from mcps.integrations.mcp_splunk import _enforce_online_alert_budget, compact_splunk_evidence, task_call_budget
 
 pytestmark = pytest.mark.unit
+
+
+def test_online_alert_budget_uses_task_header_and_ignores_other_workflows(monkeypatch) -> None:
+    consumed = []
+    monkeypatch.setattr(task_call_budget, "consume", consumed.append)
+
+    _enforce_online_alert_budget({"x-task-workflow": "online-alerts-investigator", "x-task-id": "task-a"})
+    _enforce_online_alert_budget({"x-task-workflow": "other", "x-task-id": "task-b"})
+    _enforce_online_alert_budget({"x-task-workflow": "online-alerts-investigator"})
+
+    assert consumed == ["task-a"]
 
 
 def _reload_with_policy(monkeypatch, tmp_path):

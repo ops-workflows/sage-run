@@ -24,6 +24,7 @@ from mcps.evidence import (
     redact_text,
 )
 from shared.lib.platform_secrets import load_mcp_server_config
+from shared.lib.task_call_budget import TaskCallBudget
 
 bootstrap_platform_env()
 
@@ -56,6 +57,23 @@ _UNSAFE_SPL_RE = re.compile(r"(?i)(?:^|[|\s])(collect|delete|dump|outputcsv|outp
 _EMBEDDED_TIME_RE = re.compile(r"(?i)(?:^|\s)(?:earliest|latest)\s*=")
 _RELATIVE_TIME_RE = re.compile(r"^-(\d+)([mhd])$")
 _SID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,512}$")
+ONLINE_ALERTS_WORKFLOW = "online-alerts-investigator"
+ONLINE_ALERTS_SPLUNK_CALL_LIMIT = 2
+task_call_budget = TaskCallBudget(
+    limit=ONLINE_ALERTS_SPLUNK_CALL_LIMIT,
+    max_tasks=10_000,
+    resource_name="Splunk MCP",
+    exhausted_instruction="Return the provider evidence already collected; do not retry.",
+)
+
+
+def _enforce_online_alert_budget(headers: dict[str, str] | Any) -> None:
+    if not isinstance(headers, dict):
+        return
+    workflow = headers.get("x-task-workflow", "").strip().lower()
+    task_id = headers.get("x-task-id", "").strip()
+    if workflow == ONLINE_ALERTS_WORKFLOW and task_id:
+        task_call_budget.consume(task_id)
 
 
 def _json_object(value: Any, warnings: list[str], field: str) -> dict[str, Any]:
@@ -345,6 +363,7 @@ def search_logs(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Search Splunk with text or SPL over an optional bounded time window."""
+    _enforce_online_alert_budget(headers)
     search_query = query.strip()
     if not search_query:
         return {"error": "Splunk search query must not be empty"}
@@ -411,6 +430,7 @@ def get_search_results(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Retrieve metadata and compact results for one finalized Splunk search job."""
+    _enforce_online_alert_budget(headers)
     job = _get_search_job(sid, headers=headers)
     if "error" in job:
         return job

@@ -26,6 +26,7 @@ from shared.lib.knowledge_source_serving import query_graph as query_local_graph
 from shared.lib.knowledge_source_serving import search_source as search_local_source
 from shared.lib.knowledge_source_serving import search_symbols as search_local_symbols
 from shared.lib.knowledge_source_serving import shortest_path as find_local_shortest_path
+from shared.lib.task_call_budget import TaskCallBudget
 
 bootstrap_platform_env()
 logger = logging.getLogger(__name__)
@@ -40,6 +41,17 @@ def _registry_from_settings() -> KnowledgeSourceServingRegistry:
 
 
 registry = _registry_from_settings()
+ONLINE_ALERTS_WORKFLOW = "online-alerts-investigator"
+ONLINE_ALERTS_KNOWLEDGE_CALL_LIMIT = 20
+MAX_TRACKED_TASK_BUDGETS = 10_000
+
+
+task_call_budget = TaskCallBudget(
+    limit=ONLINE_ALERTS_KNOWLEDGE_CALL_LIMIT,
+    max_tasks=MAX_TRACKED_TASK_BUDGETS,
+    resource_name="Knowledge MCP",
+    exhausted_instruction="Return not_grounded with the evidence already collected; do not retry.",
+)
 
 
 async def _refresh_once() -> None:
@@ -82,10 +94,18 @@ def _workflow(headers: dict[str, str]) -> str:
     return workflow
 
 
+def _authorized_workflow(headers: dict[str, str]) -> str:
+    workflow = _workflow(headers)
+    task_id = headers.get("x-task-id", "").strip()
+    if workflow == ONLINE_ALERTS_WORKFLOW and task_id:
+        task_call_budget.consume(task_id)
+    return workflow
+
+
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 def list_sources(headers: dict[str, str] = CurrentHeaders()) -> list[dict[str, Any]]:
     """List locally ready Knowledge Sources authorized for the current workflow."""
-    return registry.list_sources(_workflow(headers))
+    return registry.list_sources(_authorized_workflow(headers))
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
@@ -106,7 +126,7 @@ def query_graph(
     ] = None,
 ) -> dict[str, Any]:
     """Run Graphify's ranked query and traversal against one commit-pinned graph."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return query_local_graph(
             snapshot,
             question,
@@ -128,7 +148,7 @@ def explain_node(
     limit: Annotated[int, "Maximum connected nodes to return, from 1 through 50."] = 20,
 ) -> dict[str, Any]:
     """Resolve and explain one Graphify concept, including ambiguity and its strongest connections."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return explain_local_node(snapshot, concept, limit=limit)
 
 
@@ -145,7 +165,7 @@ def shortest_path(
     ] = False,
 ) -> dict[str, Any]:
     """Resolve two concepts and return Graphify's deterministic shortest relationship path."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return find_local_shortest_path(
             snapshot,
             source_concept,
@@ -162,7 +182,7 @@ def get_graph_overview(
     limit: Annotated[int, "Maximum high-degree graph nodes to return, from 1 through 20."] = 10,
 ) -> dict[str, Any]:
     """Get commit-pinned graph size and high-degree nodes for broad source orientation."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return get_local_graph_overview(snapshot, limit=limit)
 
 
@@ -178,7 +198,7 @@ def search_symbols(
     limit: Annotated[int, "Maximum results, from 1 through 50."] = 20,
 ) -> list[dict[str, Any]]:
     """Use exact graph lookup only when query_graph misses a provider-known identifier."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return search_local_symbols(snapshot, query, limit=limit)
 
 
@@ -194,7 +214,7 @@ def search_source(
     limit: Annotated[int, "Maximum matching source lines, from 1 through 50."] = 20,
 ) -> dict[str, Any]:
     """Use literal source lookup only for a provider-known exact string after graph retrieval misses."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return search_local_source(snapshot, query, limit=limit)
 
 
@@ -205,7 +225,7 @@ def get_symbol(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Get one symbol with repository, commit, and source provenance."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return get_local_symbol(snapshot, symbol_id)
 
 
@@ -218,7 +238,7 @@ def get_neighbors(
     limit: Annotated[int, "Maximum results, from 1 through 100."] = 50,
 ) -> dict[str, Any]:
     """Get bounded graph neighbors from one locally pinned source version."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return get_local_neighbors(snapshot, symbol_id, direction=direction, limit=limit)
 
 
@@ -232,7 +252,7 @@ def find_paths(
     limit: Annotated[int, "Maximum paths, from 1 through 20."] = 10,
 ) -> list[list[dict[str, Any]]]:
     """Find bounded directed paths in one locally pinned source graph."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return find_local_paths(snapshot, from_symbol_id, to_symbol_id, max_depth=max_depth, limit=limit)
 
 
@@ -245,7 +265,7 @@ def get_source_excerpt(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Read a bounded excerpt from one authorized immutable source snapshot."""
-    with registry.pin(source_alias, _workflow(headers)) as snapshot:
+    with registry.pin(source_alias, _authorized_workflow(headers)) as snapshot:
         return get_local_source_excerpt(snapshot, source_file, start_line=start_line, end_line=end_line)
 
 

@@ -69,7 +69,13 @@ No workflow-supplied credentials or repository URLs are accepted. The workflow
 must send `X-Task-Workflow`; the server exposes only promoted, locally hydrated
 Knowledge Sources when that workflow declares the `knowledge` server in its own
 `.mcp.json`. Sources remain unavailable until their initial immutable version is
-successfully indexed.
+successfully indexed. Calls from `online-alerts-investigator` are capped at 20
+per task using `X-Task-Id`; later calls fail fast so the workflow can return its
+bounded `not_grounded` result instead of consuming the session timeout.
+
+The Splunk MCP similarly caps that workflow at two provider calls per task: one
+finalized-job retrieval plus one correlation query, or two identical SID
+retrieval attempts when the first response is missing/404.
 
 | Tool | Purpose |
 | --- | --- |
