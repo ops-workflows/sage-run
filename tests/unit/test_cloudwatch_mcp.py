@@ -258,6 +258,10 @@ def test_search_logs_returns_compact_evidence(monkeypatch, tmp_path) -> None:
                     [
                         {"field": "@timestamp", "value": "2026-08-11T10:00:00Z"},
                         {"field": "@message", "value": "RuntimeError POST /v2/resources/123"},
+                        {"field": "status", "value": "500"},
+                        {"field": "integrationStatus", "value": "200"},
+                        {"field": "responseLatency", "value": "13765"},
+                        {"field": "integrationLatency", "value": "13761"},
                     ]
                 ],
                 "statistics": {"recordsMatched": 1, "recordsScanned": 2, "bytesScanned": 100},
@@ -273,7 +277,35 @@ def test_search_logs_returns_compact_evidence(monkeypatch, tmp_path) -> None:
 
     assert evidence["request"]["query_id"] == "query-1"
     assert evidence["total_results"] == 1
+    sample = evidence["groups"][0]["samples"][0]
+    assert sample["http_status"] == "500"
+    assert sample["integration_status"] == "200"
+    assert sample["response_latency_ms"] == "13765"
+    assert sample["integration_latency_ms"] == "13761"
     assert "results" not in evidence
+
+
+def test_online_alert_cloudwatch_budget_stops_sixth_tool_call(monkeypatch, tmp_path) -> None:
+    cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
+    alarm_arn = "arn:aws:cloudwatch:eu-west-1:123456789012:alarm:production-apiAlarm"
+    headers = {
+        "x-task-workflow": "online-alerts-investigator",
+        "x-task-id": "task-123",
+        "x-aws-region": "eu-west-1",
+        "x-aws-account-id": "123456789012",
+    }
+    monkeypatch.setattr(
+        cloudwatch,
+        "ALARM_LOG_GROUP_MAPPINGS",
+        {"production-apiAlarm": ("/aws/lambda/production-api",)},
+    )
+
+    for _ in range(5):
+        result = cloudwatch.get_alarm_log_groups(alarm_arn, headers=headers)
+        assert result["log_groups"] == ["/aws/lambda/production-api"]
+
+    with pytest.raises(PermissionError, match=r"CloudWatch MCP task call budget exhausted \(5 calls\)"):
+        cloudwatch.get_alarm_log_groups(alarm_arn, headers=headers)
 
 
 def test_search_logs_rejects_missing_or_excessive_scan_statistics(monkeypatch, tmp_path) -> None:
