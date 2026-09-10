@@ -229,6 +229,8 @@ services:
       context: ../control-plane-ui
       dockerfile: Dockerfile
     restart: unless-stopped
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:3000:3000"
     depends_on:
       - gateway
     networks:
