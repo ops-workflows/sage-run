@@ -23,6 +23,7 @@ from mcps.evidence import (
     redact_text,
 )
 from shared.lib.platform_secrets import load_mcp_server_config
+from shared.lib.task_call_budget import TaskCallBudget
 
 bootstrap_platform_env()
 
@@ -67,8 +68,25 @@ MAX_STACK_CHARS = 4_096
 _UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", re.I)
 _EXCEPTION_RE = re.compile(r"\b([A-Z][A-Za-z0-9_.]*(?:Exception|Error))\b")
 _HTTP_RE = re.compile(r"\b(?P<method>GET|POST|PUT|PATCH|DELETE)\s+[\"']?(?P<path>/[^\s\"']+)", re.I)
+ONLINE_ALERTS_WORKFLOW = "online-alerts-investigator"
+ONLINE_ALERTS_CLOUDWATCH_CALL_LIMIT = 5
+task_call_budget = TaskCallBudget(
+    limit=ONLINE_ALERTS_CLOUDWATCH_CALL_LIMIT,
+    max_tasks=10_000,
+    resource_name="CloudWatch MCP",
+    exhausted_instruction="Return the provider evidence already collected; do not retry.",
+)
 
 mcp = FastMCP("CloudWatch Logs MCP Server")
+
+
+def _enforce_online_alert_budget(headers: dict[str, str] | Any) -> None:
+    if not isinstance(headers, dict):
+        return
+    workflow = headers.get("x-task-workflow", "").strip().lower()
+    task_id = headers.get("x-task-id", "").strip()
+    if workflow == ONLINE_ALERTS_WORKFLOW and task_id:
+        task_call_budget.consume(task_id)
 
 
 def _get_aws_session(headers: dict[str, str]):
@@ -244,8 +262,12 @@ def _normalize_evidence_row(row: dict[str, Any]) -> dict[str, Any]:
         "log_stream": _redact(row.get("@logStream") or row.get("log_stream")),
         "severity": _redact(row.get("severity") or row.get("level")),
         "exception_class": exception.group(1) if exception else _redact(row.get("exception_class")),
-        "method": http.group("method").upper() if http else _redact(row.get("method")),
+        "method": http.group("method").upper() if http else _redact(row.get("httpMethod") or row.get("method")),
         "endpoint": endpoint,
+        "http_status": _redact(row.get("status")),
+        "integration_status": _redact(row.get("integrationStatus")),
+        "response_latency_ms": _redact(row.get("responseLatency")),
+        "integration_latency_ms": _redact(row.get("integrationLatency")),
         "message_excerpt": safe_excerpt,
         "stack_truncated": truncated,
     }
@@ -276,6 +298,8 @@ def compact_cloudwatch_evidence(
             row["exception_class"],
             row["method"],
             row["endpoint"],
+            row["http_status"],
+            row["integration_status"],
             canonical_message,
         )
         grouped.setdefault(group_key, []).append(row)
@@ -333,6 +357,7 @@ def search_logs(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Run one bounded Logs Insights query after alarm history and mapped log groups establish its scope."""
+    _enforce_online_alert_budget(headers)
     group_error = _validate_log_groups(log_group_names)
     if group_error:
         return {"error": group_error, "results": []}
@@ -417,6 +442,7 @@ def get_log_events(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Return compact evidence for one exact stream; raw events are never returned."""
+    _enforce_online_alert_budget(headers)
     group_error = _validate_log_groups([log_group_name])
     if group_error:
         return {"error": group_error, "events": []}
@@ -470,6 +496,7 @@ def describe_log_groups(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Use this once to discover candidate log groups before running CloudWatch queries."""
+    _enforce_online_alert_budget(headers)
     if not prefix or _validate_log_groups([prefix]):
         return {"error": "CloudWatch log group prefix must be explicitly allowed", "log_groups": []}
     try:
@@ -504,6 +531,7 @@ def get_alarm_log_groups(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Resolve one alarm to configured allowlisted log groups; call this instead of guessing a group name."""
+    _enforce_online_alert_budget(headers)
     try:
         match = _validate_alarm_arn(alarm_arn, headers)
     except ValueError as exc:
@@ -535,6 +563,7 @@ def describe_alarm(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Return state, metric identity, period, and evaluation periods needed to scope the alert investigation."""
+    _enforce_online_alert_budget(headers)
     try:
         client, alarm_name = _get_alarm_client(alarm_arn, headers)
         response = client.describe_alarms(AlarmNames=[alarm_name], MaxRecords=1)
@@ -585,6 +614,7 @@ def get_alarm_history(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Return state transitions used with alarm period/evaluation periods to derive a narrow log window."""
+    _enforce_online_alert_budget(headers)
     time_range = _validate_time_range(start_time, end_time)
     if isinstance(time_range, str):
         return {"error": time_range, "history": []}
