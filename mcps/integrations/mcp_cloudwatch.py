@@ -68,6 +68,9 @@ MAX_STACK_CHARS = 4_096
 _UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", re.I)
 _EXCEPTION_RE = re.compile(r"\b([A-Z][A-Za-z0-9_.]*(?:Exception|Error))\b")
 _HTTP_RE = re.compile(r"\b(?P<method>GET|POST|PUT|PATCH|DELETE)\s+[\"']?(?P<path>/[^\s\"']+)", re.I)
+_API_GATEWAY_PATH_RE = re.compile(r"^/[A-Za-z0-9._~!$&()*+,;=:@%/{}/-]{0,1024}$")
+_API_GATEWAY_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+_SORT_ORDERS = frozenset({"asc", "desc"})
 ONLINE_ALERTS_WORKFLOW = "online-alerts-investigator"
 ONLINE_ALERTS_CLOUDWATCH_CALL_LIMIT = 5
 task_call_budget = TaskCallBudget(
@@ -220,18 +223,21 @@ def _parse_relative_time(time_str: str | None) -> int | None:
         return None
 
 
-def _validate_time_range(start_time: str, end_time: str) -> tuple[int, int] | str:
+def _normalize_time_range(start_time: str, end_time: str) -> tuple[int, int, str] | str:
     start_ms = _parse_relative_time(start_time)
     end_ms = _parse_relative_time(end_time)
     if start_ms is None or end_ms is None:
         return "CloudWatch times must be relative (-15m, -1h, -1d), now, or ISO 8601"
+    current_ms = int(time.time() * 1000)
+    effective_end_time = end_time
+    if end_ms > current_ms:
+        end_ms = current_ms
+        effective_end_time = "now"
     if start_ms >= end_ms:
         return "CloudWatch start time must be before end time"
-    if end_ms > int(time.time() * 1000) + 300_000:
-        return "CloudWatch end time cannot be in the future"
     if end_ms - start_ms > MAX_WINDOW_SECONDS * 1000:
         return f"CloudWatch time window exceeds the {MAX_WINDOW_SECONDS // 3_600}-hour limit"
-    return start_ms, end_ms
+    return start_ms, end_ms, effective_end_time
 
 
 def _redact(value: Any) -> str:
@@ -242,6 +248,19 @@ def _path_template(path: str) -> str:
     path = path.split("?", 1)[0]
     path = _UUID_RE.sub("{id}", path)
     return re.sub(r"/(?=\d+(?:/|$))\d+", "/{id}", path)
+
+
+def _build_api_gateway_5xx_query(path: str | None, http_method: str | None, sort_order: str) -> str:
+    query_lines = [
+        "fields @timestamp, path, httpMethod, status, integrationStatus, responseLatency, integrationLatency",
+        "| filter status >= 500",
+    ]
+    if path:
+        query_lines.append(f'| filter path = "{path}"')
+    if http_method:
+        query_lines.append(f'| filter httpMethod = "{http_method}"')
+    query_lines.append(f"| sort @timestamp {sort_order}")
+    return "\n".join(query_lines)
 
 
 def _normalize_evidence_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -357,7 +376,6 @@ def search_logs(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Run one bounded Logs Insights query after alarm history and mapped log groups establish its scope."""
-    _enforce_online_alert_budget(headers)
     group_error = _validate_log_groups(log_group_names)
     if group_error:
         return {"error": group_error, "results": []}
@@ -365,15 +383,16 @@ def search_logs(
         return {"error": f"CloudWatch query exceeds the {MAX_QUERY_CHARS}-character limit"}
     if re.search(r"(?i)(?:^|\|)\s*unmask\b", query):
         return {"error": "CloudWatch query contains the disallowed unmask command"}
-    time_range = _validate_time_range(start_time, end_time)
+    time_range = _normalize_time_range(start_time, end_time)
     if isinstance(time_range, str):
         return {"error": time_range}
+    _enforce_online_alert_budget(headers)
     try:
         client = _get_logs_client(headers)
     except (ValueError, BotoCoreError, ClientError) as exc:
         return {"error": str(exc), "results": []}
     safe_limit = max(1, min(limit, MAX_QUERY_RESULTS))
-    start_ms, end_ms = time_range
+    start_ms, end_ms, effective_end_time = time_range
 
     try:
         started = client.start_query(
@@ -417,7 +436,7 @@ def search_logs(
             results,
             query=query,
             start_time=start_time,
-            end_time=end_time,
+            end_time=effective_end_time,
             request_id=query_id,
             statistics={
                 "records_matched": stats.get("recordsMatched", 0),
@@ -433,6 +452,53 @@ def search_logs(
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+def search_api_gateway_5xx(
+    log_group_names: Annotated[
+        list[str],
+        "Exact allowlisted groups returned by get_alarm_log_groups; never infer names from alert text.",
+    ],
+    start_time: Annotated[
+        str,
+        "Start time derived from the relevant alarm transition and evaluation horizon, as ISO 8601 or bounded relative time.",
+    ] = "-1h",
+    end_time: Annotated[
+        str,
+        "End time as ISO 8601 or now. Future values are clamped to now.",
+    ] = "now",
+    path: Annotated[
+        str | None,
+        "Optional exact API Gateway request path for a single correlation; omit for the primary alarm query.",
+    ] = None,
+    http_method: Annotated[
+        str | None,
+        "Optional HTTP method for a single correlation: GET, POST, PUT, PATCH, DELETE, HEAD, or OPTIONS.",
+    ] = None,
+    sort_order: Annotated[str, "Timestamp order: asc or desc."] = "asc",
+    limit: Annotated[int, "Maximum matching access-log records to group, capped by platform policy."] = 50,
+    samples_per_group: Annotated[int, "Redacted samples retained per occurrence group, maximum 5."] = 2,
+    headers: dict[str, str] = CurrentHeaders(),
+) -> dict[str, Any]:
+    """Return compact API Gateway 5xx evidence without requiring a Logs Insights query expression."""
+    if path and not _API_GATEWAY_PATH_RE.fullmatch(path):
+        return {"error": "API Gateway path must be a safe absolute request path", "results": []}
+    normalized_method = http_method.upper() if http_method else None
+    if normalized_method and normalized_method not in _API_GATEWAY_METHODS:
+        return {"error": "API Gateway HTTP method is not supported", "results": []}
+    normalized_sort_order = sort_order.lower()
+    if normalized_sort_order not in _SORT_ORDERS:
+        return {"error": "CloudWatch sort_order must be asc or desc", "results": []}
+    return search_logs(
+        _build_api_gateway_5xx_query(path, normalized_method, normalized_sort_order),
+        log_group_names,
+        start_time=start_time,
+        end_time=end_time,
+        limit=limit,
+        samples_per_group=samples_per_group,
+        headers=headers,
+    )
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
 def get_log_events(
     log_group_name: Annotated[str, "CloudWatch log group name."],
     log_stream_name: Annotated[str, "Specific CloudWatch log stream name."],
@@ -442,15 +508,15 @@ def get_log_events(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Return compact evidence for one exact stream; raw events are never returned."""
-    _enforce_online_alert_budget(headers)
     group_error = _validate_log_groups([log_group_name])
     if group_error:
         return {"error": group_error, "events": []}
     effective_start = start_time or "-1h"
     effective_end = end_time or "now"
-    time_range = _validate_time_range(effective_start, effective_end)
+    time_range = _normalize_time_range(effective_start, effective_end)
     if isinstance(time_range, str):
         return {"error": time_range}
+    _enforce_online_alert_budget(headers)
     try:
         client = _get_logs_client(headers)
     except (ValueError, BotoCoreError, ClientError) as exc:
@@ -462,7 +528,7 @@ def get_log_events(
         "startFromHead": True,
     }
 
-    parsed_start, parsed_end = time_range
+    parsed_start, parsed_end, normalized_end = time_range
     kwargs["startTime"] = parsed_start
     kwargs["endTime"] = parsed_end
 
@@ -481,7 +547,7 @@ def get_log_events(
             events,
             query="exact_log_stream",
             start_time=effective_start,
-            end_time=effective_end,
+            end_time=normalized_end,
         )
     except ClientError as exc:
         return {"error": f"CloudWatch API error: {exc.response['Error']['Message']}", "events": []}
@@ -615,12 +681,12 @@ def get_alarm_history(
 ) -> dict[str, Any]:
     """Return state transitions used with alarm period/evaluation periods to derive a narrow log window."""
     _enforce_online_alert_budget(headers)
-    time_range = _validate_time_range(start_time, end_time)
+    time_range = _normalize_time_range(start_time, end_time)
     if isinstance(time_range, str):
         return {"error": time_range, "history": []}
     try:
         client, alarm_name = _get_alarm_client(alarm_arn, headers)
-        start_ms, end_ms = time_range
+        start_ms, end_ms, effective_end_time = time_range
         response = client.describe_alarm_history(
             AlarmName=alarm_name,
             AlarmTypes=["MetricAlarm"],
@@ -645,7 +711,7 @@ def get_alarm_history(
         "provider": "cloudwatch",
         "alarm_arn": alarm_arn,
         "start_time": start_time,
-        "end_time": end_time,
+        "end_time": effective_end_time,
         "history": history,
         "count": len(history),
         "truncated": bool(response.get("NextToken")),

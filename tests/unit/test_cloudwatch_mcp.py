@@ -243,6 +243,35 @@ def test_search_logs_rejects_invalid_window_and_unmask(monkeypatch, tmp_path) ->
     )
 
 
+def test_search_logs_clamps_future_end_time(monkeypatch, tmp_path) -> None:
+    cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
+    now_ms = 1_789_024_600_000
+
+    class Logs:
+        def start_query(self, **kwargs):
+            assert kwargs["endTime"] == now_ms // 1_000
+            return {"queryId": "query-1"}
+
+        def get_query_results(self, **_kwargs):
+            return {
+                "status": "Complete",
+                "results": [],
+                "statistics": {"recordsMatched": 0, "recordsScanned": 0, "bytesScanned": 0},
+            }
+
+    monkeypatch.setattr(cloudwatch.time, "time", lambda: now_ms / 1_000)
+    monkeypatch.setattr(cloudwatch, "_get_logs_client", lambda _headers: Logs())
+    evidence = cloudwatch.search_logs(
+        "fields @message",
+        ["/aws/lambda/production-api"],
+        start_time="2026-09-10T06:55:00Z",
+        end_time="2026-09-10T07:17:00Z",
+        headers={},
+    )
+
+    assert evidence["request"]["end_time"] == "now"
+
+
 def test_search_logs_returns_compact_evidence(monkeypatch, tmp_path) -> None:
     cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
 
@@ -283,6 +312,91 @@ def test_search_logs_returns_compact_evidence(monkeypatch, tmp_path) -> None:
     assert sample["response_latency_ms"] == "13765"
     assert sample["integration_latency_ms"] == "13761"
     assert "results" not in evidence
+
+
+def test_search_api_gateway_5xx_builds_query_from_typed_options(monkeypatch, tmp_path) -> None:
+    cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
+    calls = []
+
+    class Logs:
+        def start_query(self, **kwargs):
+            calls.append(kwargs)
+            return {"queryId": "query-1"}
+
+        def get_query_results(self, **_kwargs):
+            return {
+                "status": "Complete",
+                "results": [],
+                "statistics": {"recordsMatched": 0, "recordsScanned": 0, "bytesScanned": 0},
+            }
+
+    monkeypatch.setattr(cloudwatch, "_get_logs_client", lambda _headers: Logs())
+    evidence = cloudwatch.search_api_gateway_5xx(
+        ["/aws/lambda/production-api"],
+        path="/private/customer-admin/orders",
+        http_method="post",
+        sort_order="DESC",
+        limit=25,
+        headers={},
+    )
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["logGroupNames"] == ["/aws/lambda/production-api"]
+    assert call["startTime"] < call["endTime"]
+    assert call["queryString"] == (
+        "fields @timestamp, path, httpMethod, status, integrationStatus, responseLatency, integrationLatency\n"
+        "| filter status >= 500\n"
+        '| filter path = "/private/customer-admin/orders"\n'
+        '| filter httpMethod = "POST"\n'
+        "| sort @timestamp desc"
+    )
+    assert call["limit"] == 25
+    assert evidence["request"]["query"] == call["queryString"]
+
+
+def test_search_api_gateway_5xx_rejects_unsafe_path_without_aws_call(monkeypatch, tmp_path) -> None:
+    cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cloudwatch,
+        "_get_logs_client",
+        lambda _headers: pytest.fail("AWS client should not be created"),
+    )
+
+    result = cloudwatch.search_api_gateway_5xx(
+        ["/aws/lambda/production-api"],
+        path='/orders" | unmask @message',
+        headers={},
+    )
+
+    assert "safe absolute request path" in result["error"]
+
+
+def test_rejected_search_does_not_consume_online_alert_budget(monkeypatch, tmp_path) -> None:
+    cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
+    alarm_arn = "arn:aws:cloudwatch:eu-west-1:123456789012:alarm:production-apiAlarm"
+    headers = {
+        "x-task-workflow": "online-alerts-investigator",
+        "x-task-id": "task-123",
+        "x-aws-region": "eu-west-1",
+        "x-aws-account-id": "123456789012",
+    }
+    monkeypatch.setattr(
+        cloudwatch,
+        "ALARM_LOG_GROUP_MAPPINGS",
+        {"production-apiAlarm": ("/aws/lambda/production-api",)},
+    )
+
+    rejected = cloudwatch.search_logs(
+        "fields @message | unmask @message",
+        ["/aws/lambda/production-api"],
+        headers=headers,
+    )
+    assert "unmask" in rejected["error"]
+
+    for _ in range(5):
+        result = cloudwatch.get_alarm_log_groups(alarm_arn, headers=headers)
+        assert result["log_groups"] == ["/aws/lambda/production-api"]
 
 
 def test_online_alert_cloudwatch_budget_stops_sixth_tool_call(monkeypatch, tmp_path) -> None:
