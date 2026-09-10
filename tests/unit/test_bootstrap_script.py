@@ -20,7 +20,6 @@ from scripts.bootstrap import (
 
 pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VALID_COOKIE_SECRET = "0123456789abcdef0123456789abcdef"
 
 
 def test_session_manager_receives_knowledge_source_bucket_in_compose_and_helm():
@@ -69,8 +68,6 @@ def _remote_config(**overrides) -> BootstrapConfig:
         "llm_api_key": "sk-model-key",
         "pg_password": "postgres-secret",
         "object_store_secret_key": "object-store-secret",
-        "oidc_client_secret": "oidc-secret",
-        "oauth2_proxy_cookie_secret": VALID_COOKIE_SECRET,
     }
     base.update(overrides)
     return BootstrapConfig(**base)
@@ -87,8 +84,6 @@ def _local_config(**overrides) -> BootstrapConfig:
         "llm_api_key": "sk-model-key",
         "pg_password": "postgres-secret",
         "object_store_secret_key": "object-store-secret",
-        "oidc_client_secret": "oidc-secret",
-        "oauth2_proxy_cookie_secret": VALID_COOKIE_SECRET,
     }
     base.update(overrides)
     return BootstrapConfig(**base)
@@ -132,13 +127,8 @@ def test_validate_accepts_valid_local_compose_config():
     _local_config().validate()  # does not raise
 
 
-def test_validate_requires_auth_secrets_for_production_compose():
-    with pytest.raises(ValueError, match="OIDC client secret"):
-        _local_config(compose_mode="production", oidc_client_secret="").validate()
-    with pytest.raises(ValueError, match="OAuth2 proxy cookie secret"):
-        _local_config(compose_mode="production", oauth2_proxy_cookie_secret="").validate()
-    with pytest.raises(ValueError, match="16, 24, or 32 bytes"):
-        _local_config(compose_mode="production", oauth2_proxy_cookie_secret="too-short").validate()
+def test_validate_accepts_production_compose_without_local_auth_secrets():
+    _local_config(compose_mode="production", gateway_public_base_url="").validate()
 
 
 def test_validate_requires_reachable_gateway_url_for_local_compose():
@@ -213,15 +203,8 @@ def test_build_bootstrap_env_local_compose_sets_host_bind_mount_vars():
     assert "WORKFLOW_COMPOSE_ENV_FILE" not in env
     assert "WORKFLOW_COMPOSE_OVERRIDE_FILE" not in env
     assert env["CONTROL_PLANE_UI_URL"] == "http://localhost:3000"
-    assert env["CONTROL_PLANE_UI_BIND_ADDRESS"] == "127.0.0.1"
-    assert env["CONTROL_PLANE_UI_PORT"] == "3000"
     assert env["GATEWAY_PUBLIC_BASE_URL"] == "https://gateway.example.test"
     assert env["SANDBOX_MODE"] == "macos"
-    assert env["AUTH_INGRESS_REPLICAS"] == "0"
-    assert env["OIDC_ISSUER_URL"] == "https://disabled.invalid"
-    assert env["OIDC_CLIENT_ID"] == "disabled"
-    assert env["OIDC_CLIENT_SECRET"] == "disabled"
-    assert env["OAUTH2_PROXY_COOKIE_SECRET"] == "disabled"
     assert "WORKFLOW_REPO_PATHS" not in env
 
 
@@ -230,9 +213,8 @@ def test_build_bootstrap_env_production_compose_uses_committed_defaults():
     assert "CONTROL_PLANE_UI_URL" not in env
     assert "GATEWAY_PUBLIC_BASE_URL" not in env
     assert "SANDBOX_MODE" not in env
-    assert "AUTH_INGRESS_REPLICAS" not in env
-    assert env["OIDC_CLIENT_SECRET"] == "oidc-secret"
-    assert env["OAUTH2_PROXY_COOKIE_SECRET"] == VALID_COOKIE_SECRET
+    assert "OIDC_CLIENT_SECRET" not in env
+    assert "OAUTH2_PROXY_COOKIE_SECRET" not in env
 
 
 def test_build_bootstrap_env_local_kubernetes_sets_workflow_repo_paths():

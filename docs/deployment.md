@@ -33,10 +33,6 @@ Prompts:
    key shared by runtime model profiles and Hindsight's LLM/embeddings clients.
 7. **Postgres password** and **object-store secret key** —
    direct-container secrets required by Compose infrastructure.
-8. **OIDC client secret** and **OAuth2 proxy cookie secret** — production
-   Compose only. Bootstrap stores them in the generated, mode-`0600`
-   `compose.env`; non-secret issuer/client coordinates stay in the workflow
-   repo's committed `deploy/compose.env`.
 
 Generated artifact per target (none of these are committed):
 
@@ -45,27 +41,19 @@ Generated artifact per target (none of these are committed):
 | `compose` | `compose.env` | `make up` |
 | `kubernetes` | `dist/bootstrap/k8s-secret.sh` | run the script to create/update bootstrap and `platform-config.yaml` Secrets |
 
-### Production Compose OIDC and TLS
+### Authentication and Ingress
 
-Provision a confidential OIDC client with the authorization-code flow, PKCE
-support, and the `openid`, `profile`, and `email` scopes. Register exactly
-`${CONTROL_PLANE_UI_URL}/oauth2/callback` as an allowed callback URL. The
-callback is required: after authentication, the provider returns the browser
-to OAuth2 Proxy at that endpoint so it can validate the authorization code and
-establish the UI session.
+SAGE Run does not currently provide browser authentication or public ingress.
+Workflow repositories and production deployment configurations own those
+concerns and can add only the components required by their environment. For
+example, a public-cloud load balancer can provide OIDC-based access control, a
+local proxy such as Envoy can integrate with an OIDC provider, or a deployment
+can intentionally expose the platform without browser authentication.
 
-The private production override exposes only OAuth2 Proxy's HTTPS listener and
-uses secure cookies, so production Compose requires TLS even if an identity
-provider permits an HTTP localhost callback for development. A locally signed
-or self-signed certificate is sufficient for a single-machine trial when its
-issuing certificate is trusted by every browser that accesses the UI, its SAN
-matches the `CONTROL_PLANE_UI_URL` hostname, and that hostname resolves from
-the browser. Use a corporate or publicly trusted certificate for shared use.
-
-Set the resulting issuer URL and client ID in the workflow repo's committed
-`deploy/compose.env`. Supply the client secret through production bootstrap;
-never commit it. `OIDC_GROUPS_CLAIM` and `OIDC_ALLOWED_GROUP` control group
-admission after login.
+The public hostname and gateway callback base URL must both use HTTPS whenever
+Mattermost approval callbacks are enabled. Any ingress layer that permits the
+callback must allow `POST /webhooks/message/actions/approval`; Gateway verifies
+the signed callback context for that route.
 
 ## Kubernetes deployment
 

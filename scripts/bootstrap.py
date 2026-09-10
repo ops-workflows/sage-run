@@ -22,8 +22,6 @@ bootstrap values and writes the standard artifact for the selected target.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import getpass
 import shutil
 import stat
@@ -40,18 +38,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 VALID_TARGETS = ("compose", "kubernetes")
 VALID_SOURCES = ("remote", "local")
 VALID_COMPOSE_MODES = ("local", "production")
-OAUTH2_PROXY_COOKIE_SECRET_LENGTHS = {16, 24, 32}
-
-
-def _valid_oauth2_proxy_cookie_secret(value: str) -> bool:
-    encoded = value.encode("utf-8")
-    if len(encoded) in OAUTH2_PROXY_COOKIE_SECRET_LENGTHS:
-        return True
-    try:
-        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
-    except (binascii.Error, ValueError):
-        return False
-    return len(decoded) in OAUTH2_PROXY_COOKIE_SECRET_LENGTHS
 
 
 @dataclass(frozen=True)
@@ -68,8 +54,6 @@ class BootstrapConfig:
     llm_api_key: str = ""
     pg_password: str = ""
     object_store_secret_key: str = ""
-    oidc_client_secret: str = ""
-    oauth2_proxy_cookie_secret: str = ""
     namespace: str = "default"
 
     def validate(self) -> None:
@@ -98,16 +82,6 @@ class BootstrapConfig:
             raise ValueError("Postgres password is required")
         if not self.object_store_secret_key:
             raise ValueError("Object-store secret key is required")
-        if self.target == "compose" and self.compose_mode == "production" and not self.oidc_client_secret:
-            raise ValueError("OIDC client secret is required for production Compose")
-        if self.target == "compose" and self.compose_mode == "production" and not self.oauth2_proxy_cookie_secret:
-            raise ValueError("OAuth2 proxy cookie secret is required for production Compose")
-        if (
-            self.target == "compose"
-            and self.compose_mode == "production"
-            and not _valid_oauth2_proxy_cookie_secret(self.oauth2_proxy_cookie_secret)
-        ):
-            raise ValueError("OAuth2 proxy cookie secret must contain 16, 24, or 32 bytes, raw or URL-safe base64")
 
 
 def normalize_age_identity(value: str) -> str:
@@ -154,20 +128,10 @@ def build_bootstrap_env(config: BootstrapConfig) -> dict[str, str]:
         env.update(
             {
                 "CONTROL_PLANE_UI_URL": "http://localhost:3000",
-                "CONTROL_PLANE_UI_BIND_ADDRESS": "127.0.0.1",
-                "CONTROL_PLANE_UI_PORT": "3000",
                 "GATEWAY_PUBLIC_BASE_URL": config.gateway_public_base_url.rstrip("/"),
                 "SANDBOX_MODE": "macos",
-                "AUTH_INGRESS_REPLICAS": "0",
-                "OIDC_ISSUER_URL": "https://disabled.invalid",
-                "OIDC_CLIENT_ID": "disabled",
-                "OIDC_CLIENT_SECRET": "disabled",
-                "OAUTH2_PROXY_COOKIE_SECRET": "disabled",
             }
         )
-    elif config.target == "compose":
-        env["OIDC_CLIENT_SECRET"] = config.oidc_client_secret
-        env["OAUTH2_PROXY_COOKIE_SECRET"] = config.oauth2_proxy_cookie_secret
     return env
 
 
@@ -301,14 +265,6 @@ def gather_config_interactively() -> BootstrapConfig:
     llm_api_key = _prompt("LLM API key", secret=True)
     pg_password = _prompt("Postgres password", secret=True)
     object_store_secret_key = _prompt("Object-store secret key", secret=True)
-    oidc_client_secret = (
-        _prompt("OIDC client secret", secret=True) if target == "compose" and compose_mode == "production" else ""
-    )
-    oauth2_proxy_cookie_secret = (
-        _prompt("OAuth2 proxy cookie secret", secret=True)
-        if target == "compose" and compose_mode == "production"
-        else ""
-    )
 
     return BootstrapConfig(
         target=target,
@@ -323,8 +279,6 @@ def gather_config_interactively() -> BootstrapConfig:
         llm_api_key=llm_api_key,
         pg_password=pg_password,
         object_store_secret_key=object_store_secret_key,
-        oidc_client_secret=oidc_client_secret,
-        oauth2_proxy_cookie_secret=oauth2_proxy_cookie_secret,
         namespace=namespace,
     )
 
