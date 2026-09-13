@@ -38,6 +38,40 @@ async def test_health_endpoint(async_engine, fixture_workflows_dir: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_user_info_returns_verified_identity_and_groups(async_engine, fixture_workflows_dir: Path) -> None:
+    async with await _make_client(fixture_workflows_dir) as client:
+        response = await client.get(
+            "/api/user-info",
+            headers={"X-User-Id": "alice@example.com", "X-User-Groups": "sage-run-admin, sage-run-operator"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "userId": "alice@example.com",
+        "groups": ["sage-run-admin", "sage-run-operator"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_user_info_returns_empty_groups_when_group_header_is_missing(
+    async_engine, fixture_workflows_dir: Path
+) -> None:
+    async with await _make_client(fixture_workflows_dir) as client:
+        response = await client.get("/api/user-info", headers={"X-User-Id": "alice@example.com"})
+
+    assert response.status_code == 200
+    assert response.json() == {"userId": "alice@example.com", "groups": []}
+
+
+@pytest.mark.asyncio
+async def test_user_info_returns_not_found_without_user_header(async_engine, fixture_workflows_dir: Path) -> None:
+    async with await _make_client(fixture_workflows_dir) as client:
+        response = await client.get("/api/user-info", headers={"X-User-Groups": "sage-run-admin"})
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_message_reply_endpoint_returns_websocket_ingested_reply(
     async_engine, fixture_workflows_dir: Path, db_session
 ) -> None:

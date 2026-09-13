@@ -105,6 +105,11 @@ class TaskListResponse(BaseModel):
     offset: int
 
 
+class UserInfoResponse(BaseModel):
+    user_id: str = Field(serialization_alias="userId")
+    groups: list[str]
+
+
 class AgentFilesResponse(BaseModel):
     agent_yaml: str
     files: dict[str, str]
@@ -1184,6 +1189,16 @@ def _validated_knowledge_source_values(payload: KnowledgeSourceWriteRequest) -> 
 
 
 # ─── Agents ──────────────────────────────────────────────────────────
+
+
+@router.get("/user-info", response_model=UserInfoResponse)
+async def get_user_info(request: Request) -> UserInfoResponse:
+    user_id = request.headers.get("x-user-id", "").strip()
+    if not user_id:
+        raise HTTPException(status_code=404, detail="User identity is unavailable")
+
+    groups = [group.strip() for group in request.headers.get("x-user-groups", "").split(",") if group.strip()]
+    return UserInfoResponse(user_id=user_id, groups=groups)
 
 
 @router.get("/agents", response_model=list[AgentResponse])
