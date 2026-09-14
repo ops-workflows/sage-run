@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Cable,
   CalendarClock,
@@ -124,6 +124,7 @@ export default function QueuePage() {
   const [rerunningTaskId, setRerunningTaskId] = useState<string | null>(null);
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
   const [archivingTaskId, setArchivingTaskId] = useState<string | null>(null);
+  const desktopFiltersRef = useRef<HTMLDivElement>(null);
 
   const fetchTasks = useCallback(() => {
     const params = new URLSearchParams({
@@ -164,12 +165,27 @@ export default function QueuePage() {
   useEffect(() => {
     if (!filtersOpen) return;
 
-    function closeFilters(event: KeyboardEvent) {
+    function closeFiltersOnEscape(event: KeyboardEvent) {
       if (event.key === 'Escape') setFiltersOpen(false);
     }
 
-    document.addEventListener('keydown', closeFilters);
-    return () => document.removeEventListener('keydown', closeFilters);
+    function closeFiltersOnOutsideClick(event: MouseEvent) {
+      const popover = desktopFiltersRef.current;
+      if (
+        !popover ||
+        popover.offsetParent === null ||
+        popover.contains(event.target as Node)
+      )
+        return;
+      setFiltersOpen(false);
+    }
+
+    document.addEventListener('keydown', closeFiltersOnEscape);
+    document.addEventListener('mousedown', closeFiltersOnOutsideClick);
+    return () => {
+      document.removeEventListener('keydown', closeFiltersOnEscape);
+      document.removeEventListener('mousedown', closeFiltersOnOutsideClick);
+    };
   }, [filtersOpen]);
 
   const statusColor = (s: string) => {
@@ -407,7 +423,7 @@ export default function QueuePage() {
             );
           })}
 
-          <div className="relative hidden md:block">
+          <div ref={desktopFiltersRef} className="relative hidden md:block">
             <button
               type="button"
               onClick={openFilters}

@@ -40,7 +40,7 @@ workflows/<name>/
 | `runtime.alert_coalesce_window_sec` | int, default `300` | Default connector alert-dedup window. |
 | `runtime.container_image` | string | Override the runtime image for this workflow. |
 | `runtime.memory_volumes` | list[string] | Named memory volumes for this workflow. |
-| `schedules[]` | array | `name`, `cron` (5-field), `prompt`, optional `message_channel`, `enabled` (default `true`). |
+| `schedules[]` | array | `name`, `cron` (5-field APScheduler `CronTrigger` syntax), `prompt`, optional `message_channel`, `enabled` (default `true`). Numeric weekdays use APScheduler numbering: Monday is `0` through Sunday `6`. |
 | `messaging.channels` | list[string] | Message-bus channel names or provider IDs this workflow listens on. Names are resolved to IDs visible to the configured bot at gateway startup. |
 | `messaging.trigger_words` | list[string] | Prefixes that create a task in configured channels (for example, `@agent`). |
 
