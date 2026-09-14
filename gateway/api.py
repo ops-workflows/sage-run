@@ -51,7 +51,11 @@ from shared.lib.models import (
     Task,
 )
 from shared.lib.object_store import BUCKET_AGENT_MEMORY, download_bytes, list_objects
-from shared.lib.platform_secrets import load_connector_instances, load_github_app_connections
+from shared.lib.platform_secrets import (
+    load_connector_instances,
+    load_github_app_connections,
+    map_external_identity_groups,
+)
 from shared.lib.task_queue import archive_task, count_tasks, list_tasks
 from shared.lib.trace_tree import SessionTraceResponse, build_trace_tree
 from shared.lib.workflow_paths import discover_workflow_packages, find_workflow_package
@@ -1197,7 +1201,8 @@ async def get_user_info(request: Request) -> UserInfoResponse:
     if not user_id:
         raise HTTPException(status_code=404, detail="User identity is unavailable")
 
-    groups = [group.strip() for group in request.headers.get("x-user-groups", "").split(",") if group.strip()]
+    external_groups = [group.strip() for group in request.headers.get("x-user-groups", "").split(",") if group.strip()]
+    groups = map_external_identity_groups(settings.platform_config_file, external_groups)
     return UserInfoResponse(user_id=user_id, groups=groups)
 
 

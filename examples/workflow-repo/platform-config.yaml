@@ -29,6 +29,18 @@ config:
   # not cap concurrent subagent/model calls within a running task.
   PLATFORM_MAX_RUNNING_TASKS: "3"
 
+# Optional identity-provider group translation for the user-info API. External
+# names are matched exactly; only the canonical application group names are
+# returned to the UI. These groups are informational and do not enforce RBAC.
+identity:
+  group_mapping:
+    platform-admin:
+      - replace-with-idp-platform-admin-group
+    workflow-operator:
+      - replace-with-idp-workflow-operator-group
+    task-viewer:
+      - replace-with-idp-task-viewer-group
+
 # Platform-owned GitHub App installations. Use one named connection per App
 # installation; repositories select a connection by name. GitHub.com and GHES
 # require separate Apps, app ids, installation ids, and private keys.

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 pytestmark = pytest.mark.service
 
@@ -38,17 +39,41 @@ async def test_health_endpoint(async_engine, fixture_workflows_dir: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_user_info_returns_verified_identity_and_groups(async_engine, fixture_workflows_dir: Path) -> None:
+async def test_user_info_returns_verified_identity_and_mapped_application_groups(
+    async_engine, fixture_workflows_dir: Path, monkeypatch, tmp_path
+) -> None:
+    from shared.lib.config import settings
+
+    config = tmp_path / "platform-config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "identity": {
+                    "group_mapping": {
+                        "platform-admin": ["entra-sage-run-admins"],
+                        "workflow-operator": ["entra-sage-run-operators"],
+                        "task-viewer": ["entra-sage-run-readers"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "platform_config_file", str(config))
+
     async with await _make_client(fixture_workflows_dir) as client:
         response = await client.get(
             "/api/user-info",
-            headers={"X-User-Id": "alice@example.com", "X-User-Groups": "sage-run-admin, sage-run-operator"},
+            headers={
+                "X-User-Id": "alice@example.com",
+                "X-User-Groups": "irrelevant-group, entra-sage-run-readers, entra-sage-run-admins",
+            },
         )
 
     assert response.status_code == 200
     assert response.json() == {
         "userId": "alice@example.com",
-        "groups": ["sage-run-admin", "sage-run-operator"],
+        "groups": ["platform-admin", "task-viewer"],
     }
 
 
@@ -58,6 +83,29 @@ async def test_user_info_returns_empty_groups_when_group_header_is_missing(
 ) -> None:
     async with await _make_client(fixture_workflows_dir) as client:
         response = await client.get("/api/user-info", headers={"X-User-Id": "alice@example.com"})
+
+    assert response.status_code == 200
+    assert response.json() == {"userId": "alice@example.com", "groups": []}
+
+
+@pytest.mark.asyncio
+async def test_user_info_does_not_expose_unmapped_external_groups(
+    async_engine, fixture_workflows_dir: Path, monkeypatch, tmp_path
+) -> None:
+    from shared.lib.config import settings
+
+    config = tmp_path / "platform-config.yaml"
+    config.write_text(
+        yaml.safe_dump({"identity": {"group_mapping": {"task-viewer": ["entra-sage-run-readers"]}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "platform_config_file", str(config))
+
+    async with await _make_client(fixture_workflows_dir) as client:
+        response = await client.get(
+            "/api/user-info",
+            headers={"X-User-Id": "alice@example.com", "X-User-Groups": "finance, engineering"},
+        )
 
     assert response.status_code == 200
     assert response.json() == {"userId": "alice@example.com", "groups": []}

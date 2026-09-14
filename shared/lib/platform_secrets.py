@@ -36,6 +36,11 @@ ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
 INLINE_ENV_PLACEHOLDER_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 MODEL_PROFILE_ENV_ALIASES: dict[str, str] = {}
+PLATFORM_GROUPS = (
+    "platform-admin",
+    "workflow-operator",
+    "task-viewer",
+)
 
 
 @dataclass
@@ -109,6 +114,42 @@ def load_workflow_repo_github_connection(path: str) -> str:
     if not isinstance(github, dict):
         return ""
     return str(github.get("workflow_repo_connection") or "").strip()
+
+
+def map_external_identity_groups(path: str, external_groups: list[str]) -> list[str]:
+    """Map identity-provider groups to canonical application groups."""
+    data = _read_platform_file(path)
+    identity = data.get("identity")
+    if identity is None:
+        return []
+    if not isinstance(identity, dict):
+        logger.warning("Platform config file has no valid 'identity' mapping: %s", path)
+        return []
+
+    raw_mapping = identity.get("group_mapping")
+    if raw_mapping is None:
+        return []
+    if not isinstance(raw_mapping, dict):
+        logger.warning("Platform config file has no valid 'identity.group_mapping' mapping: %s", path)
+        return []
+
+    memberships = {group.strip() for group in external_groups if group.strip()}
+    mapped: list[str] = []
+    for application_group in PLATFORM_GROUPS:
+        configured_groups = raw_mapping.get(application_group)
+        if configured_groups is None:
+            continue
+        if not isinstance(configured_groups, list):
+            logger.warning(
+                "Skipping non-list identity.group_mapping.%s in %s",
+                application_group,
+                path,
+            )
+            continue
+        external_names = {group.strip() for group in configured_groups if isinstance(group, str) and group.strip()}
+        if external_names & memberships:
+            mapped.append(application_group)
+    return mapped
 
 
 def load_platform_env(path: str, *, identity: str | None = None) -> dict[str, str]:

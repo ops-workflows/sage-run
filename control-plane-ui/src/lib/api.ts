@@ -15,6 +15,22 @@ export async function apiFetch<T>(
   return res.json();
 }
 
+export interface UserInfo {
+  userId: string;
+  groups: string[];
+}
+
+export async function fetchUserInfo(
+  signal?: AbortSignal,
+): Promise<UserInfo | null> {
+  const response = await fetch('/api/user-info', { signal });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
 // Types matching the FastAPI response models
 
 export interface Agent {

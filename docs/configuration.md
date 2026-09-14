@@ -359,6 +359,12 @@ cloned/synced the repo.
 config:            # plain deployment env vars (DB/object-store overrides, custom
                     # workflow env, INSTANCE_NAME, AGE_PUBLIC_KEY, ...)
 
+identity:
+  group_mapping:   # optional external identity group -> application group mapping
+    platform-admin: [external-platform-admins]
+    workflow-operator: [external-workflow-operators]
+    task-viewer: [external-task-viewers]
+
 mcps:
   enabled: [...]    # which MCP servers this instance runs
   config:           # per-server policy, keyed by server id (see docs/mcps.md)
@@ -409,6 +415,27 @@ secrets:              # age-encrypted platform-wide secrets
   message_bus_bot_token:
     encrypted: "ENC[age,...]"
 ```
+
+### Identity group mapping
+
+`identity.group_mapping` translates identity-provider group claims into a small,
+stable application vocabulary for `GET /api/user-info`:
+
+| Application group | Intended meaning |
+| --- | --- |
+| `platform-admin` | Platform administration and configuration |
+| `workflow-operator` | Workflow and task operation |
+| `task-viewer` | Read-only task and operational visibility |
+
+Each key accepts a list of exact external group names. A user receives an
+application group when any configured external name matches one of their
+incoming groups. Unknown application keys and unmatched external groups are
+not returned. If the section is omitted, malformed, or has no matches, the API
+returns an empty `groups` list rather than exposing raw identity-provider group
+names.
+
+These groups are currently informational identity metadata for the control
+plane UI. They do not enforce RBAC or restrict API, workflow, or task access.
 
 `${VAR}` placeholders anywhere in this file are expanded from `config:`
 values, decrypted `secrets:` values, and the process environment at load time

@@ -1,8 +1,9 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTheme } from '@/components/theme-provider';
+import { fetchUserInfo, type UserInfo } from '@/lib/api';
 
 const NAV_ITEMS = [
   { href: '/workflows', label: 'Workflows' },
@@ -132,10 +133,51 @@ function CloseIcon() {
   );
 }
 
+function userInitials(userId: string): string {
+  const name = userId.split('@', 1)[0];
+  const parts = name.split(/[._\-\s]+/).filter(Boolean);
+  if (parts.length > 1) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 export function TopNav() {
   const pathname = usePathname() || '/';
   const { theme, toggle } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchUserInfo(controller.signal)
+      .then(setUserInfo)
+      .catch(() => setUserInfo(null));
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+
+    function dismissAccount(event: MouseEvent) {
+      if (!accountRef.current?.contains(event.target as Node)) {
+        setAccountOpen(false);
+      }
+    }
+
+    function dismissAccountWithKeyboard(event: KeyboardEvent) {
+      if (event.key === 'Escape') setAccountOpen(false);
+    }
+
+    document.addEventListener('mousedown', dismissAccount);
+    document.addEventListener('keydown', dismissAccountWithKeyboard);
+    return () => {
+      document.removeEventListener('mousedown', dismissAccount);
+      document.removeEventListener('keydown', dismissAccountWithKeyboard);
+    };
+  }, [accountOpen]);
 
   return (
     <nav className="sticky top-0 z-40 border-b border-ops-border bg-[var(--nav-bg)] backdrop-blur-xl">
@@ -185,9 +227,72 @@ export function TopNav() {
             {theme === 'light' ? <MoonIcon /> : <SunIcon />}
           </button>
 
+          {userInfo && (
+            <div className="relative" ref={accountRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountOpen((open) => !open);
+                  setMobileOpen(false);
+                }}
+                aria-label={`Account for ${userInfo.userId}`}
+                aria-expanded={accountOpen}
+                aria-controls="account-popover"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-accent)] text-xs font-semibold text-white transition-colors hover:bg-[var(--color-accent-hover)]"
+              >
+                {userInitials(userInfo.userId)}
+              </button>
+
+              {accountOpen && (
+                <div
+                  id="account-popover"
+                  className="absolute -right-11 top-full z-50 mt-2 w-[min(19rem,calc(100vw-2rem))] overflow-hidden rounded-btn border border-ops-border bg-ops-surface shadow-card-hover lg:right-0"
+                >
+                  <div className="flex items-center gap-3 px-4 py-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-sm font-semibold text-white">
+                      {userInitials(userInfo.userId)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[11px] text-[var(--color-text-tertiary)]">
+                        Signed in as
+                      </p>
+                      <p className="break-all text-sm font-medium text-[var(--color-text-primary)]">
+                        {userInfo.userId}
+                      </p>
+                    </div>
+                  </div>
+
+                  {userInfo.groups.length > 0 && (
+                    <div className="border-t border-ops-border px-4 py-3">
+                      <p className="mb-2 text-[11px] text-[var(--color-text-tertiary)]">
+                        Application groups
+                      </p>
+                      <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
+                        {userInfo.groups.map((group) => (
+                          <span
+                            key={group}
+                            className="max-w-full truncate rounded-full bg-[var(--color-surface-raised)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)]"
+                            title={group}
+                          >
+                            {group}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Mobile hamburger */}
           <button
-            onClick={() => setMobileOpen(!mobileOpen)}
+            onClick={() => {
+              setMobileOpen(!mobileOpen);
+              setAccountOpen(false);
+            }}
+            aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
+            aria-expanded={mobileOpen}
             className="flex h-9 w-9 items-center justify-center rounded-[var(--radius-btn)] border border-ops-border text-[var(--color-text-secondary)] lg:hidden"
           >
             {mobileOpen ? <CloseIcon /> : <MenuIcon />}

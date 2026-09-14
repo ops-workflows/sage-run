@@ -32,6 +32,16 @@ export async function handleMockApiRequest(
 ): Promise<{ status: number; data: unknown }> {
   const path = pathSegments.join('/');
 
+  if (path === 'user-info' && method === 'GET') {
+    return {
+      status: 200,
+      data: {
+        userId: 'john.doe@company.com',
+        groups: ['platform-admin', 'task-viewer'],
+      },
+    };
+  }
+
   // ── Workflows & Agents ──
   if (path === 'agents' && method === 'GET') {
     return { status: 200, data: MOCK_AGENTS };
