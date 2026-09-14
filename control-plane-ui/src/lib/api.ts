@@ -82,6 +82,8 @@ export interface TaskListResult {
   total: number;
   limit: number;
   offset: number;
+  workflows: string[];
+  channels: string[];
 }
 
 export type NodeKind =

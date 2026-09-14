@@ -56,7 +56,7 @@ from shared.lib.platform_secrets import (
     load_github_app_connections,
     map_external_identity_groups,
 )
-from shared.lib.task_queue import archive_task, count_tasks, list_tasks
+from shared.lib.task_queue import archive_task, count_tasks, list_task_filter_options, list_tasks
 from shared.lib.trace_tree import SessionTraceResponse, build_trace_tree
 from shared.lib.workflow_paths import discover_workflow_packages, find_workflow_package
 
@@ -107,6 +107,8 @@ class TaskListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    workflows: list[str]
+    channels: list[str]
 
 
 class UserInfoResponse(BaseModel):
@@ -1377,9 +1379,9 @@ async def update_schedule(schedule_id: str, body: ScheduleUpdateRequest):
 
 @router.get("/tasks", response_model=TaskListResponse)
 async def list_tasks_api(
-    workflow: str | None = None,
+    workflow: list[str] = Query(default=[]),
     status: str | None = None,
-    channel: str | None = None,
+    channel: list[str] = Query(default=[]),
     search: str | None = None,
     created_after: str | None = None,
     created_before: str | None = None,
@@ -1419,12 +1421,19 @@ async def list_tasks_api(
             created_before=parsed_created_before,
             include_archived=include_archived,
         )
+        workflows, channels = await list_task_filter_options(
+            session,
+            status=status,
+            include_archived=include_archived,
+        )
 
     return TaskListResponse(
         items=[_task_response(t) for t in tasks],
         total=total,
         limit=limit,
         offset=offset,
+        workflows=workflows,
+        channels=channels,
     )
 
 

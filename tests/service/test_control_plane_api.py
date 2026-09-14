@@ -37,6 +37,37 @@ async def test_tasks_endpoint_lists_seeded_task(async_engine, fixture_workflows_
 
 
 @pytest.mark.asyncio
+async def test_tasks_endpoint_filters_multiple_workflows_and_channels(
+    async_engine, fixture_workflows_dir: Path, db_session
+) -> None:
+    from shared.lib.task_queue import create_task
+
+    await create_task(db_session, workflow="filter-workflow-a", prompt="api match", channel="api")
+    await create_task(db_session, workflow="filter-workflow-b", prompt="api match", channel="api")
+    await create_task(db_session, workflow="filter-workflow-a", prompt="schedule mismatch", channel="schedule")
+
+    async with await _make_client(fixture_workflows_dir) as client:
+        response = await client.get(
+            "/api/tasks",
+            params=[
+                ("workflow", "filter-workflow-a"),
+                ("workflow", "filter-workflow-b"),
+                ("channel", "api"),
+            ],
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert {(item["workflow"], item["channel"]) for item in payload["items"]} == {
+        ("filter-workflow-a", "api"),
+        ("filter-workflow-b", "api"),
+    }
+    assert {"filter-workflow-a", "filter-workflow-b"}.issubset(payload["workflows"])
+    assert {"api", "schedule"}.issubset(payload["channels"])
+
+
+@pytest.mark.asyncio
 async def test_schedules_endpoint_returns_schedule_after_provision(async_engine, fixture_workflows_dir: Path) -> None:
     # Gateway lifespan runs provisioner on startup, but httpx ASGITransport
     # does not drive lifespan events — invoke provisioner explicitly.

@@ -5,9 +5,12 @@ import {
   Cable,
   CalendarClock,
   Cloud,
+  Filter,
   MessageCircle,
+  Search,
   ServerCog,
   Webhook,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -33,6 +36,11 @@ type StatusFilter =
 
 const RERUNNABLE_STATUSES = new Set(['failed', 'lost', 'timed_out']);
 const PAGE_SIZE = 50;
+
+type TaskRefinements = {
+  workflows: string[];
+  origins: string[];
+};
 
 function formatDuration(durationSec: number | null): string {
   if (durationSec === null) {
@@ -86,12 +94,31 @@ function deriveOrigin(task: Task): Origin {
   return { label: 'API', icon: Webhook };
 }
 
+function channelLabel(channel: string): string {
+  return CHANNEL_DISPLAY[channel]?.label ?? channel;
+}
+
 export default function QueuePage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [refinements, setRefinements] = useState<TaskRefinements>({
+    workflows: [],
+    origins: [],
+  });
+  const [draftRefinements, setDraftRefinements] = useState<TaskRefinements>({
+    workflows: [],
+    origins: [],
+  });
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [workflowSearch, setWorkflowSearch] = useState('');
   const [includeArchived, setIncludeArchived] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
+  const [filterOptions, setFilterOptions] = useState<TaskRefinements>({
+    workflows: [],
+    origins: [],
+  });
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const [rerunningTaskId, setRerunningTaskId] = useState<string | null>(null);
@@ -105,20 +132,45 @@ export default function QueuePage() {
     });
     if (filter !== 'all') params.set('status', filter);
     if (includeArchived) params.set('include_archived', 'true');
+    refinements.workflows.forEach((workflow) => {
+      params.append('workflow', workflow);
+    });
+    refinements.origins.forEach((origin) => {
+      params.append('channel', origin);
+    });
     apiFetch<TaskListResult>(`/api/tasks?${params.toString()}`)
       .then((result) => {
         setTasks(result.items);
         setTotal(result.total);
+        setFilterOptions({
+          workflows: result.workflows,
+          origins: result.channels,
+        });
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [filter, includeArchived, offset]);
+  }, [filter, includeArchived, offset, refinements]);
 
   useEffect(() => {
     fetchTasks();
+  }, [fetchTasks]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
     const interval = setInterval(fetchTasks, 5000);
     return () => clearInterval(interval);
-  }, [fetchTasks]);
+  }, [autoRefresh, fetchTasks]);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+
+    function closeFilters(event: KeyboardEvent) {
+      if (event.key === 'Escape') setFiltersOpen(false);
+    }
+
+    document.addEventListener('keydown', closeFilters);
+    return () => document.removeEventListener('keydown', closeFilters);
+  }, [filtersOpen]);
 
   const statusColor = (s: string) => {
     switch (s) {
@@ -220,9 +272,69 @@ export default function QueuePage() {
     setOffset(0);
   }, []);
 
+  const workflowOptions = Array.from(
+    new Set([
+      ...filterOptions.workflows,
+      ...refinements.workflows,
+      ...draftRefinements.workflows,
+    ]),
+  ).sort();
+  const originOptions = Array.from(
+    new Set([
+      ...filterOptions.origins,
+      ...refinements.origins,
+      ...draftRefinements.origins,
+    ]),
+  )
+    .sort()
+    .map((channel) => ({ value: channel, label: channelLabel(channel) }));
+  const refinementCount =
+    refinements.workflows.length + refinements.origins.length;
+
+  function openFilters() {
+    setDraftRefinements(refinements);
+    setWorkflowSearch('');
+    setFiltersOpen(true);
+  }
+
+  function toggleDraftRefinement(key: keyof TaskRefinements, value: string) {
+    setDraftRefinements((current) => ({
+      ...current,
+      [key]: current[key].includes(value)
+        ? current[key].filter((item) => item !== value)
+        : [...current[key], value],
+    }));
+  }
+
+  function applyRefinements() {
+    setRefinements(draftRefinements);
+    setOffset(0);
+    setFiltersOpen(false);
+  }
+
+  function clearRefinements() {
+    const emptyRefinements = { workflows: [], origins: [] };
+    setDraftRefinements(emptyRefinements);
+    setRefinements(emptyRefinements);
+    setOffset(0);
+    setFiltersOpen(false);
+  }
+
+  function removeRefinement(key: keyof TaskRefinements, value: string) {
+    setRefinements((current) => ({
+      ...current,
+      [key]: current[key].filter((item) => item !== value),
+    }));
+    setDraftRefinements((current) => ({
+      ...current,
+      [key]: current[key].filter((item) => item !== value),
+    }));
+    setOffset(0);
+  }
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-display text-3xl font-normal tracking-tight text-[var(--color-text-primary)]">
           Tasks
         </h1>
@@ -239,6 +351,15 @@ export default function QueuePage() {
             />
             Archived
           </label>
+          <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(event) => setAutoRefresh(event.target.checked)}
+              className="h-4 w-4 rounded border-ops-border bg-ops-surface"
+            />
+            Auto refresh
+          </label>
           <button
             onClick={fetchTasks}
             className="px-4 py-2 bg-ops-surface border border-ops-border rounded-btn text-sm text-[var(--color-text-secondary)] hover:border-[var(--color-accent)]/30 hover:text-[var(--color-text-primary)] transition-all"
@@ -248,43 +369,150 @@ export default function QueuePage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-1.5 mb-8">
-        {(
-          [
-            'all',
-            'queued',
-            'running',
-            'waiting_approval',
-            'waiting_user_input',
-            'resume_pending',
-            'succeeded',
-            'failed',
-            'lost',
-            'timed_out',
-          ] as StatusFilter[]
-        ).map((s) => {
-          const label: Record<string, string> = {
-            timed_out: 'Timed Out',
-            waiting_approval: 'Approval',
-            waiting_user_input: 'User Input',
-            resume_pending: 'Resume',
-          };
-          return (
+      <div className="mb-6 space-y-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(
+            [
+              'all',
+              'queued',
+              'running',
+              'waiting_approval',
+              'waiting_user_input',
+              'resume_pending',
+              'succeeded',
+              'failed',
+              'lost',
+              'timed_out',
+            ] as StatusFilter[]
+          ).map((s) => {
+            const label: Record<string, string> = {
+              timed_out: 'Timed Out',
+              waiting_approval: 'Approval',
+              waiting_user_input: 'User Input',
+              resume_pending: 'Resume',
+            };
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                className={`rounded-btn px-3 py-1.5 text-sm transition-all ${
+                  filter === s
+                    ? 'bg-[var(--color-accent)] text-white'
+                    : 'border border-ops-border bg-ops-surface text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]'
+                }`}
+              >
+                {label[s] || s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            );
+          })}
+
+          <div className="relative hidden md:block">
             <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-btn text-sm transition-all ${
-                filter === s
-                  ? 'bg-[var(--color-accent)] text-white'
-                  : 'bg-ops-surface border border-ops-border text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]'
+              type="button"
+              onClick={openFilters}
+              aria-expanded={filtersOpen}
+              aria-controls="task-refinements"
+              className={`inline-flex items-center gap-1.5 rounded-btn border px-3 py-1.5 text-sm transition-colors ${
+                refinementCount > 0
+                  ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+                  : 'border-ops-border bg-ops-surface text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]'
               }`}
             >
-              {label[s] || s.charAt(0).toUpperCase() + s.slice(1)}
+              <Filter size={14} aria-hidden="true" />
+              Filters
+              {refinementCount > 0 && <span>{refinementCount} selected</span>}
             </button>
-          );
-        })}
+            {filtersOpen && (
+              <div
+                id="task-refinements"
+                className="absolute right-0 z-30 mt-2 w-80 animate-[task-filter-popover-in_160ms_ease-out] border border-ops-border bg-ops-surface p-4 shadow-card-hover"
+              >
+                <TaskRefinementForm
+                  workflowOptions={workflowOptions}
+                  originOptions={originOptions}
+                  draftRefinements={draftRefinements}
+                  workflowSearch={workflowSearch}
+                  onWorkflowSearchChange={setWorkflowSearch}
+                  onToggle={toggleDraftRefinement}
+                  onApply={applyRefinements}
+                  onClear={clearRefinements}
+                />
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={openFilters}
+            aria-expanded={filtersOpen}
+            aria-controls="task-refinements-mobile"
+            className={`inline-flex items-center gap-1.5 rounded-btn border px-3 py-1.5 text-sm transition-colors md:hidden ${
+              refinementCount > 0
+                ? 'border-[var(--color-accent)]/30 bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+                : 'border-ops-border bg-ops-surface text-[var(--color-text-tertiary)]'
+            }`}
+          >
+            <Filter size={14} aria-hidden="true" />
+            Filters
+            {refinementCount > 0 && <span>{refinementCount}</span>}
+          </button>
+        </div>
+
+        {refinementCount > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {refinements.workflows.map((workflow) => (
+              <AppliedFilterChip
+                key={`workflow-${workflow}`}
+                label={`Workflow: ${workflow}`}
+                onRemove={() => removeRefinement('workflows', workflow)}
+              />
+            ))}
+            {refinements.origins.map((origin) => (
+              <AppliedFilterChip
+                key={`origin-${origin}`}
+                label={`Origin: ${channelLabel(origin)}`}
+                onRemove={() => removeRefinement('origins', origin)}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={clearRefinements}
+              className="px-1.5 py-1 text-xs text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)]"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
       </div>
+
+      {filtersOpen && (
+        <div className="md:hidden">
+          <button
+            type="button"
+            aria-label="Close filters"
+            className="fixed inset-0 z-40 bg-black/25 animate-[task-filter-fade-in_160ms_ease-out]"
+            onClick={() => setFiltersOpen(false)}
+          />
+          <section
+            id="task-refinements-mobile"
+            aria-label="Task filters"
+            className="fixed inset-x-0 bottom-0 z-50 max-h-[85vh] overflow-y-auto rounded-t-btn border border-b-0 border-ops-border bg-ops-surface p-5 shadow-card-hover animate-[task-filter-sheet-in_180ms_ease-out]"
+          >
+            <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-[var(--color-border-subtle)]" />
+            <TaskRefinementForm
+              workflowOptions={workflowOptions}
+              originOptions={originOptions}
+              draftRefinements={draftRefinements}
+              workflowSearch={workflowSearch}
+              onWorkflowSearchChange={setWorkflowSearch}
+              onToggle={toggleDraftRefinement}
+              onApply={applyRefinements}
+              onClear={clearRefinements}
+            />
+          </section>
+        </div>
+      )}
 
       {actionError && (
         <div className="mb-4 rounded-btn border border-[var(--color-error)]/30 bg-[var(--color-error-muted)] px-4 py-3 text-sm text-[var(--color-error)]">
@@ -478,6 +706,161 @@ export default function QueuePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function TaskRefinementForm({
+  workflowOptions,
+  originOptions,
+  draftRefinements,
+  workflowSearch,
+  onWorkflowSearchChange,
+  onToggle,
+  onApply,
+  onClear,
+}: {
+  workflowOptions: string[];
+  originOptions: Array<{ value: string; label: string }>;
+  draftRefinements: TaskRefinements;
+  workflowSearch: string;
+  onWorkflowSearchChange: (value: string) => void;
+  onToggle: (key: keyof TaskRefinements, value: string) => void;
+  onApply: () => void;
+  onClear: () => void;
+}) {
+  const visibleWorkflows = workflowOptions.filter((workflow) =>
+    workflow.toLowerCase().includes(workflowSearch.toLowerCase()),
+  );
+  const selectedCount =
+    draftRefinements.workflows.length + draftRefinements.origins.length;
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        onApply();
+      }}
+    >
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="font-display text-lg font-normal text-[var(--color-text-primary)]">
+          Filters
+        </h2>
+        <span className="text-xs text-[var(--color-text-tertiary)]">
+          {selectedCount === 0 ? 'None selected' : `${selectedCount} selected`}
+        </span>
+      </div>
+
+      <fieldset>
+        <legend className="mb-2 text-xs font-medium text-[var(--color-text-secondary)]">
+          Workflow
+        </legend>
+        <label className="relative mb-2 block">
+          <Search
+            size={14}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+          />
+          <input
+            type="search"
+            value={workflowSearch}
+            onChange={(event) => onWorkflowSearchChange(event.target.value)}
+            placeholder="Search workflows"
+            className="w-full rounded-btn border border-ops-border bg-ops-surface py-2 pl-8 pr-3 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
+          />
+        </label>
+        <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
+          {visibleWorkflows.map((workflow) => (
+            <FilterCheckbox
+              key={workflow}
+              checked={draftRefinements.workflows.includes(workflow)}
+              label={workflow}
+              onChange={() => onToggle('workflows', workflow)}
+            />
+          ))}
+          {visibleWorkflows.length === 0 && (
+            <p className="px-2 py-1 text-xs text-[var(--color-text-tertiary)]">
+              No workflows found
+            </p>
+          )}
+        </div>
+      </fieldset>
+
+      <fieldset className="mt-4 border-t border-ops-border pt-4">
+        <legend className="mb-2 text-xs font-medium text-[var(--color-text-secondary)]">
+          Origin
+        </legend>
+        <div className="space-y-1">
+          {originOptions.map((origin) => (
+            <FilterCheckbox
+              key={origin.value}
+              checked={draftRefinements.origins.includes(origin.value)}
+              label={origin.label}
+              onChange={() => onToggle('origins', origin.value)}
+            />
+          ))}
+        </div>
+      </fieldset>
+
+      <div className="mt-5 flex items-center justify-between gap-3 border-t border-ops-border pt-4">
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-sm text-[var(--color-accent)] transition-colors hover:text-[var(--color-accent-hover)]"
+        >
+          Clear
+        </button>
+        <button
+          type="submit"
+          className="min-w-24 rounded-btn bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--color-accent-hover)]"
+        >
+          Apply
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function FilterCheckbox({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: () => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 rounded-btn px-2 py-1.5 text-sm text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-raised)]">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        className="h-3.5 w-3.5 rounded border-ops-border bg-ops-surface accent-[var(--color-accent)]"
+      />
+      <span className="min-w-0 truncate">{label}</span>
+    </label>
+  );
+}
+
+function AppliedFilterChip({
+  label,
+  onRemove,
+}: {
+  label: string;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-btn bg-[var(--color-accent)]/10 py-1 pl-2 pr-1 text-xs text-[var(--color-accent)]">
+      <span className="truncate">{label}</span>
+      <button
+        type="button"
+        aria-label={`Remove ${label} filter`}
+        onClick={onRemove}
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--color-accent)]/20"
+      >
+        <X size={12} aria-hidden="true" />
+      </button>
+    </span>
   );
 }
 

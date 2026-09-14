@@ -34,6 +34,7 @@ pytestmark = pytest.mark.scenario
 MINIO_ACCESS_KEY = "knowledge_test"
 MINIO_SECRET_KEY = "knowledge-test-secret"
 KNOWLEDGE_BUCKET = "knowledge-smoke"
+MINIO_TEST_IMAGE = os.environ.get("MINIO_TEST_IMAGE", "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z")
 
 
 def _wait_for_port(container, container_port: str, timeout_sec: float = 30) -> int:
@@ -165,7 +166,7 @@ async def test_knowledge_mcp_hydrates_minio_bundle_and_serves_source(
     minio_name = f"knowledge-minio-{suffix}"
     mcp_name = f"knowledge-mcp-{suffix}"
     minio = docker_client.containers.run(
-        "minio/minio",
+        MINIO_TEST_IMAGE,
         command=["server", "/data"],
         detach=True,
         name=minio_name,

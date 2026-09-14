@@ -108,11 +108,19 @@ export async function handleMockApiRequest(
   // ── Tasks ──
   if (path === 'tasks' && method === 'GET') {
     const statusParam = searchParams.get('status') || undefined;
+    const workflowParams = searchParams.getAll('workflow');
+    const channelParams = searchParams.getAll('channel');
     const limit = parseInt(searchParams.get('limit') || '50', 10);
     const offset = parseInt(searchParams.get('offset') || '0', 10);
     return {
       status: 200,
-      data: getMockTaskList({ status: statusParam, limit, offset }),
+      data: getMockTaskList({
+        status: statusParam,
+        workflows: workflowParams,
+        channels: channelParams,
+        limit,
+        offset,
+      }),
     };
   }
 

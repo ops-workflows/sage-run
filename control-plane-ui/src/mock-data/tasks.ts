@@ -255,12 +255,25 @@ Confirm expiration window is > 60 days and automated renewal secrets are present
 
 export function getMockTaskList(params: {
   status?: string;
+  workflows?: string[];
+  channels?: string[];
   limit?: number;
   offset?: number;
 }): TaskListResult {
   let filtered = MOCK_TASKS;
   if (params.status && params.status !== 'all') {
     filtered = filtered.filter((t) => t.status === params.status);
+  }
+  const options = filtered;
+  if (params.workflows?.length) {
+    filtered = filtered.filter((task) =>
+      params.workflows?.includes(task.workflow),
+    );
+  }
+  if (params.channels?.length) {
+    filtered = filtered.filter(
+      (task) => task.channel && params.channels?.includes(task.channel),
+    );
   }
   const limit = params.limit ?? 50;
   const offset = params.offset ?? 0;
@@ -269,5 +282,9 @@ export function getMockTaskList(params: {
     total: filtered.length,
     limit,
     offset,
+    workflows: Array.from(new Set(options.map((task) => task.workflow))).sort(),
+    channels: Array.from(
+      new Set(options.flatMap((task) => (task.channel ? [task.channel] : []))),
+    ).sort(),
   };
 }

@@ -443,9 +443,9 @@ async def get_task(session: AsyncSession, task_id: uuid.UUID) -> Task | None:
 async def list_tasks(
     session: AsyncSession,
     *,
-    workflow: str | None = None,
+    workflow: list[str] | None = None,
     status: str | None = None,
-    channel: str | None = None,
+    channel: list[str] | None = None,
     search: str | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
@@ -468,11 +468,11 @@ async def list_tasks(
     if not include_archived:
         query = query.where(Task.archived_at.is_(None))
     if workflow:
-        query = query.where(Task.workflow == workflow)
+        query = query.where(Task.workflow.in_(workflow))
     if status:
         query = query.where(Task.status == status)
     if channel:
-        query = query.where(Task.channel == channel)
+        query = query.where(Task.channel.in_(channel))
     if created_after:
         query = query.where(Task.created >= created_after)
     if created_before:
@@ -487,9 +487,9 @@ async def list_tasks(
 async def count_tasks(
     session: AsyncSession,
     *,
-    workflow: str | None = None,
+    workflow: list[str] | None = None,
     status: str | None = None,
-    channel: str | None = None,
+    channel: list[str] | None = None,
     search: str | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
@@ -499,11 +499,11 @@ async def count_tasks(
     if not include_archived:
         query = query.where(Task.archived_at.is_(None))
     if workflow:
-        query = query.where(Task.workflow == workflow)
+        query = query.where(Task.workflow.in_(workflow))
     if status:
         query = query.where(Task.status == status)
     if channel:
-        query = query.where(Task.channel == channel)
+        query = query.where(Task.channel.in_(channel))
     if created_after:
         query = query.where(Task.created >= created_after)
     if created_before:
@@ -512,6 +512,26 @@ async def count_tasks(
         pattern = f"%{search}%"
         query = query.where(or_(Task.prompt.ilike(pattern), Task.workflow.ilike(pattern), Task.error.ilike(pattern)))
     return int((await session.execute(query)).scalar() or 0)
+
+
+async def list_task_filter_options(
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    include_archived: bool = False,
+) -> tuple[list[str], list[str]]:
+    workflow_query = select(Task.workflow).distinct().order_by(Task.workflow)
+    channel_query = select(Task.channel).where(Task.channel.is_not(None)).distinct().order_by(Task.channel)
+    if not include_archived:
+        workflow_query = workflow_query.where(Task.archived_at.is_(None))
+        channel_query = channel_query.where(Task.archived_at.is_(None))
+    if status:
+        workflow_query = workflow_query.where(Task.status == status)
+        channel_query = channel_query.where(Task.status == status)
+
+    workflows = list((await session.execute(workflow_query)).scalars())
+    channels = list((await session.execute(channel_query)).scalars())
+    return workflows, channels
 
 
 async def archive_task(session: AsyncSession, task_id: uuid.UUID, *, archived: bool = True) -> None:
