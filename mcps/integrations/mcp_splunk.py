@@ -58,7 +58,7 @@ _EMBEDDED_TIME_RE = re.compile(r"(?i)(?:^|\s)(?:earliest|latest)\s*=")
 _RELATIVE_TIME_RE = re.compile(r"^-(\d+)([mhd])$")
 _SID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,512}$")
 ONLINE_ALERTS_WORKFLOW = "online-alerts-investigator"
-ONLINE_ALERTS_SPLUNK_CALL_LIMIT = 2
+ONLINE_ALERTS_SPLUNK_CALL_LIMIT = 5
 task_call_budget = TaskCallBudget(
     limit=ONLINE_ALERTS_SPLUNK_CALL_LIMIT,
     max_tasks=10_000,

@@ -8,9 +8,18 @@ import json
 
 import pytest
 
-from mcps.integrations.mcp_splunk import _enforce_online_alert_budget, compact_splunk_evidence, task_call_budget
+from mcps.integrations.mcp_splunk import (
+    ONLINE_ALERTS_SPLUNK_CALL_LIMIT,
+    _enforce_online_alert_budget,
+    compact_splunk_evidence,
+    task_call_budget,
+)
 
 pytestmark = pytest.mark.unit
+
+
+def test_online_alert_splunk_call_limit_matches_investigation_plan() -> None:
+    assert ONLINE_ALERTS_SPLUNK_CALL_LIMIT == 5
 
 
 def test_online_alert_budget_uses_task_header_and_ignores_other_workflows(monkeypatch) -> None:

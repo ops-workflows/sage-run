@@ -73,9 +73,12 @@ successfully indexed. Calls from `online-alerts-investigator` are capped at 20
 per task using `X-Task-Id`; later calls fail fast so the workflow can return its
 bounded `not_grounded` result instead of consuming the session timeout.
 
-The Splunk MCP similarly caps that workflow at two provider calls per task: one
-finalized-job retrieval plus one correlation query, or two identical SID
-retrieval attempts when the first response is missing/404.
+The Splunk MCP caps `online-alerts-investigator` at five provider calls per
+task. The workflow uses the first call to retrieve the finalized alert job,
+then spends up to four evidence-driven pivots on its observed failure signature,
+endpoint or operation, and request/session correlation. Two identical SID
+retrieval attempts are permitted when the first returns missing/404; a third is
+not. The cap is a ceiling, not a target.
 
 | Tool | Purpose |
 | --- | --- |
