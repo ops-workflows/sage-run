@@ -68,9 +68,21 @@ schedules: []
   #   cron: "0 8 * * 1-5"
   #   prompt: "Do something on schedule"
 
+# Exact registered source aliases; an empty sources list grants no access.
+knowledge:
+  sources:
+    - team-runbooks
+
 # ── Messaging (platform routing) ───────────────────────────────────
 messaging:
   channels:
     - "{CHANNEL_NAME}"
   trigger_words:
     - "@agent"
+  # Omit channel_policies to allow all otherwise-matching human invocations.
+  # This policy applies only to Mattermost humans, not bot/webhook trust.
+  # channel_policies:
+  #   "{CHANNEL_NAME}":
+  #     allowed_usernames: [alice, bob]
+  #   "{DENIED_CHANNEL_NAME}":
+  #     allowed_usernames: []

@@ -64,6 +64,34 @@ and write` for reflection PRs, and the automatically granted `Metadata: read`.
 Do not grant `Workflows` unless the allowed reflection paths are intentionally
 expanded to `.github/workflows`.
 
+### Confluence connections
+
+Define named Confluence Cloud connections in `platform-config.yaml`:
+
+```yaml
+confluence:
+  connections:
+    team-wiki:
+      base_url: https://example.atlassian.net/wiki
+      auth_type: basic
+      username: knowledge-reader@example.com
+      token_secret: CONFLUENCE_TEAM_TOKEN
+secrets:
+  CONFLUENCE_TEAM_TOKEN:
+    encrypted: "ENC[age,...]"
+```
+
+`credential_ref` on a Confluence source is the exact connection name, not a
+token or URL. Basic authentication uses the service account's email and API
+token. Keep the token age-encrypted; the indexer resolves it using the existing
+`AGE_IDENTITY` bootstrap flow. Use HTTPS; HTTP is accepted only for loopback
+tests. Connection discovery exposes names and base URLs, never tokens. Grant
+the service account read access only to the pages intended for indexing.
+The indexed snapshot reflects that account's access, not the requesting
+Mattermost user's Confluence permissions. Only `auth_type: basic` is supported;
+other authentication types, including bearer, are rejected by configuration
+validation. Confluence Data Center is not certified by this implementation.
+
 ### Platform config file
 
 | Env var | Default | Purpose |
@@ -276,6 +304,24 @@ scope appropriate to that channel type (`channels:history` or
 `groups:history`). Both providers apply the same latest-10 prompt limit and
 record the included count as task metadata under `thread_context_count`.
 
+New tasks created from inbound messages also store the captured sender username
+in the nullable, source-neutral `initiator` column. Task list/detail responses
+expose it, and task details display "Initiated By" when populated. Generic task
+producers can supply `initiator` through `create_task` or `POST /api/tasks`.
+Schedules and Pub/Sub leave it null; existing tasks are not backfilled, and
+replies, approvals, and alert coalescing do not replace the original initiator.
+
+Mattermost workflows may set `messaging.channel_policies.<configured-channel>`
+with `allowed_usernames`. Omit the map or a channel entry to allow all humans
+who otherwise match the route; an explicit `allowed_usernames: []` denies all
+human invocations on that channel. Matching trims whitespace, removes a leading
+`@`, and compares case-insensitively; restricted routes reject missing usernames
+before thread hydration or task creation. This policy applies to human
+Mattermost invocation only. Existing bot/webhook trust, Slack routing,
+clarification replies, and approval authorization are unchanged. See
+[Workflow Authoring](workflow-authoring.md#mattermost-human-invocation) for an
+example; replies and approvals require separate authorization policy.
+
 ### Hindsight memory
 
 | Env var | Default | Purpose |
@@ -283,6 +329,148 @@ record the included count as task metadata under `thread_context_count`.
 | `HINDSIGHT_URL` | `http://hindsight:8888` | Hindsight service base URL. |
 | `HINDSIGHT_REQUEST_RETRIES` | `3` | Retry count for Hindsight API calls. |
 | `HINDSIGHT_REQUEST_RETRY_BACKOFF_SEC` | `0.5` | Initial retry backoff. |
+
+### Knowledge embeddings and retrieval
+
+Confluence source configuration accepts `include_descendants` (boolean, default
+`true`) and `scrub_patterns` (ordered string list, default empty). The source
+form exposes "Include subpages" and a multiline regex field. Uncheck the former
+to index exactly the configured pages. Each nonblank regex line is one rule;
+all matches are replaced with `[REDACTED]` in listed order. Matching is
+case-sensitive unless the pattern includes inline flags, such as `(?i)` or
+`(?s)` for matching across newlines. Patterns use the Python `regex` engine's
+VERSION0 syntax. At most 100 patterns of 2,000 characters each are accepted;
+invalid patterns fail source validation with their rule line number.
+
+Rules scrub normalized body text, including body-derived headings, tables,
+code, and links, before hashing, persistence, chunking, keyword indexing, and
+embeddings. Page titles, page hierarchy names, and canonical citation URLs are
+outside this body-only scope. Each page body has a one-second execution budget;
+exceeding it fails synchronization, never bypasses redaction.
+
+The last successful index records the ordered rule signature in version stats
+and snapshot identity. A changed signature forces fresh bodies for every
+selected page on the next sync, even when Confluence page versions are unchanged.
+Existing content/chunk hashes still reuse unchanged vectors. The previous index
+continues serving until success. Historical content is not retroactively
+scrubbed; normal version-count housekeeping prunes unreferenced revisions and
+chunks as history exceeds retention. Regexes reduce exposure but do not guarantee
+that every secret or sensitive value is detected.
+
+Hybrid indexing, MCP search, and source-grant enforcement are implemented and
+covered by local PostgreSQL, provider-fake, and runtime tests. Before rollout,
+verify your endpoint configuration, run an authorized tenant sync, and check
+retrieval relevance. Local tests do not certify a live provider or production
+scale.
+
+Knowledge indexing and query embedding call the OpenAI-compatible model
+endpoint directly at `<base_url>/embeddings`; Hindsight is not an embedding
+proxy. The worker and Knowledge MCP must use the same model and dimensions.
+GitHub sources retain `code_graph` indexing; Confluence sources use
+`hybrid_vector` with pgvector dense search and PostgreSQL full-text search,
+fused using reciprocal rank fusion (RRF), not BM25.
+
+| Env var | Settings default | Purpose |
+| --- | --- | --- |
+| `KNOWLEDGE_EMBEDDINGS_OPENAI_BASE_URL` | `http://model-gateway:1235/v1` | OpenAI-compatible base URL, including `/v1` when required. |
+| `KNOWLEDGE_EMBEDDINGS_OPENAI_MODEL` | `""` | Actual embedding model or provider alias, not a chat model. |
+| `KNOWLEDGE_EMBEDDINGS_OPENAI_API_KEY` | `""` | Optional dedicated key; the embedding client falls back to bootstrap `LLM_API_KEY`. |
+| `KNOWLEDGE_EMBEDDINGS_DIMENSIONS` | `0` | Required positive output dimension for hybrid sources; `0` means unconfigured, not auto-detection. |
+| `KNOWLEDGE_EMBEDDINGS_BATCH_SIZE` | `16` | Bounded document embedding batch size. |
+| `KNOWLEDGE_EMBEDDINGS_TIMEOUT_SEC` | `60` | Embedding request timeout in seconds. |
+| `KNOWLEDGE_RERANK_ENABLED` | `false` | Opt into reranking; leave disabled until measured on your corpus. |
+| `KNOWLEDGE_RERANK_BASE_URL` | `http://model-gateway:1235` | Cohere-compatible base URL; retrieval appends `/rerank`. |
+| `KNOWLEDGE_RERANK_MODEL` | `""` | Reranker alias when enabled. |
+| `KNOWLEDGE_RERANK_TIMEOUT_SEC` | `3` | Rerank request timeout in seconds. |
+| `KNOWLEDGE_RERANK_CANDIDATES` | `20` | Maximum fused candidates sent to the reranker. |
+| `KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS` | `false` | Require each workflow to declare `knowledge.sources` when enabled. |
+
+Compose passes these variables to both `knowledge-indexer` and `mcp-knowledge`.
+Unless explicitly overridden, its embedding URL/model are taken from
+`HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` and
+`HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL`, using the existing model-gateway URL
+and placeholder embedding alias when those variables are absent. The API key
+falls back to bootstrap `LLM_API_KEY`. Set `KNOWLEDGE_EMBEDDINGS_DIMENSIONS`
+to the model's verified output size before enabling a hybrid source; Compose
+deliberately defaults it to `0`. Do not guess a dimension or assume the
+placeholder model exists. These settings do not change Hindsight's defaults.
+
+Helm exposes optional overrides under `knowledge.embeddings` (`openaiBaseUrl`,
+`openaiModel`, `dimensions`, `batchSize`, `timeoutSec`), `knowledge.rerank`
+(`enabled`, `baseUrl`, `model`, `timeoutSec`, `candidates`), and
+`knowledge.requireExplicitSourceGrants`. Null values emit no override, allowing
+mounted platform config to supply the setting. `platformEnv` wins over these
+chart settings without duplicate environment entries. Both knowledge workloads
+continue to receive `LLM_API_KEY` through `bootstrap.existingSecret`/`envFrom`;
+do not place API keys in Helm values or print rendered secret data.
+
+Mounted `platform-config.yaml` supports the following canonical snake_case
+configuration. These names are separate from Helm's camelCase values. Replace
+the model aliases, dimension, and encrypted key with values verified for your
+endpoint; `768` here is illustrative, not a default or auto-detected value.
+
+```yaml
+knowledge:
+  embeddings:
+    provider: openai_compatible
+    base_url: http://model-gateway:1235/v1
+    model: embedding-model
+    dimensions: 768
+    api_key_secret: knowledge_embedding_key
+    batch_size: 16
+    timeout_sec: 60
+  rerank:
+    enabled: false
+    base_url: http://model-gateway:1235
+    model: reranker-model
+    timeout_sec: 3
+    candidates: 20
+  require_explicit_source_grants: false
+
+secrets:
+  knowledge_embedding_key:
+    encrypted: "ENC[age,...]"
+```
+
+The loader maps `embeddings.base_url` and `embeddings.model` to
+`KNOWLEDGE_EMBEDDINGS_OPENAI_BASE_URL` and `KNOWLEDGE_EMBEDDINGS_OPENAI_MODEL`;
+`dimensions`, `batch_size`, and `timeout_sec` map to the corresponding
+`KNOWLEDGE_EMBEDDINGS_*` settings. Each `rerank` option maps to
+`KNOWLEDGE_RERANK_*`, and `require_explicit_source_grants` maps to
+`KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS`.
+
+All sections and fields are optional. Omitted or null fields preserve Settings
+defaults; specifying only `provider` adds no environment override. The only
+supported embedding provider is `openai_compatible` (case and surrounding
+whitespace are normalized). Boolean flags must be YAML booleans; dimensions,
+batch size, and candidate count must be integers. Dimensions may be `0` while
+unconfigured; batch size, candidate count, and finite numeric timeouts must be
+positive. Unknown keys, camelCase platform options, malformed values, and
+unsupported providers raise a configuration error without including supplied
+values. Do not put an inline `api_key` in this section.
+
+`api_key_secret` references a named encrypted entry under `secrets:`. With an
+age identity, the loader decrypts only that referenced embedding key and maps
+it to `KNOWLEDGE_EMBEDDINGS_OPENAI_API_KEY`, never to the reference name as a
+generic environment variable. A missing or malformed secret entry raises a
+safe error when decryption is needed. Without an identity, non-secret knowledge
+options still load and no secrets are decrypted; the dedicated key remains
+unset so the existing caller-owned `LLM_API_KEY` fallback remains available.
+The dedicated key is excluded from Settings representations.
+
+Precedence is non-empty process environment, then explicit raw `config:`
+environment entries, then typed `knowledge:` options, then Settings defaults.
+For example, `config: {KNOWLEDGE_EMBEDDINGS_BATCH_SIZE: 8}` overrides the typed
+batch size above. An explicit `config:` entry for the dedicated API key or a
+non-empty process environment key skips decryption of the referenced key.
+Compose supplies defaults as environment values, so change its input variables
+to override those defaults rather than expecting mounted YAML to replace them.
+Use a positive verified dimension and identical settings on both services.
+
+Document embedding failures prevent promotion. Query embedding failures may
+fall back to lexical retrieval; reranker failures retain the fused order.
+Neither a provider benchmark nor production retrieval-quality certification
+is implied by deployment wiring or unit tests.
 
 ### Housekeeping / retention
 

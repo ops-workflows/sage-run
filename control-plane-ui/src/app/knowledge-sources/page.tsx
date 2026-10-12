@@ -1,23 +1,28 @@
 'use client';
 
+import { BookOpenText, Plus, X } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { BookOpenText, Plus, X } from 'lucide-react';
-import {
-  apiFetch,
-  type GitHubConnection,
-  type KnowledgeSource,
-} from '@/lib/api';
 import {
   EMPTY_KNOWLEDGE_SOURCE_FORM,
   KnowledgeSourceForm,
-  repositoryName,
   sourcePayload,
 } from '@/components/knowledge-source-form';
+import {
+  apiFetch,
+  type ConfluenceConnection,
+  type GitHubConnection,
+  type KnowledgeSource,
+  knowledgeSourcePayload,
+} from '@/lib/api';
 
 export default function KnowledgeSourcesPage() {
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [connections, setConnections] = useState<GitHubConnection[]>([]);
+  const [confluenceConnections, setConfluenceConnections] = useState<
+    ConfluenceConnection[]
+  >([]);
+  const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(EMPTY_KNOWLEDGE_SOURCE_FORM);
   const [showForm, setShowForm] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -25,14 +30,20 @@ export default function KnowledgeSourcesPage() {
 
   async function load() {
     try {
-      const [items, configuredConnections] = await Promise.all([
-        apiFetch<KnowledgeSource[]>('/api/platform/knowledge-sources'),
-        apiFetch<GitHubConnection[]>(
-          '/api/platform/knowledge-sources/github-connections',
-        ),
-      ]);
+      const [items, configuredConnections, wikiConnections] = await Promise.all(
+        [
+          apiFetch<KnowledgeSource[]>('/api/platform/knowledge-sources'),
+          apiFetch<GitHubConnection[]>(
+            '/api/platform/knowledge-sources/github-connections',
+          ),
+          apiFetch<ConfluenceConnection[]>(
+            '/api/platform/knowledge-sources/confluence-connections',
+          ),
+        ],
+      );
       setSources(items);
       setConnections(configuredConnections);
+      setConfluenceConnections(wikiConnections);
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : 'Failed to load sources',
@@ -45,6 +56,7 @@ export default function KnowledgeSourcesPage() {
 
   async function createSource(event: React.FormEvent) {
     event.preventDefault();
+    setCreating(true);
     setError(null);
     try {
       await apiFetch('/api/platform/knowledge-sources', {
@@ -56,6 +68,8 @@ export default function KnowledgeSourcesPage() {
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Create failed');
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -68,14 +82,7 @@ export default function KnowledgeSourcesPage() {
         {
           method: 'PUT',
           body: JSON.stringify({
-            repository: source.repository_url
-              .replace(/^https:\/\/[^/]+\//, '')
-              .replace(/\.git$/, ''),
-            credential_ref: source.credential_ref,
-            default_ref: source.default_ref,
-            include_paths: source.include_paths,
-            exclude_paths: source.exclude_paths,
-            sync_policy: source.sync_policy,
+            ...knowledgeSourcePayload(source),
             enabled: !source.enabled,
           }),
         },
@@ -98,7 +105,7 @@ export default function KnowledgeSourcesPage() {
             Knowledge Sources
           </h1>
           <p className="mt-2 text-sm text-[var(--color-text-tertiary)]">
-            Approved repositories and their promoted immutable indexes.
+            {sources.length} registered sources
           </p>
         </div>
         <button
@@ -118,8 +125,10 @@ export default function KnowledgeSourcesPage() {
           form={form}
           setForm={setForm}
           onSubmit={createSource}
-          submitLabel="Create source"
+          submitLabel={creating ? 'Creating...' : 'Create source'}
           connections={connections}
+          confluenceConnections={confluenceConnections}
+          busy={creating}
         />
       ) : null}
       <section className="border-t border-ops-border">
@@ -138,19 +147,33 @@ export default function KnowledgeSourcesPage() {
               />
               <div className="min-w-0">
                 <h2 className="font-medium text-[var(--color-text-primary)]">
-                  {repositoryName(source.repository_url)}
+                  {source.display_name}
                 </h2>
-                <p className="truncate font-mono text-xs text-[var(--color-text-tertiary)]">
-                  {source.repository_url} · {source.default_ref}
+                <p className="break-words font-mono text-xs text-[var(--color-text-tertiary)]">
+                  {source.canonical_alias}
                 </p>
+                <p className="mt-1 break-words text-xs text-[var(--color-text-secondary)]">
+                  {source.source_kind === 'github'
+                    ? 'GitHub / Code graph'
+                    : 'Confluence / Hybrid search'}
+                  {' · '}
+                  {source.source_kind === 'github'
+                    ? `${source.repository_url} · ${source.default_ref}`
+                    : `${source.source_config.root_page_ids.length} roots · ${source.source_config.lexical_config}`}
+                </p>
+                {source.serving_suspended_at ? (
+                  <p className="mt-2 break-words text-xs text-[var(--color-warning)]">
+                    {source.serving_suspension_reason || 'Serving suspended'}
+                  </p>
+                ) : null}
               </div>
             </Link>
-            <div className="flex items-center gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-3 text-xs">
               <button
                 type="button"
                 role="switch"
                 aria-checked={source.enabled}
-                aria-label={`${source.enabled ? 'Disable' : 'Enable'} ${repositoryName(source.repository_url)}`}
+                aria-label={`${source.enabled ? 'Disable' : 'Enable'} ${source.display_name}`}
                 disabled={togglingId === source.id}
                 onClick={() => toggleSource(source)}
                 className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
@@ -175,7 +198,13 @@ export default function KnowledgeSourcesPage() {
                 {source.enabled ? 'Enabled' : 'Disabled'}
               </span>
               <span className="text-[var(--color-text-tertiary)]">
-                {source.current_successful_version_id ? 'Ready' : 'Not indexed'}
+                {source.serving_suspended_at
+                  ? 'Suspended'
+                  : !source.enabled
+                    ? 'Not serving'
+                    : source.current_successful_version_id
+                      ? 'Ready'
+                      : 'Not indexed'}
               </span>
             </div>
           </article>

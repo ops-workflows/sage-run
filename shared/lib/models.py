@@ -5,8 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     Float,
@@ -17,7 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -59,6 +61,7 @@ class Task(Base):
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     task_metadata: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     channel: Mapped[str | None] = mapped_column(Text)
+    initiator: Mapped[str | None] = mapped_column(Text)
     message_channel: Mapped[str | None] = mapped_column(Text)
     message_thread: Mapped[str | None] = mapped_column(Text)
     session_id: Mapped[str | None] = mapped_column(Text)
@@ -263,19 +266,46 @@ class BackgroundJobRun(Base):
 class KnowledgeSource(Base):
     __tablename__ = "knowledge_sources"
     __table_args__ = (
+        CheckConstraint(
+            "(source_kind = 'github' AND index_kind = 'code_graph') OR "
+            "(source_kind = 'confluence' AND index_kind = 'hybrid_vector')",
+            name="ck_knowledge_sources_kind_pair",
+        ),
         Index("idx_knowledge_sources_enabled", "enabled"),
         {"schema": "control_plane"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     canonical_alias: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
-    repository_url: Mapped[str] = mapped_column(Text, nullable=False)
-    default_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(
+        Text, default=lambda context: context.get_current_parameters()["canonical_alias"]
+    )
+    source_kind: Mapped[str] = mapped_column(Text, nullable=False, default="github", server_default="github")
+    index_kind: Mapped[str] = mapped_column(Text, nullable=False, default="code_graph", server_default="code_graph")
+    source_config: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda context: (
+            {
+                key: (context.get_current_parameters().get(key) or [])
+                if key.endswith("_paths")
+                else context.get_current_parameters().get(key)
+                for key in ("repository_url", "default_ref", "include_paths", "exclude_paths")
+            }
+            if context.get_current_parameters().get("source_kind", "github") == "github"
+            else {}
+        ),
+        server_default=text("'{}'::jsonb"),
+    )
+    repository_url: Mapped[str | None] = mapped_column(Text)
+    default_ref: Mapped[str | None] = mapped_column(Text)
     include_paths: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     exclude_paths: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     credential_ref: Mapped[str | None] = mapped_column(Text)
     sync_policy: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    serving_suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    serving_suspension_reason: Mapped[str | None] = mapped_column(Text)
     current_successful_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("control_plane.knowledge_source_versions.id", ondelete="SET NULL")
     )
@@ -298,12 +328,25 @@ class KnowledgeSource(Base):
 class KnowledgeSourceVersion(Base):
     __tablename__ = "knowledge_source_versions"
     __table_args__ = (
+        CheckConstraint(
+            "index_kind = 'code_graph' OR (index_kind = 'hybrid_vector' AND "
+            "source_revision IS NOT NULL AND indexer_version IS NOT NULL AND index_config_hash IS NOT NULL)",
+            name="ck_knowledge_source_versions_index_identity",
+        ),
         UniqueConstraint(
             "source_id",
             "commit_sha",
             "graphify_version",
             "extraction_config_hash",
             name="uq_knowledge_source_versions_identity",
+        ),
+        Index(
+            "uq_knowledge_source_versions_generic_identity",
+            "source_id",
+            "source_revision",
+            "index_config_hash",
+            unique=True,
+            postgresql_where=text("index_kind <> 'code_graph'"),
         ),
         Index("idx_knowledge_source_versions_source", "source_id", "created_at"),
         Index("idx_knowledge_source_versions_status", "status", "created_at"),
@@ -314,10 +357,21 @@ class KnowledgeSourceVersion(Base):
     source_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("control_plane.knowledge_sources.id", ondelete="CASCADE"), nullable=False
     )
-    commit_sha: Mapped[str] = mapped_column(Text, nullable=False)
+    source_revision: Mapped[str | None] = mapped_column(
+        Text, default=lambda context: context.get_current_parameters().get("commit_sha")
+    )
+    index_kind: Mapped[str] = mapped_column(Text, nullable=False, default="code_graph", server_default="code_graph")
+    indexer_version: Mapped[str | None] = mapped_column(
+        Text, default=lambda context: context.get_current_parameters().get("graphify_version")
+    )
+    index_config_hash: Mapped[str | None] = mapped_column(
+        Text, default=lambda context: context.get_current_parameters().get("extraction_config_hash")
+    )
+    stats: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    commit_sha: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
-    graphify_version: Mapped[str] = mapped_column(Text, nullable=False)
-    extraction_config_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    graphify_version: Mapped[str | None] = mapped_column(Text)
+    extraction_config_hash: Mapped[str | None] = mapped_column(Text)
     artifact_keys: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     artifact_checksums: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -332,6 +386,90 @@ class KnowledgeSourceVersion(Base):
     source: Mapped[KnowledgeSource] = relationship(
         "KnowledgeSource", back_populates="versions", foreign_keys=[source_id]
     )
+
+
+class KnowledgeDocumentRevision(Base):
+    __tablename__ = "knowledge_document_revisions"
+    __table_args__ = (
+        UniqueConstraint("source_id", "external_id", "content_hash", name="uq_knowledge_document_revisions_identity"),
+        Index("idx_knowledge_document_revisions_source", "source_id", "external_id"),
+        {"schema": "control_plane"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("control_plane.knowledge_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_revision: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_url: Mapped[str] = mapped_column(Text, nullable=False)
+    hierarchy_path: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    normalized_content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    document_metadata: Mapped[dict] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint("document_revision_id", "index_config_hash", "ordinal", name="uq_knowledge_chunks_identity"),
+        CheckConstraint(
+            "embedding_dimensions > 0 AND vector_dims(embedding) = embedding_dimensions",
+            name="ck_knowledge_chunks_embedding_dimensions",
+        ),
+        Index("idx_knowledge_chunks_document", "document_revision_id"),
+        Index("idx_knowledge_chunks_search", "search_vector", postgresql_using="gin"),
+        {"schema": "control_plane"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    document_revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("control_plane.knowledge_document_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    index_config_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    heading_path: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    estimated_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    lexical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    search_vector: Mapped[str] = mapped_column(TSVECTOR, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class KnowledgeSourceVersionDocument(Base):
+    __tablename__ = "knowledge_source_version_documents"
+    __table_args__ = (
+        Index("idx_knowledge_source_version_documents_revision", "document_revision_id"),
+        {"schema": "control_plane"},
+    )
+
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("control_plane.knowledge_source_versions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    document_revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("control_plane.knowledge_document_revisions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    external_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    root_page_id: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class WorkflowRepoState(Base):

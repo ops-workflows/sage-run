@@ -127,7 +127,6 @@ async def reconcile_worker_startup() -> list[uuid.UUID]:
 async def worker_loop() -> None:
     await ensure_runtime_schema()
     config = KnowledgeSourceIndexerConfig.from_settings()
-    config.validate()
     poll_interval = int(settings.knowledge_source_indexer_poll_interval_sec)
     if poll_interval <= 0:
         raise ValueError("KNOWLEDGE_SOURCE_INDEXER_POLL_INTERVAL_SEC must be positive")
@@ -153,10 +152,10 @@ async def worker_loop() -> None:
                     config=config,
                 )
                 logger.info(
-                    "Knowledge Source sync %s: source=%s commit=%s run=%s",
+                    "Knowledge Source sync %s: source=%s revision=%s run=%s",
                     result.status,
                     result.source_id,
-                    result.commit_sha,
+                    result.source_revision,
                     result.run_id,
                 )
             except KnowledgeSourceBusyError:

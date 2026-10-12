@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from pydantic import PrivateAttr
+from pydantic import Field, PrivateAttr
 from pydantic_settings import BaseSettings
 
 from shared.lib.platform_secrets import MessageBusConfig, load_message_bus_config, load_platform_env
@@ -93,6 +93,23 @@ class Settings(
     knowledge_source_serving_cache_root: str = "/var/lib/sage-run/knowledge"
     knowledge_source_refresh_interval_sec: int = 30
     knowledge_source_cache_versions_to_keep: int = 2
+    knowledge_embeddings_openai_base_url: str = "http://model-gateway:1235/v1"
+    knowledge_embeddings_openai_model: str = ""
+    knowledge_embeddings_dimensions: int = Field(default=0, ge=0)
+    knowledge_embeddings_openai_api_key: str = Field(default="", repr=False)
+    knowledge_embeddings_batch_size: int = Field(default=16, gt=0)
+    knowledge_embeddings_timeout_sec: float = Field(default=60, gt=0)
+    knowledge_rerank_enabled: bool = False
+    knowledge_rerank_base_url: str = "http://model-gateway:1235"
+    knowledge_rerank_model: str = ""
+    knowledge_rerank_timeout_sec: float = Field(default=3, gt=0)
+    knowledge_rerank_candidates: int = Field(default=20, gt=0)
+    knowledge_require_explicit_source_grants: bool = False
+    knowledge_source_max_pages: int = Field(default=10000, gt=0)
+    knowledge_source_max_chunks: int = Field(default=100000, gt=0)
+    knowledge_source_fetch_concurrency: int = Field(default=8, gt=0)
+    knowledge_source_request_timeout_sec: float = Field(default=60, gt=0)
+    knowledge_source_request_retries: int = Field(default=3, ge=0)
     kubernetes_memory_helper_image: str = ""
     kubernetes_bootstrap_secret: str = ""
     housekeeping_enabled: bool = True

@@ -60,11 +60,32 @@ github:
     #   installation_id: "replace-with-ghes-installation-id"
     #   private_key_secret: github_enterprise_app_private_key
 
+confluence:
+  connections:
+    team-wiki:
+      base_url: https://example.atlassian.net/wiki
+      auth_type: basic
+      username: knowledge-reader@example.com
+      token_secret: CONFLUENCE_TEAM_TOKEN
+
+# Use the same endpoint/model as Hindsight, with its verified output dimension.
+# 0 leaves hybrid indexing unconfigured; deployment env overrides this section.
+knowledge:
+  embeddings:
+    provider: openai_compatible
+    base_url: https://llm.example.internal/v1
+    model: example-embedding-model
+    dimensions: 0
+  rerank:
+    enabled: false
+  require_explicit_source_grants: false
+
 mcps:
   enabled:
     - message
     - memory
     - platform
+    - knowledge
   # Instance-specific MCP policy lives under `config.<server_id>`, e.g.:
   # config:
   #   salesforce:
@@ -196,6 +217,8 @@ memory:
 secrets:
   github_public_app_private_key:
     encrypted: ENC[age,replace-with-encrypted-github-app-private-key-pem]
+  CONFLUENCE_TEAM_TOKEN:
+    encrypted: ENC[age,replace-with-encrypted-confluence-api-token]
   # github_enterprise_app_private_key:
   #   encrypted: ENC[age,replace-with-encrypted-ghes-app-private-key-pem]
   message_bus_bot_token:

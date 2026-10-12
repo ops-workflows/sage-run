@@ -7,13 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 import shared.lib.knowledge_source_serving as knowledge_serving
 from shared.lib.knowledge_source_serving import (
     KnowledgeSourceAccessError,
     KnowledgeSourceServingRegistry,
     ServingSnapshot,
-    _workflow_has_knowledge_mcp,
     explain_node,
     find_paths,
     get_graph_overview,
@@ -198,9 +198,11 @@ def test_registry_authorizes_and_pins_workflow_with_knowledge_mcp(tmp_path: Path
     snapshot = _snapshot(tmp_path)
     registry = KnowledgeSourceServingRegistry(cache_root=tmp_path / "cache", bucket="knowledge")
     registry._by_alias[snapshot.canonical_alias] = snapshot
+    (tmp_path / ".mcp.json").write_text('{"mcpServers":{"knowledge":{}}}', encoding="utf-8")
     monkeypatch.setattr(
-        "shared.lib.knowledge_source_serving._workflow_has_knowledge_mcp",
-        lambda workflow: workflow == "example-workflow",
+        knowledge_serving,
+        "discover_workflow_packages",
+        lambda: [SimpleNamespace(name="example-workflow", path=tmp_path, config={})],
     )
 
     with registry.pin("org/example", "example-workflow") as pinned:
@@ -218,8 +220,91 @@ def test_workflow_access_requires_knowledge_mcp_declaration(tmp_path: Path, monk
     (workflow_dir / ".mcp.json").write_text('{"mcpServers":{"knowledge":{}}}', encoding="utf-8")
     monkeypatch.setattr(
         "shared.lib.knowledge_source_serving.discover_workflow_packages",
-        lambda: [SimpleNamespace(name="investigator", path=workflow_dir)],
+        lambda: [SimpleNamespace(name="investigator", path=workflow_dir, config={})],
     )
 
-    assert _workflow_has_knowledge_mcp("investigator")
-    assert not _workflow_has_knowledge_mcp("other-workflow")
+    registry = KnowledgeSourceServingRegistry(cache_root=tmp_path / "cache", bucket="knowledge")
+    assert registry.grants("investigator").allows("wiki")
+    assert not registry.grants("other-workflow").allows("wiki")
+    (workflow_dir / ".mcp.json").write_text('{"mcpServers":{}}', encoding="utf-8")
+    assert not registry.grants("investigator").allows("wiki")
+
+
+def test_registry_grants_filter_listing_and_pin(tmp_path, monkeypatch):
+    snapshot = _snapshot(tmp_path)
+    registry = KnowledgeSourceServingRegistry(cache_root=tmp_path / "cache", bucket="knowledge")
+    registry._by_alias[snapshot.canonical_alias] = snapshot
+    (tmp_path / ".mcp.json").write_text('{"mcpServers":{"knowledge":{}}}', encoding="utf-8")
+    package = SimpleNamespace(name="example", path=tmp_path, config={"knowledge": {"sources": []}})
+    monkeypatch.setattr(knowledge_serving, "discover_workflow_packages", lambda: [package])
+    assert registry.list_sources("example") == []
+    with pytest.raises(KnowledgeSourceAccessError), registry.pin(snapshot.canonical_alias, "example"):
+        pass
+    package.config["knowledge"]["sources"] = [snapshot.canonical_alias]
+    assert registry.list_sources("example")[0]["alias"] == snapshot.canonical_alias
+    with registry.pin(snapshot.canonical_alias, "example") as pinned:
+        assert pinned == snapshot
+
+
+@pytest.mark.asyncio
+async def test_refresh_filters_graph_state_and_evicts_revoked_snapshot(tmp_path, monkeypatch):
+    snapshot = _snapshot(tmp_path)
+    registry = KnowledgeSourceServingRegistry(cache_root=tmp_path / "cache", bucket="knowledge")
+    registry._by_alias[snapshot.canonical_alias] = snapshot
+    statements = []
+
+    async def execute(statement):
+        statements.append(str(statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})))
+        return SimpleNamespace(all=lambda: [])
+
+    await registry.refresh(SimpleNamespace(execute=execute))
+    assert registry._by_alias == {}
+    assert "serving_suspended_at IS NULL" in statements[0]
+    assert "source_kind = 'github'" in statements[0]
+    assert "knowledge_source_versions.index_kind = 'code_graph'" in statements[0]
+    assert "knowledge_sources.enabled IS true" in statements[0]
+    assert "knowledge_source_versions.status = 'succeeded'" in statements[0]
+
+
+@pytest.mark.asyncio
+async def test_catalog_metadata_is_redacted_authorized_and_stateful(tmp_path, monkeypatch):
+    from shared.lib.knowledge_source_serving import KnowledgeSourceCatalog
+
+    registry = KnowledgeSourceServingRegistry(cache_root=tmp_path / "cache", bucket="knowledge")
+    (tmp_path / ".mcp.json").write_text('{"mcpServers":{"knowledge":{}}}', encoding="utf-8")
+    package = SimpleNamespace(name="example", path=tmp_path, config={"knowledge": {"sources": ["wiki"]}})
+    monkeypatch.setattr(knowledge_serving, "discover_workflow_packages", lambda: [package])
+    source = SimpleNamespace(
+        canonical_alias="wiki",
+        display_name="Runbooks",
+        source_kind="confluence",
+        index_kind="hybrid_vector",
+        enabled=True,
+        serving_suspended_at=None,
+        source_config={"description": "Operations", "token": "secret"},
+    )
+    version = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="succeeded",
+        index_kind="hybrid_vector",
+        source_revision="revision",
+        commit_sha=None,
+        finished_at=None,
+    )
+
+    async def execute(statement):
+        return SimpleNamespace(all=lambda: [(source, version)])
+
+    catalog = KnowledgeSourceCatalog(registry)
+    session = SimpleNamespace(execute=execute)
+    listed = await catalog.list_sources(session, "example")
+    assert listed[0]["capabilities"] == ["hybrid_search"]
+    assert listed[0]["status"] == "ready"
+    assert "secret" not in str(listed)
+    source.serving_suspended_at = "revoked"
+    assert (await catalog.list_sources(session, "example"))[0]["status"] == "suspended"
+    source.serving_suspended_at = None
+    source.enabled = False
+    assert (await catalog.list_sources(session, "example"))[0]["status"] == "disabled"
+    package.config["knowledge"]["sources"] = []
+    assert await catalog.list_sources(session, "example") == []

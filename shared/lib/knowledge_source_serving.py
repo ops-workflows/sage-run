@@ -22,9 +22,14 @@ from graphify.serve import (
     _shortest_path_text,
 )
 from networkx.readwrite import json_graph
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.lib.knowledge_source_authorization import (
+    KnowledgeSourceAccessError,
+    KnowledgeSourceGrants,
+    workflow_source_grants,
+)
 from shared.lib.knowledge_source_cache import HydratedKnowledgeSource, hydrate_knowledge_source
 from shared.lib.models import KnowledgeSource, KnowledgeSourceVersion
 from shared.lib.object_store import ObjectStore
@@ -33,10 +38,6 @@ from shared.lib.workflow_paths import discover_workflow_packages
 
 class KnowledgeSourceServingError(RuntimeError):
     """Raised when a local Knowledge Source lookup is unavailable or invalid."""
-
-
-class KnowledgeSourceAccessError(PermissionError):
-    """Raised when a workflow is not authorized for a Knowledge Source."""
 
 
 MAX_SOURCE_SEARCH_QUERY_CHARS = 256
@@ -91,11 +92,23 @@ class KnowledgeSourceServingRegistry:
                     KnowledgeSourceVersion,
                     KnowledgeSourceVersion.id == KnowledgeSource.current_successful_version_id,
                 )
-                .where(KnowledgeSource.enabled.is_(True), KnowledgeSourceVersion.status == "succeeded")
+                .where(
+                    KnowledgeSource.enabled.is_(True),
+                    KnowledgeSource.serving_suspended_at.is_(None),
+                    KnowledgeSource.source_kind == "github",
+                    KnowledgeSource.index_kind == "code_graph",
+                    KnowledgeSourceVersion.source_id == KnowledgeSource.id,
+                    KnowledgeSourceVersion.index_kind == "code_graph",
+                    KnowledgeSourceVersion.status == "succeeded",
+                )
                 .order_by(KnowledgeSource.id)
+                .execution_options(populate_existing=True)
             )
         ).all()
         enabled_aliases = {source.canonical_alias for source, _ in rows}
+        with self._lock:
+            for alias in set(self._by_alias) - enabled_aliases:
+                self._by_alias.pop(alias, None)
         replacements: dict[str, ServingSnapshot] = {}
         failures: dict[str, str] = {}
         for source, version in rows:
@@ -120,6 +133,7 @@ class KnowledgeSourceServingRegistry:
         await asyncio.to_thread(self._cleanup_unpinned_versions)
 
     def list_sources(self, workflow: str) -> list[dict[str, Any]]:
+        grants = self.grants(workflow)
         with self._lock:
             return [
                 {
@@ -129,8 +143,23 @@ class KnowledgeSourceServingRegistry:
                     "status": "ready",
                 }
                 for snapshot in sorted(self._by_alias.values(), key=lambda item: item.canonical_alias)
-                if _workflow_has_knowledge_mcp(workflow)
+                if grants.allows(snapshot.canonical_alias)
             ]
+
+    def grants(self, workflow: str) -> KnowledgeSourceGrants:
+        return workflow_source_grants(
+            workflow,
+            package_loader=discover_workflow_packages,
+        )
+
+    def authorize(self, workflow: str, alias: str) -> None:
+        if not self.grants(workflow).allows(alias):
+            raise KnowledgeSourceAccessError(f"Workflow is not authorized for Knowledge Source: {alias}")
+
+    def has_version(self, alias: str, version_id: uuid.UUID) -> bool:
+        with self._lock:
+            snapshot = self._by_alias.get(alias)
+            return snapshot is not None and snapshot.version_id == version_id
 
     def health(self) -> dict[str, Any]:
         with self._lock:
@@ -138,12 +167,13 @@ class KnowledgeSourceServingRegistry:
 
     @contextmanager
     def pin(self, alias: str, workflow: str) -> Iterator[ServingSnapshot]:
+        self.authorize(workflow, alias)
         with self._lock:
             snapshot = self._by_alias.get(alias)
             if snapshot is None:
-                raise KnowledgeSourceServingError(f"Knowledge Source is not available: {alias}")
-            if not _workflow_has_knowledge_mcp(workflow):
-                raise KnowledgeSourceAccessError(f"Workflow is not authorized for Knowledge Source: {alias}")
+                raise KnowledgeSourceServingError(
+                    f"Knowledge Source is not available or does not support graph capability: {alias}"
+                )
             key = (snapshot.source_id, snapshot.version_id)
             self._pins[key] = self._pins.get(key, 0) + 1
         try:
@@ -186,6 +216,77 @@ class KnowledgeSourceServingRegistry:
                     retained += 1
                     continue
                 shutil.rmtree(version_dir)
+
+
+class KnowledgeSourceCatalog:
+    """Live, redacted metadata for authorized graph and hybrid sources."""
+
+    def __init__(self, registry: KnowledgeSourceServingRegistry) -> None:
+        self.registry = registry
+
+    async def list_sources(self, session: AsyncSession, workflow: str) -> list[dict[str, Any]]:
+        grants = self.registry.grants(workflow)
+        if not grants.compatibility_all and not grants.aliases:
+            return []
+        statement = (
+            select(KnowledgeSource, KnowledgeSourceVersion)
+            .outerjoin(
+                KnowledgeSourceVersion,
+                and_(
+                    KnowledgeSourceVersion.id == KnowledgeSource.current_successful_version_id,
+                    KnowledgeSourceVersion.source_id == KnowledgeSource.id,
+                ),
+            )
+            .order_by(KnowledgeSource.canonical_alias)
+            .execution_options(populate_existing=True)
+        )
+        if not grants.compatibility_all:
+            statement = statement.where(KnowledgeSource.canonical_alias.in_(grants.aliases))
+        rows = (await session.execute(statement)).all()
+        entries = []
+        for source, version in rows:
+            if not grants.allows(source.canonical_alias):
+                continue
+            capabilities = {
+                ("github", "code_graph"): ["graph", "literal_source"],
+                ("confluence", "hybrid_vector"): ["hybrid_search"],
+            }.get((source.source_kind, source.index_kind), [])
+            status = "unavailable"
+            if source.serving_suspended_at is not None:
+                status = "suspended"
+            elif not source.enabled:
+                status = "disabled"
+            elif (
+                version is not None
+                and version.status == "succeeded"
+                and version.index_kind == source.index_kind
+                and (
+                    capabilities == ["hybrid_search"]
+                    or ("graph" in capabilities and self.registry.has_version(source.canonical_alias, version.id))
+                )
+            ):
+                status = "ready"
+            description = (source.source_config or {}).get("description", "")
+            entries.append(
+                {
+                    "alias": source.canonical_alias,
+                    "display_name": source.display_name or source.canonical_alias,
+                    "source_kind": source.source_kind,
+                    "index_kind": source.index_kind,
+                    "capabilities": capabilities,
+                    "version_id": str(version.id) if version is not None else None,
+                    "source_revision": (version.source_revision or version.commit_sha) if version is not None else None,
+                    "commit_sha": version.commit_sha if version is not None else None,
+                    "promoted_at": (
+                        version.finished_at.isoformat() if version is not None and version.finished_at else None
+                    ),
+                    "status": status,
+                    "ready": status == "ready",
+                    "suspended": source.serving_suspended_at is not None,
+                    "description": description[:500] if isinstance(description, str) else "",
+                }
+            )
+        return entries
 
 
 def search_symbols(snapshot: ServingSnapshot, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
@@ -542,20 +643,6 @@ def _load_snapshot(
         source_root=hydrated.source_root,
         graphify_graph=_build_graphify_graph(graph),
     )
-
-
-def _workflow_has_knowledge_mcp(workflow: str) -> bool:
-    for package in discover_workflow_packages():
-        if package.name != workflow:
-            continue
-        mcp_config = package.path / ".mcp.json"
-        try:
-            config = json.loads(mcp_config.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return False
-        servers = config.get("mcpServers")
-        return isinstance(servers, dict) and "knowledge" in servers
-    return False
 
 
 def _nodes_by_id(snapshot: ServingSnapshot) -> dict[str, dict[str, Any]]:

@@ -13,7 +13,7 @@ from gateway.api import (
 )
 from shared.lib.platform_secrets import GitHubAppConnection
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.service]
 
 
 async def test_manual_sync_queues_same_typed_run_exposed_by_filters(async_engine, monkeypatch) -> None:
@@ -35,6 +35,15 @@ async def test_manual_sync_queues_same_typed_run_exposed_by_filters(async_engine
     )
 
     assert source.repository_url == "https://github.example.com/org/application.git"
+    assert source.canonical_alias == "application"
+    assert source.source_kind == "github"
+    assert source.index_kind == "code_graph"
+    assert source.source_config == {
+        "repository_url": source.repository_url,
+        "default_ref": "main",
+        "include_paths": ["src/**"],
+        "exclude_paths": [],
+    }
 
     queued = await queue_knowledge_source_sync(source.id)
     filtered = await get_platform_background_jobs(

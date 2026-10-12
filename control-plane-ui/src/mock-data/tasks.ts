@@ -11,6 +11,7 @@ Investigate garbage collection pause times, active search scroll contexts, and i
 Waiting for available worker slot in task queue.`,
     status: 'queued',
     channel: 'servicenow',
+    initiator: null,
     metadata: {
       source: 'servicenow-incident-intake',
       incident_number: 'INC-0089240',
@@ -38,6 +39,7 @@ Rebuild Hindsight index and optimize semantic graph cluster weights.
 Waiting for available worker slot in task queue.`,
     status: 'queued',
     channel: 'schedule',
+    initiator: null,
     metadata: {
       triggered_by: 'scheduler',
       schedule_name: 'hindsight-memory-compaction',
@@ -80,6 +82,7 @@ Customer operations reports BankID and 3D-Secure timeouts. Initial alarms indica
 Please triage across telemetry logs, inspect connection pool metrics, check for concurrent database locks, recall similar past incidents, and generate an evidence-backed Incident RCA with actionable remediation steps.`,
     status: 'succeeded',
     channel: 'servicenow',
+    initiator: null,
     metadata: {
       source: 'servicenow-incident-intake',
       incident_number: 'INC-0089201',
@@ -111,6 +114,7 @@ Please triage across telemetry logs, inspect connection pool metrics, check for 
 [08:23:10] @alex.morales: @agent please investigate auth-service 504 spike, verify whether replica pool is stuck, and if safe, restart the hung pool pods.`,
     status: 'succeeded',
     channel: 'mattermost',
+    initiator: 'alex.morales',
     metadata: {
       source: 'mattermost-socket-ingress',
       channel_id: 'channel-ops-room-01',
@@ -152,6 +156,7 @@ Affected Account Records: [0015g00000XyZ12AAQ, 0015g00000AbC34AAQ]
 Please inspect the codebase for BillingRollupDispatcher.cls around line 184, identify the validation rule constraints, and file an engineering bug ticket in Jira.`,
     status: 'succeeded',
     channel: 'gcp-pubsub',
+    initiator: null,
     metadata: {
       source: 'gcp-pubsub-intake',
       gcs_bucket: 'enterprise-ops-prod-inbound-alerts',
@@ -179,6 +184,7 @@ Analyze Hindsight workflow-learning memory banks for recurring inefficiencies, t
 If a durable improvement is warranted, autonomously author and open a GitHub Pull Request with the proposed skill or prompt optimization.`,
     status: 'succeeded',
     channel: 'schedule',
+    initiator: null,
     metadata: {
       triggered_by: 'scheduler',
       schedule_name: 'weekly-reflection-run',
@@ -205,6 +211,7 @@ If a durable improvement is warranted, autonomously author and open a GitHub Pul
 Query the Hindsight incident-rca bank, cluster incidents by affected subsystem, calculate mean-time-to-resolve (MTTR), and post an executive summary to #ops-digest.`,
     status: 'succeeded',
     channel: 'schedule',
+    initiator: null,
     metadata: {
       triggered_by: 'scheduler',
       schedule_name: 'daily-morning-digest',
@@ -234,9 +241,9 @@ Verify ingress TLS certificate expiry and SAN validity for payment gateway endpo
 Confirm expiration window is > 60 days and automated renewal secrets are present in Vault.`,
     status: 'succeeded',
     channel: 'api',
+    initiator: 'cert-manager-daemon',
     metadata: {
       source: 'api',
-      initiator: 'cert-manager-daemon',
       endpoint_checked: 'payments.checkout.corp.internal',
       status_result: 'valid_68_days_remaining',
     },

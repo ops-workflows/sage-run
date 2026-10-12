@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -44,3 +45,21 @@ def test_source_schedule_requires_explicit_positive_interval() -> None:
         )
         is True
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_startup_does_not_require_graph_bucket(monkeypatch, tmp_path) -> None:
+    worker = _worker_module()
+    config = worker.KnowledgeSourceIndexerConfig(cache_root=tmp_path, object_store_bucket="")
+    validate = Mock(side_effect=AssertionError("Graph validation must happen only for graph jobs"))
+    monkeypatch.setattr(worker.KnowledgeSourceIndexerConfig, "from_settings", lambda: config)
+    monkeypatch.setattr(worker.KnowledgeSourceIndexerConfig, "validate", validate)
+    monkeypatch.setattr(worker, "ensure_runtime_schema", AsyncMock())
+    reconcile = AsyncMock(return_value=[])
+    monkeypatch.setattr(worker, "reconcile_worker_startup", reconcile)
+    worker._shutdown.set()
+
+    await worker.worker_loop()
+
+    validate.assert_not_called()
+    reconcile.assert_awaited_once()

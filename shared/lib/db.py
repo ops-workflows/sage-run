@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.schema import CreateIndex, CreateTable
 
 from shared.lib.config import settings
+from shared.lib.models import KnowledgeChunk, KnowledgeDocumentRevision, KnowledgeSourceVersionDocument
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,71 @@ engine = create_async_engine(
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 _schema_ready = False
+
+
+async def _ensure_knowledge_schema(conn: AsyncConnection) -> None:
+    """Extend legacy Git registries without replacing identities or promoted pointers."""
+    statements = (
+        "CREATE EXTENSION IF NOT EXISTS vector",
+        "ALTER TABLE control_plane.knowledge_sources ADD COLUMN IF NOT EXISTS display_name TEXT",
+        "ALTER TABLE control_plane.knowledge_sources ADD COLUMN IF NOT EXISTS "
+        "source_kind TEXT NOT NULL DEFAULT 'github'",
+        "ALTER TABLE control_plane.knowledge_sources ADD COLUMN IF NOT EXISTS "
+        "index_kind TEXT NOT NULL DEFAULT 'code_graph'",
+        "ALTER TABLE control_plane.knowledge_sources ADD COLUMN IF NOT EXISTS "
+        "source_config JSONB NOT NULL DEFAULT '{}'",
+        "ALTER TABLE control_plane.knowledge_sources ADD COLUMN IF NOT EXISTS serving_suspended_at TIMESTAMPTZ",
+        "ALTER TABLE control_plane.knowledge_sources ADD COLUMN IF NOT EXISTS serving_suspension_reason TEXT",
+        "ALTER TABLE control_plane.knowledge_sources ALTER COLUMN repository_url DROP NOT NULL",
+        "ALTER TABLE control_plane.knowledge_sources ALTER COLUMN default_ref DROP NOT NULL",
+        "UPDATE control_plane.knowledge_sources SET display_name = canonical_alias WHERE display_name IS NULL",
+        "UPDATE control_plane.knowledge_sources SET source_config = jsonb_build_object("
+        "'repository_url', repository_url, 'default_ref', default_ref, "
+        "'include_paths', include_paths, 'exclude_paths', exclude_paths) "
+        "WHERE source_kind = 'github' AND source_config = '{}'::jsonb",
+        "ALTER TABLE control_plane.knowledge_source_versions ADD COLUMN IF NOT EXISTS source_revision TEXT",
+        "ALTER TABLE control_plane.knowledge_source_versions ADD COLUMN IF NOT EXISTS "
+        "index_kind TEXT NOT NULL DEFAULT 'code_graph'",
+        "ALTER TABLE control_plane.knowledge_source_versions ADD COLUMN IF NOT EXISTS indexer_version TEXT",
+        "ALTER TABLE control_plane.knowledge_source_versions ADD COLUMN IF NOT EXISTS index_config_hash TEXT",
+        "ALTER TABLE control_plane.knowledge_source_versions ADD COLUMN IF NOT EXISTS "
+        "stats JSONB NOT NULL DEFAULT '{}'",
+        "ALTER TABLE control_plane.knowledge_source_versions ALTER COLUMN commit_sha DROP NOT NULL",
+        "ALTER TABLE control_plane.knowledge_source_versions ALTER COLUMN graphify_version DROP NOT NULL",
+        "ALTER TABLE control_plane.knowledge_source_versions ALTER COLUMN extraction_config_hash DROP NOT NULL",
+        "UPDATE control_plane.knowledge_source_versions SET "
+        "source_revision = COALESCE(source_revision, commit_sha), "
+        "indexer_version = COALESCE(indexer_version, graphify_version), "
+        "index_config_hash = COALESCE(index_config_hash, extraction_config_hash) "
+        "WHERE index_kind = 'code_graph' AND "
+        "(source_revision IS NULL OR indexer_version IS NULL OR index_config_hash IS NULL)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_source_versions_generic_identity "
+        "ON control_plane.knowledge_source_versions (source_id, source_revision, index_config_hash) "
+        "WHERE index_kind <> 'code_graph'",
+    )
+    for statement in statements:
+        await conn.execute(text(statement))
+    for statement in (
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint "
+        "WHERE conname = 'ck_knowledge_sources_kind_pair' "
+        "AND conrelid = 'control_plane.knowledge_sources'::regclass) "
+        "THEN ALTER TABLE control_plane.knowledge_sources ADD CONSTRAINT ck_knowledge_sources_kind_pair "
+        "CHECK ((source_kind = 'github' AND index_kind = 'code_graph') OR "
+        "(source_kind = 'confluence' AND index_kind = 'hybrid_vector')); END IF; END $$",
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint "
+        "WHERE conname = 'ck_knowledge_source_versions_index_identity' "
+        "AND conrelid = 'control_plane.knowledge_source_versions'::regclass) "
+        "THEN ALTER TABLE control_plane.knowledge_source_versions "
+        "ADD CONSTRAINT ck_knowledge_source_versions_index_identity "
+        "CHECK (index_kind = 'code_graph' OR (index_kind = 'hybrid_vector' AND "
+        "source_revision IS NOT NULL AND indexer_version IS NOT NULL AND index_config_hash IS NOT NULL)); "
+        "END IF; END $$",
+    ):
+        await conn.execute(text(statement))
+    for model in (KnowledgeDocumentRevision, KnowledgeChunk, KnowledgeSourceVersionDocument):
+        await conn.execute(CreateTable(model.__table__, if_not_exists=True))
+        for index in sorted(model.__table__.indexes, key=lambda item: item.name):
+            await conn.execute(CreateIndex(index, if_not_exists=True))
 
 
 async def ensure_runtime_schema() -> None:
@@ -47,6 +114,7 @@ async def ensure_runtime_schema() -> None:
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS wait_reason TEXT"))
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS wait_deadline TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS initiator TEXT"))
         await conn.execute(text("ALTER TABLE control_plane.sessions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"))
         await conn.execute(
             text("ALTER TABLE control_plane.session_events ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
@@ -211,6 +279,7 @@ async def ensure_runtime_schema() -> None:
                 "ON control_plane.background_job_runs (knowledge_source_version_id)"
             )
         )
+        await _ensure_knowledge_schema(conn)
 
     _schema_ready = True
     logger.info("Ensured runtime schema compatibility")

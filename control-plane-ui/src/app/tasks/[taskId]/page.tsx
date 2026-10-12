@@ -27,6 +27,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { MarkdownPreview, SyntaxCode } from '@/components/content-preview';
+import { TaskInitiator } from '@/components/task-initiator';
 import {
   apiFetch,
   type NodeKind,
@@ -756,6 +757,7 @@ export default function SessionDetailPage() {
                   </span>
                 </span>
               </div>
+              <TaskInitiator initiator={task.initiator} />
             </div>
             <div className="flex items-center gap-3">
               <HeaderActionButton
@@ -934,6 +936,7 @@ export default function SessionDetailPage() {
                 {origin.label}
               </span>
             </div>
+            <TaskInitiator initiator={task.initiator} />
           </div>
           <div className="flex items-center gap-3">
             {RERUNNABLE_STATUSES.has(task.status) && (

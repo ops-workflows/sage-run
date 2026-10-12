@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from shared.lib.workflow_bundles import WorkflowRepoMetadata, build_workflow_bundle
 
@@ -136,3 +137,54 @@ def test_upload_bundle_archive_uploads_tarball_of_bundle_dir(monkeypatch, tmp_pa
         names = set(tar.getnames())
     assert "./manifest.yaml" in names
     assert "./CLAUDE.md" in names
+
+
+@pytest.mark.parametrize("sources", [["org/example", "wiki"], [], ["*"]])
+def test_bundle_appends_scoped_knowledge_guidance_without_db(repo_root, tmp_path, monkeypatch, sources):
+    import shared.lib.db as db
+
+    monkeypatch.setattr(db, "async_session_factory", lambda: pytest.fail("Bundle must not fetch database metadata"))
+    workflow_dir = tmp_path / "repo" / "workflows" / "example"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "agent.yaml").write_text(
+        yaml.safe_dump({"name": "example", "description": "Test", "knowledge": {"sources": sources}}),
+        encoding="utf-8",
+    )
+    (workflow_dir / ".mcp.json").write_text('{"mcpServers":{"knowledge":{}}}', encoding="utf-8")
+    (workflow_dir / "CLAUDE.md").write_text("Workflow instructions.\n", encoding="utf-8")
+    result = build_workflow_bundle(
+        workflow="example",
+        output_dir=tmp_path / "bundles",
+        platform_root=repo_root,
+        workflow_roots=[tmp_path / "repo"],
+    )
+    guidance = (result.bundle_dir / "CLAUDE.md").read_text(encoding="utf-8")
+    assert guidance.startswith("Workflow instructions.")
+    assert "untrusted evidence" in guidance
+    assert "only for sources advertising `hybrid_search`" in guidance
+    assert "MCP authorization is authoritative" in guidance
+    if sources and sources != ["*"]:
+        assert "`org/example`, `wiki`" in guidance
+    else:
+        assert "No source aliases are authorized" in guidance
+        assert "`*`" not in guidance
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_bundle_missing_grants_matches_compatibility_setting(repo_root, tmp_path, monkeypatch, strict):
+    from shared.lib.config import settings
+
+    monkeypatch.setattr(settings, "knowledge_require_explicit_source_grants", strict)
+    workflow_dir = tmp_path / "example"
+    workflow_dir.mkdir()
+    (workflow_dir / "agent.yaml").write_text("name: example\ndescription: Test\n", encoding="utf-8")
+    (workflow_dir / ".mcp.json").write_text('{"mcpServers":{"knowledge":{}}}', encoding="utf-8")
+    result = build_workflow_bundle(
+        workflow="example",
+        output_dir=tmp_path / "bundles",
+        platform_root=repo_root,
+        workflow_roots=[workflow_dir],
+    )
+    guidance = (result.bundle_dir / "CLAUDE.md").read_text(encoding="utf-8")
+    assert ("legacy all-source access is deprecated" in guidance) is not strict
+    assert ("No source aliases are authorized" in guidance) is strict

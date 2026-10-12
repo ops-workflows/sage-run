@@ -180,6 +180,42 @@ messaging:
         discover_message_routes(tmp_path)
 
 
+def test_discover_message_routes_channel_policies(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / "ops"
+    workflow_dir.mkdir()
+    (workflow_dir / "agent.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "messaging": {
+                    "channels": ["public", "private", "disabled"],
+                    "channel_policies": {
+                        "Public": {"allowed_usernames": [" @Alice ", "BOB"]},
+                        "disabled": {"allowed_usernames": []},
+                    },
+                    "rules": [{"id": "alert", "channels": ["public"], "match": {"type": "prefix", "pattern": "alert"}}],
+                },
+            }
+        )
+    )
+    routes = discover_message_routes(tmp_path)
+    assert [route.allowed_usernames for route in routes] == [("alice", "bob"), None, (), ("alice", "bob")]
+
+
+@pytest.mark.parametrize("values", [["Alice", "@alice"], [" "], ["@@alice"], [123], None])
+def test_discover_message_routes_rejects_invalid_usernames(tmp_path: Path, values) -> None:
+    workflow_dir = tmp_path / "ops"
+    workflow_dir.mkdir()
+    (workflow_dir / "agent.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "messaging": {"channels": ["public"], "channel_policies": {"public": {"allowed_usernames": values}}},
+            }
+        )
+    )
+    with pytest.raises(ValueError):
+        discover_message_routes(tmp_path)
+
+
 def test_discover_workflow_packages_accepts_repo_root_with_workflows(fixture_repo_root: Path) -> None:
     packages = discover_workflow_packages([fixture_repo_root])
     by_name = {package.name: package for package in packages}

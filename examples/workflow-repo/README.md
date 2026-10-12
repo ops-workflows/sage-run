@@ -68,6 +68,58 @@ own workflow repo, it **replaces** (not merges with) the platform's shared
 `CLAUDE.md` in the bundle — see
 [Bundle assembly](../../docs/workflow-authoring.md#bundle-assembly).
 
+## Knowledge Sources and Invocation Policy
+
+The starter declares the Knowledge MCP and grants the `team-runbooks` source
+alias. Replace that alias with registered sources, or use `sources: []` to
+grant nothing. The service-account Confluence connection is instance-owned:
+replace the `team-wiki` URL/email and age-encrypted token in
+`platform-config.yaml`, never in workflow MCP headers.
+
+Before indexing, configure a real embedding model and its verified positive
+output dimension on both the indexer and Knowledge MCP. The examples deliberately
+leave dimensions at `0` and reranking disabled. Compose reuses Hindsight's
+embedding endpoint/model from `deploy/compose.env.example`; Helm uses the matching
+`knowledge.embeddings` overrides in `deploy/k8s-values.yaml`. Both use the existing
+bootstrap `LLM_API_KEY` unless a dedicated encrypted key is configured.
+
+Register this example through the Knowledge Sources view or
+`POST /platform/knowledge-sources`, replacing the page ID with an accessible page:
+
+```json
+{
+    "source_kind": "confluence",
+    "index_kind": "hybrid_vector",
+    "canonical_alias": "team-runbooks",
+    "display_name": "Team Runbooks",
+    "credential_ref": "team-wiki",
+    "source_config": {
+        "root_page_ids": ["123456"],
+        "include_descendants": true,
+        "scrub_patterns": ["(?i)api[_-]?key\\s*[:=]\\s*\\S+"],
+        "body_format": "storage",
+        "lexical_config": "simple"
+    },
+    "sync_policy": {"interval_sec": 3600},
+    "enabled": true
+}
+```
+
+Run Sync and wait for successful promotion before retrieval. Set
+`include_descendants` to false to index only selected pages. The source form
+accepts one scrub regex per line; rules affect normalized bodies, not titles,
+hierarchy names, or citation URLs. Changed rules refetch selected bodies on the
+next sync and reuse unchanged chunks/vectors; they do not purge historical data.
+See [Configuration](../../docs/configuration.md#knowledge-embeddings-and-retrieval)
+for regex limits, retention, and deployment precedence.
+
+The workflow template also contains a commented Mattermost `channel_policies`
+example: omitted policies allow otherwise-matching humans, named usernames
+restrict invocation, and an empty list denies humans on that channel. Existing
+bot/webhook trust and reply/approval authorization are separate. Message-created
+tasks record the sender in the generic `initiator` field; schedules and Pub/Sub
+leave it empty, and coalescing preserves the original initiator.
+
 ## `agent.yaml` validation
 
 The platform validates every discovered `agent.yaml` against

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 
 from gateway.message_ingress import GatewayMessageIngress, match_message_route
 from gateway.plugin_dir import MessageRoute
@@ -478,6 +479,7 @@ def test_match_message_route_accepts_trusted_production_webhook() -> None:
         trusted_user_ids=("user-1",),
         trusted_webhook_names=("AWS CloudWatch",),
         allow_bot=True,
+        allowed_usernames=(),
         root_posts_only=True,
         preserve_full_body=True,
         allowed_accounts=("123456789012",),
@@ -485,6 +487,73 @@ def test_match_message_route_accepts_trusted_production_webhook() -> None:
     )
 
     assert match_message_route(message, [route]) == (route, message.text)
+
+
+@pytest.mark.parametrize(
+    ("provider", "username", "allowed", "matches"),
+    [
+        ("mattermost", "mallory", None, True),
+        ("mattermost", " @Alice ", ("alice",), True),
+        ("mattermost", "mallory", ("alice",), False),
+        ("mattermost", "", ("alice",), False),
+        ("mattermost", "alice", (), False),
+        ("slack", "U123", (), True),
+    ],
+)
+def test_match_message_route_username_policy(provider, username, allowed, matches) -> None:
+    message = InboundMessage(
+        provider=provider,
+        message_id="post-1",
+        thread_id="post-1",
+        channel_id="channel-1",
+        channel_name="public",
+        team_id="team-1",
+        team_name="",
+        user_id="user-1",
+        username=username,
+        text="@ops investigate",
+    )
+    route = MessageRoute(workflow="ops", channel="public", trigger_words=("@ops",), allowed_usernames=allowed)
+    assert (match_message_route(message, [route]) is not None) is matches
+
+
+async def test_denied_invocation_does_not_hydrate_or_create_task(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    ingress = GatewayMessageIngress()
+    ingress._routes = [
+        MessageRoute(
+            workflow="ops",
+            channel="public",
+            trigger_words=("@ops",),
+            allowed_usernames=("alice",),
+        )
+    ]
+    reply = AsyncMock(return_value=False)
+    hydrate = AsyncMock()
+    create = AsyncMock()
+    monkeypatch.setattr(ingress, "_record_question_reply", reply)
+    monkeypatch.setattr(ingress, "_hydrate_thread_prompt", hydrate)
+    monkeypatch.setattr("gateway.message_ingress.create_task", create)
+    try:
+        await ingress._handle_message(
+            InboundMessage(
+                provider="mattermost",
+                message_id="post-1",
+                thread_id="post-1",
+                channel_id="channel-1",
+                channel_name="public",
+                team_id="team-1",
+                team_name="",
+                user_id="user-1",
+                username="mallory",
+                text="@ops investigate",
+            )
+        )
+        hydrate.assert_not_awaited()
+        create.assert_not_awaited()
+    finally:
+        await ingress.stop()
 
 
 def test_match_message_route_rejects_untrusted_or_nonproduction_webhook() -> None:
@@ -703,6 +772,7 @@ async def test_gateway_creates_structured_alert_task_with_envelope_and_coalesce_
         await ingress.stop()
 
     metadata = captured["metadata"]
+    assert captured["initiator"] == message.username
     assert isinstance(metadata, dict)
     assert metadata["message_id"] == "post-1"
     assert metadata["route_rule_id"] == "production-alarm"

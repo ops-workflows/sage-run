@@ -51,6 +51,7 @@ class MessageRoute:
     allowed_accounts: tuple[str, ...] = ()
     allowed_environments: tuple[str, ...] = ()
     coalesce_window_sec: int = 300
+    allowed_usernames: tuple[str, ...] | None = None
 
 
 @lru_cache(maxsize=1)
@@ -84,10 +85,41 @@ def _messaging_config(config: dict) -> dict:
     return messaging if isinstance(messaging, dict) else {}
 
 
+def normalize_invocation_username(value: str) -> str:
+    return value.strip().removeprefix("@").casefold()
+
+
+def _channel_policies(messaging: dict) -> dict[str, tuple[str, ...]]:
+    raw_policies = messaging.get("channel_policies", {})
+    if not isinstance(raw_policies, dict) or len(raw_policies) > 100:
+        raise ValueError("messaging.channel_policies must be a map of at most 100 channels")
+    policies: dict[str, tuple[str, ...]] = {}
+    for raw_channel, policy in raw_policies.items():
+        if not isinstance(raw_channel, str) or not raw_channel.strip() or not isinstance(policy, dict):
+            raise ValueError("Invalid messaging channel policy")
+        channel = raw_channel.strip().lower()
+        values = policy.get("allowed_usernames")
+        if set(policy) != {"allowed_usernames"} or not isinstance(values, list) or len(values) > 500:
+            raise ValueError("Channel policy must contain allowed_usernames (at most 500 names)")
+        names: list[str] = []
+        for value in values:
+            if not isinstance(value, str):
+                raise ValueError("Allowed usernames must be strings")
+            name = normalize_invocation_username(value)
+            if not re.fullmatch(r"[a-z0-9._-]{1,64}", name) or name in names:
+                raise ValueError("Allowed usernames must be valid, unique normalized Mattermost usernames")
+            names.append(name)
+        if channel in policies:
+            raise ValueError("Channel policies must have unique normalized channel names")
+        policies[channel] = tuple(names)
+    return policies
+
+
 def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
     routes: list[MessageRoute] = []
     for workflow, config in workflows:
         messaging = _messaging_config(config)
+        policies = _channel_policies(messaging)
         runtime = config.get("runtime") if isinstance(config.get("runtime"), dict) else {}
         coalesce_window_sec = int(runtime.get("alert_coalesce_window_sec", 300))
         triggers = tuple(
@@ -103,6 +135,7 @@ def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
                         workflow=workflow,
                         channel=channel,
                         trigger_words=triggers,
+                        allowed_usernames=policies.get(channel),
                         coalesce_window_sec=coalesce_window_sec,
                     )
                 )
@@ -141,6 +174,7 @@ def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
                         workflow=workflow,
                         channel=channel,
                         rule_id=rule_id,
+                        allowed_usernames=policies.get(channel),
                         provider=str(raw_rule.get("provider") or "").strip().lower(),
                         priority=int(raw_rule.get("priority") or 0),
                         match_type=match_type,

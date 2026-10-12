@@ -9,6 +9,20 @@ x-platform-bootstrap-env: &platform-bootstrap-env
   PG_PASSWORD: ${PG_PASSWORD:-localdev-postgres-password}
   OBJECT_STORE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:-localdev-minio-password}
 
+x-knowledge-env: &knowledge-env
+  KNOWLEDGE_EMBEDDINGS_OPENAI_BASE_URL: ${KNOWLEDGE_EMBEDDINGS_OPENAI_BASE_URL:-${HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL:-http://model-gateway:1235/v1}}
+  KNOWLEDGE_EMBEDDINGS_OPENAI_MODEL: ${KNOWLEDGE_EMBEDDINGS_OPENAI_MODEL:-${HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL:-example-embedding-model}}
+  KNOWLEDGE_EMBEDDINGS_OPENAI_API_KEY: ${KNOWLEDGE_EMBEDDINGS_OPENAI_API_KEY:-${LLM_API_KEY:-localdev-key}}
+  KNOWLEDGE_EMBEDDINGS_DIMENSIONS: ${KNOWLEDGE_EMBEDDINGS_DIMENSIONS:-0}
+  KNOWLEDGE_EMBEDDINGS_BATCH_SIZE: ${KNOWLEDGE_EMBEDDINGS_BATCH_SIZE:-16}
+  KNOWLEDGE_EMBEDDINGS_TIMEOUT_SEC: ${KNOWLEDGE_EMBEDDINGS_TIMEOUT_SEC:-60}
+  KNOWLEDGE_RERANK_ENABLED: ${KNOWLEDGE_RERANK_ENABLED:-false}
+  KNOWLEDGE_RERANK_BASE_URL: ${KNOWLEDGE_RERANK_BASE_URL:-http://model-gateway:1235}
+  KNOWLEDGE_RERANK_MODEL: ${KNOWLEDGE_RERANK_MODEL:-}
+  KNOWLEDGE_RERANK_TIMEOUT_SEC: ${KNOWLEDGE_RERANK_TIMEOUT_SEC:-3}
+  KNOWLEDGE_RERANK_CANDIDATES: ${KNOWLEDGE_RERANK_CANDIDATES:-20}
+  KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS: ${KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS:-false}
+
 services:
   # ─── Shared Infrastructure ─────────────────────────────────────────
 
@@ -205,7 +219,7 @@ services:
       dockerfile: knowledge-indexer/Dockerfile
     restart: unless-stopped
     environment:
-      <<: *platform-bootstrap-env
+      <<: [*platform-bootstrap-env, *knowledge-env]
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
       OBJECT_STORE_ENDPOINT: minio:9000
       OBJECT_STORE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-sage_run}
@@ -280,7 +294,7 @@ services:
     command: ["python", "-m", "uvicorn", "mcps.core.mcp_knowledge:app", "--host", "0.0.0.0", "--port", "8108"]
     restart: unless-stopped
     environment:
-      <<: *platform-bootstrap-env
+      <<: [*platform-bootstrap-env, *knowledge-env]
       PLATFORM_CONFIG_FILE: /app/platform-config.yaml
       OBJECT_STORE_ENDPOINT: minio:9000
       OBJECT_STORE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:-sage_run}

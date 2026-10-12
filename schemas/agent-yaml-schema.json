@@ -182,6 +182,25 @@
         }
       }
     },
+    "knowledge": {
+      "type": "object",
+      "description": "Exact Knowledge Source grants; also requires the knowledge MCP declaration. An empty sources list denies all sources.",
+      "additionalProperties": false,
+      "properties": {
+        "sources": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+            "not": {"pattern": "\\s"}
+          }
+        }
+      }
+    },
     "messaging": {
       "type": "object",
       "description": "Messaging integration config (platform-level routing, not Claude Code)",
@@ -198,6 +217,25 @@
             "minLength": 1
           },
           "description": "Message prefixes that start this workflow in its configured channels"
+        },
+        "channel_policies": {
+          "type": "object",
+          "maxProperties": 100,
+          "propertyNames": {"type": "string", "minLength": 1},
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["allowed_usernames"],
+            "properties": {
+              "allowed_usernames": {
+                "type": "array",
+                "maxItems": 500,
+                "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1, "maxLength": 66},
+                "description": "Mattermost human invocation usernames; an empty list denies all humans"
+              }
+            }
+          }
         },
         "rules": {
           "type": "array",

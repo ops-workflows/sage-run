@@ -10,7 +10,20 @@ export async function apiFetch<T>(
     },
   });
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    const body = await res.json().catch(() => null);
+    const detail = body?.detail;
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail
+              .map(
+                (item) =>
+                  `${item.loc?.filter((part: unknown) => part !== 'body').join('.') || 'Request'}: ${item.msg}`,
+              )
+              .join('; ')
+          : res.statusText;
+    throw new Error(`API error ${res.status}: ${message}`);
   }
   return res.json();
 }
@@ -64,6 +77,7 @@ export interface Task {
   prompt: string;
   status: string;
   channel: string | null;
+  initiator: string | null;
   metadata: Record<string, unknown>;
   message_channel: string | null;
   message_thread: string | null;
@@ -321,11 +335,27 @@ export interface PlatformBackgroundJobs {
   offset: number;
 }
 
-export interface KnowledgeSource {
-  id: string;
-  canonical_alias: string;
+export interface GitHubSourceConfig {
   repository_url: string;
   default_ref: string;
+  include_paths: string[];
+  exclude_paths: string[];
+}
+
+export interface ConfluenceSourceConfig {
+  root_page_ids: string[];
+  include_descendants: boolean;
+  scrub_patterns: string[];
+  body_format: 'storage';
+  lexical_config: 'simple' | 'english';
+}
+
+interface KnowledgeSourceCommon {
+  id: string;
+  canonical_alias: string;
+  display_name: string;
+  serving_suspended_at: string | null;
+  serving_suspension_reason: string | null;
   include_paths: string[];
   exclude_paths: string[];
   credential_ref: string | null;
@@ -336,17 +366,112 @@ export interface KnowledgeSource {
   updated_at: string;
 }
 
+export type KnowledgeSource = KnowledgeSourceCommon &
+  (
+    | {
+        source_kind: 'github';
+        index_kind: 'code_graph';
+        source_config: GitHubSourceConfig;
+        repository_url: string;
+        default_ref: string;
+      }
+    | {
+        source_kind: 'confluence';
+        index_kind: 'hybrid_vector';
+        source_config: ConfluenceSourceConfig;
+        repository_url: null;
+        default_ref: null;
+      }
+  );
+
+interface KnowledgeSourceWriteCommon {
+  canonical_alias?: string;
+  display_name?: string;
+  credential_ref: string;
+  sync_policy: Record<string, unknown>;
+  enabled: boolean;
+}
+
+export type KnowledgeSourceWrite = KnowledgeSourceWriteCommon &
+  (
+    | {
+        source_kind: 'github';
+        index_kind: 'code_graph';
+        repository: string;
+        default_ref: string;
+        include_paths: string[];
+        exclude_paths: string[];
+      }
+    | {
+        source_kind: 'confluence';
+        index_kind: 'hybrid_vector';
+        source_config: Omit<ConfluenceSourceConfig, 'root_page_ids'> &
+          ({ root_page_ids: string[] } | { root_pages: string[] });
+      }
+  );
+
+export function knowledgeSourcePayload(
+  source: KnowledgeSource,
+): KnowledgeSourceWrite {
+  const common = {
+    canonical_alias: source.canonical_alias,
+    display_name: source.display_name,
+    credential_ref: source.credential_ref || '',
+    sync_policy: { ...source.sync_policy },
+    enabled: source.enabled,
+  };
+  if (source.source_kind === 'confluence') {
+    return {
+      ...common,
+      source_kind: 'confluence',
+      index_kind: 'hybrid_vector',
+      source_config: {
+        ...source.source_config,
+        root_page_ids: [...source.source_config.root_page_ids],
+        scrub_patterns: [...(source.source_config.scrub_patterns || [])],
+      },
+    };
+  }
+  const config = source.source_config;
+  const parts = new URL(config.repository_url).pathname
+    .split('/')
+    .filter(Boolean);
+  const repository = parts
+    .slice(-2)
+    .join('/')
+    .replace(/\.git$/, '');
+  return {
+    ...common,
+    source_kind: 'github',
+    index_kind: 'code_graph',
+    repository,
+    default_ref: config.default_ref,
+    include_paths: [...config.include_paths],
+    exclude_paths: [...config.exclude_paths],
+  };
+}
+
 export interface GitHubConnection {
   name: string;
   web_base_url: string;
 }
 
+export interface ConfluenceConnection {
+  name: string;
+  base_url: string;
+}
+
 export interface KnowledgeSourceVersion {
   id: string;
-  commit_sha: string;
+  source_revision: string | null;
+  index_kind: 'code_graph' | 'hybrid_vector';
+  indexer_version: string | null;
+  index_config_hash: string | null;
+  stats: Record<string, unknown>;
+  commit_sha: string | null;
   status: string;
-  graphify_version: string;
-  extraction_config_hash: string;
+  graphify_version: string | null;
+  extraction_config_hash: string | null;
   artifact_keys: Record<string, unknown>;
   artifact_checksums: Record<string, unknown>;
   file_count: number;

@@ -39,6 +39,35 @@ async def test_health_endpoint(async_engine, fixture_workflows_dir: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_task_initiator_is_generic_and_round_trips(async_engine, fixture_workflows_dir: Path) -> None:
+    async with await _make_client(fixture_workflows_dir) as client:
+        response = await client.post(
+            "/api/tasks",
+            json={
+                "workflow": "platform-test",
+                "prompt": "hello",
+                "channel": "api",
+                "initiator": "alice",
+            },
+        )
+        assert response.status_code == 200, response.text
+        task = response.json()
+        assert task["initiator"] == "alice"
+        assert (await client.get(f"/api/tasks/{task['id']}")).json()["initiator"] == "alice"
+        listing = (await client.get("/api/tasks")).json()
+        assert next(item for item in listing["items"] if item["id"] == task["id"])["initiator"] == "alice"
+        response = await client.post(
+            "/api/tasks",
+            json={
+                "workflow": "platform-test",
+                "prompt": "scheduled",
+                "channel": "schedule",
+            },
+        )
+        assert response.json()["initiator"] is None
+
+
+@pytest.mark.asyncio
 async def test_user_info_returns_verified_identity_and_mapped_application_groups(
     async_engine, fixture_workflows_dir: Path, monkeypatch, tmp_path
 ) -> None:

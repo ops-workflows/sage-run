@@ -22,11 +22,14 @@ import logging
 import os
 import re
 from collections.abc import Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from ipaddress import ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from shared.lib.crypto import decrypt_named_secrets
 
@@ -65,6 +68,145 @@ class GitHubAppConnection:
     app_id: str
     installation_id: str
     private_key: str
+
+
+@dataclass(frozen=True)
+class ConfluenceConnection:
+    """Named provider connection; metadata-only loads always leave the token empty."""
+
+    name: str
+    base_url: str
+    username: str
+    token: str = field(repr=False)
+    auth_type: str = "basic"
+
+
+class _KnowledgeConfigSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, hide_input_in_errors=True)
+
+
+class _KnowledgeEmbeddingsConfig(_KnowledgeConfigSection):
+    provider: Literal["openai_compatible"] | None = None
+    base_url: str | None = None
+    model: str | None = None
+    dimensions: int | None = Field(default=None, ge=0, strict=True)
+    api_key_secret: str | None = Field(default=None, repr=False)
+    batch_size: int | None = Field(default=None, gt=0, strict=True)
+    timeout_sec: float | None = Field(default=None, gt=0, allow_inf_nan=False, strict=True)
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def normalize_provider(cls, value: Any) -> Any:
+        return value.strip().lower() if isinstance(value, str) else value
+
+
+class _KnowledgeRerankConfig(_KnowledgeConfigSection):
+    enabled: bool | None = Field(default=None, strict=True)
+    base_url: str | None = None
+    model: str | None = None
+    timeout_sec: float | None = Field(default=None, gt=0, allow_inf_nan=False, strict=True)
+    candidates: int | None = Field(default=None, gt=0, strict=True)
+
+
+class _KnowledgeConfig(_KnowledgeConfigSection):
+    embeddings: _KnowledgeEmbeddingsConfig | None = None
+    rerank: _KnowledgeRerankConfig | None = None
+    require_explicit_source_grants: bool | None = Field(default=None, strict=True)
+
+
+def _normalize_knowledge_values(data: dict[str, Any], *, path: str) -> tuple[dict[str, str], str]:
+    knowledge = data.get("knowledge")
+    if knowledge is None:
+        return {}, ""
+    try:
+        config = _KnowledgeConfig.model_validate(knowledge)
+    except ValidationError:
+        raise ValueError("Invalid knowledge configuration: use supported snake_case fields and values") from None
+
+    env_values: dict[str, Any] = {}
+    mappings = {
+        "embeddings": {
+            "base_url": "KNOWLEDGE_EMBEDDINGS_OPENAI_BASE_URL",
+            "model": "KNOWLEDGE_EMBEDDINGS_OPENAI_MODEL",
+            "dimensions": "KNOWLEDGE_EMBEDDINGS_DIMENSIONS",
+            "batch_size": "KNOWLEDGE_EMBEDDINGS_BATCH_SIZE",
+            "timeout_sec": "KNOWLEDGE_EMBEDDINGS_TIMEOUT_SEC",
+        },
+        "rerank": {
+            "enabled": "KNOWLEDGE_RERANK_ENABLED",
+            "base_url": "KNOWLEDGE_RERANK_BASE_URL",
+            "model": "KNOWLEDGE_RERANK_MODEL",
+            "timeout_sec": "KNOWLEDGE_RERANK_TIMEOUT_SEC",
+            "candidates": "KNOWLEDGE_RERANK_CANDIDATES",
+        },
+    }
+    for section_name, mapping in mappings.items():
+        section = getattr(config, section_name)
+        if section is not None:
+            env_values.update(
+                {mapping[key]: value for key, value in section.model_dump(exclude_none=True).items() if key in mapping}
+            )
+    if config.require_explicit_source_grants is not None:
+        env_values["KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS"] = config.require_explicit_source_grants
+    secret_name = (config.embeddings.api_key_secret or "") if config.embeddings is not None else ""
+    return _normalize_config_values(env_values, path=path), secret_name
+
+
+def _confluence_base_url(value: str, name: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname or ""
+        port = parsed.port
+    except ValueError:
+        raise ValueError(f"confluence.connections.{name} requires a valid base_url") from None
+    try:
+        loopback = ip_address(hostname).is_loopback
+    except ValueError:
+        loopback = hostname.lower() == "localhost"
+    if (
+        not hostname
+        or port == 0
+        or (parsed.scheme != "https" and not (parsed.scheme == "http" and loopback))
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(f"confluence.connections.{name} requires HTTPS (HTTP is allowed only on loopback)")
+    return urlunsplit((parsed.scheme, parsed.netloc.lower(), parsed.path.rstrip("/"), "", ""))
+
+
+def load_confluence_connections(path: str, *, identity: str | None = None) -> dict[str, ConfluenceConnection]:
+    """Load public metadata, optionally decrypting only each connection's referenced token."""
+    data = _read_platform_file(path)
+    confluence = data.get("confluence")
+    raw_connections = confluence.get("connections") if isinstance(confluence, dict) else None
+    secrets = data.get("secrets") if isinstance(data.get("secrets"), dict) else {}
+    if not isinstance(raw_connections, dict):
+        return {}
+
+    connections: dict[str, ConfluenceConnection] = {}
+    for raw_name, raw_connection in raw_connections.items():
+        name = str(raw_name).strip()
+        if not name or not isinstance(raw_connection, dict):
+            continue
+        base_url = _confluence_base_url(str(raw_connection.get("base_url") or "").strip(), name)
+        username = str(raw_connection.get("username") or "").strip()
+        auth_type = str(raw_connection.get("auth_type") or "basic").strip().lower()
+        if auth_type != "basic" or not username:
+            raise ValueError(f"confluence.connections.{name} requires basic authentication and a username")
+        token_secret = str(raw_connection.get("token_secret") or "").strip()
+        token = ""
+        if token_secret and identity:
+            secret_spec = secrets.get(token_secret)
+            if isinstance(secret_spec, dict):
+                token = decrypt_named_secrets({token_secret: secret_spec}, identity=identity).get(token_secret, "")
+            else:
+                logger.warning("confluence.connections.%s references a missing token secret in %s", name, path)
+        connections[name] = ConfluenceConnection(
+            name=name, base_url=base_url, username=username, token=token, auth_type=auth_type
+        )
+    return connections
 
 
 def load_github_app_connections(path: str, *, identity: str | None = None) -> dict[str, GitHubAppConnection]:
@@ -163,7 +305,7 @@ def load_platform_env(path: str, *, identity: str | None = None) -> dict[str, st
     if not data:
         return {}
 
-    env_values: dict[str, str] = {}
+    env_values, embedding_key_secret = _normalize_knowledge_values(data, path=path)
     config_values = data.get("config", {})
     if config_values:
         if isinstance(config_values, dict):
@@ -177,14 +319,24 @@ def load_platform_env(path: str, *, identity: str | None = None) -> dict[str, st
             logger.warning("Platform config file has no valid 'secrets' mapping: %s", path)
         elif identity:
             excluded = _structured_secret_names(data)
-            env_values.update(
-                decrypt_named_secrets(
-                    {name: spec for name, spec in secret_values.items() if str(name) not in excluded},
-                    identity=identity,
-                )
-            )
+            generic_secrets = {name: spec for name, spec in secret_values.items() if str(name) not in excluded}
+            if generic_secrets:
+                env_values.update(decrypt_named_secrets(generic_secrets, identity=identity))
         else:
             logger.info("Skipping encrypted platform secrets in %s because AGE_IDENTITY is not set", path)
+
+    api_key_env = "KNOWLEDGE_EMBEDDINGS_OPENAI_API_KEY"
+    if embedding_key_secret and identity and api_key_env not in env_values and not os.environ.get(api_key_env):
+        secret_spec = secret_values.get(embedding_key_secret) if isinstance(secret_values, dict) else None
+        if not isinstance(secret_spec, dict):
+            raise ValueError("knowledge.embeddings.api_key_secret references a missing platform secret")
+        if not isinstance(secret_spec.get("encrypted"), str) or not secret_spec["encrypted"].strip():
+            raise ValueError("knowledge.embeddings.api_key_secret requires an encrypted platform secret")
+        api_key = decrypt_named_secrets({embedding_key_secret: secret_spec}, identity=identity).get(
+            embedding_key_secret
+        )
+        if api_key is not None:
+            env_values[api_key_env] = api_key
 
     return env_values
 
@@ -265,7 +417,23 @@ def _github_app_secret_names(data: dict[str, Any]) -> set[str]:
 
 
 def _structured_secret_names(data: dict[str, Any]) -> set[str]:
-    return _message_bus_secret_names(data) | _github_app_secret_names(data)
+    confluence = data.get("confluence")
+    connections = confluence.get("connections") if isinstance(confluence, dict) else None
+    confluence_tokens = (
+        {
+            str(connection.get("token_secret") or "").strip()
+            for connection in connections.values()
+            if isinstance(connection, dict)
+        }
+        - {""}
+        if isinstance(connections, dict)
+        else set()
+    )
+    knowledge = data.get("knowledge")
+    embeddings = knowledge.get("embeddings") if isinstance(knowledge, dict) else None
+    embedding_key = embeddings.get("api_key_secret") if isinstance(embeddings, dict) else None
+    embedding_secrets = {embedding_key.strip()} if isinstance(embedding_key, str) and embedding_key.strip() else set()
+    return _message_bus_secret_names(data) | _github_app_secret_names(data) | confluence_tokens | embedding_secrets
 
 
 def load_platform_runtime_env(path: str, *, model_selector: str | None = None) -> dict[str, str | None]:

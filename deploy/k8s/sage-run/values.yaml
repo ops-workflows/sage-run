@@ -97,6 +97,26 @@ sessionManager:
 knowledgeSources:
   objectStoreBucket: ""
 
+knowledge:
+  # Null values leave typed platform-config.yaml settings in control.
+  # Non-null values become env overrides on the indexer and Knowledge MCP.
+  embeddings:
+    openaiBaseUrl: null
+    openaiModel: null
+    # Required for hybrid_vector sources; 0 is unconfigured, not auto-detection.
+    dimensions: null
+    batchSize: null
+    timeoutSec: null
+  # Credentials come from bootstrap.existingSecret (LLM_API_KEY), or a typed
+  # knowledge.embeddings.api_key_secret; never put a key in Helm values.
+  rerank:
+    enabled: null
+    baseUrl: null
+    model: null
+    timeoutSec: null
+    candidates: null
+  requireExplicitSourceGrants: null
+
 knowledgeIndexer:
   replicas: 1
   cacheRoot: /var/lib/sage-run/knowledge-indexer

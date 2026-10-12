@@ -65,11 +65,18 @@ rename.
 
 ### `knowledge` — immutable source grounding
 
+Hybrid search and source-grant enforcement are implemented and locally tested.
+Verify endpoint configuration and an authorized tenant sync before rollout;
+this is not a live-provider certification.
+
 No workflow-supplied credentials or repository URLs are accepted. The workflow
-must send `X-Task-Workflow`; the server exposes only promoted, locally hydrated
-Knowledge Sources when that workflow declares the `knowledge` server in its own
-`.mcp.json`. Sources remain unavailable until their initial immutable version is
-successfully indexed. Calls from `online-alerts-investigator` are capped at 20
+must send `X-Task-Workflow`; retrieval uses only promoted Knowledge Source
+snapshots when that workflow declares the `knowledge` server in its own
+`.mcp.json` and its source grants allow access. One source registry supports
+GitHub `code_graph` and Confluence `hybrid_vector` indexes. Sources remain
+unavailable until their initial immutable version is successfully indexed and
+promoted. Graph snapshots are hydrated locally; hybrid snapshots are read from
+PostgreSQL. Calls from `online-alerts-investigator` are capped at 20
 per task using `X-Task-Id`; later calls fail fast so the workflow can return its
 bounded `not_grounded` result instead of consuming the session timeout.
 
@@ -82,7 +89,8 @@ not. The cap is a ceiling, not a target.
 
 | Tool | Purpose |
 | --- | --- |
-| `list_sources` | List authorized, locally ready source aliases. |
+| `list_sources` | List authorized source aliases, capabilities, readiness, and promoted versions. |
+| `search_knowledge` | Retrieve bounded Confluence chunks using pgvector dense search plus PostgreSQL full-text search fused with RRF; default limit 6. Requires `hybrid_search`. |
 | `query_graph` | Run Graphify's ranked natural-language query with bounded BFS or DFS traversal and no raw-source fallback. |
 | `explain_node` | Resolve a node ID, repository path, or precise label with Graphify ambiguity handling and return its bounded connections. |
 | `shortest_path` | Resolve two concepts and return Graphify's deterministic directed path; optionally retry undirected for structural proximity. |
@@ -93,6 +101,38 @@ not. The cap is a ceiling, not a target.
 | `get_source_excerpt` | Read a bounded, commit-pinned source excerpt. |
 | `search_symbols` | Secondary exact graph lookup for a provider-known identifier after graph retrieval misses. |
 | `search_source` | Secondary literal lookup for an exact provider-known source string after graph retrieval misses. |
+
+Graph tools remain available for `code_graph` sources and reject hybrid-only
+sources. `list_sources` advertises source/index kind and capabilities; use it
+before choosing a retrieval tool. Hybrid results include page and version
+provenance, heading/hierarchy context, content, retrieval mode, and ranking
+scores, not embeddings or credentials. PostgreSQL full-text ranking is not
+BM25. Query embedding failure can return lexical fallback; optional reranking
+is disabled by default and failures preserve RRF order.
+
+Source credentials are instance-owned named connections, including Confluence
+Cloud basic-auth email/API token references, not request headers. Both the
+indexer and MCP use the same direct OpenAI-compatible embedding endpoint,
+model, and explicit positive dimensions; they do not proxy embedding calls
+through Hindsight. See [Configuration](configuration.md#knowledge-embeddings-and-retrieval)
+for environment variables, typed config, and deployment precedence.
+
+Confluence sources may select exact pages rather than descendants and apply
+ordered `scrub_patterns` before body content enters persistence or either search
+index. These rules do not scrub page titles, hierarchy names, or citation URLs.
+Rule changes are applied on the next sync; prior successful versions remain
+available until promotion and normal history pruning.
+
+Add `knowledge.sources` in `agent.yaml` as well as the MCP declaration.
+Compatibility mode (`KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS=false`) allows
+legacy all-source access only when the list is missing and emits a warning;
+an explicit list always limits access and an empty list grants nothing.
+After migrating every workflow to explicit aliases, enable strict mode on
+both services. Missing lists then grant no access. Every source operation,
+including listing and graph tools, must apply the same workflow authorization.
+See [Workflow Authoring](workflow-authoring.md#knowledge-source-access) for
+source-create and workflow examples. Deployment validation does not certify
+provider relevance/latency or Confluence Data Center compatibility.
 
 ### `platform` — platform self-service
 

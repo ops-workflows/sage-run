@@ -295,14 +295,15 @@ async def test_knowledge_mcp_hydrates_minio_bundle_and_serves_source(
                 {"source_alias": source.canonical_alias, "query": "object-store-backed"},
             )
 
-        assert listed.data == [
-            {
-                "alias": source.canonical_alias,
-                "commit_sha": version.commit_sha,
-                "version_id": str(version.id),
-                "status": "ready",
-            }
-        ]
+        assert len(listed.data) == 1
+        entry = listed.data[0]
+        assert entry["alias"] == source.canonical_alias
+        assert entry["commit_sha"] == version.commit_sha
+        assert entry["version_id"] == str(version.id)
+        assert entry["status"] == "ready" and entry["ready"] is True
+        assert entry["source_kind"] == "github" and entry["index_kind"] == "code_graph"
+        assert entry["capabilities"] == ["graph", "literal_source"]
+        assert entry["suspended"] is False
         assert queried.data["status"] == "matched"
         assert queried.data["commit_sha"] == version.commit_sha
         assert "NODE knowledge_smoke" in queried.data["context"]

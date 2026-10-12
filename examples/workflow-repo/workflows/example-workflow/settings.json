@@ -34,6 +34,7 @@
         "mcp-message",
         "mcp-memory",
         "mcp-platform",
+        "mcp-knowledge",
         "mcp-custom-example"
       ]
     },

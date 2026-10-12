@@ -15,17 +15,19 @@ import asyncio
 import io
 import json
 import logging
+import re
 import tarfile
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from session_manager.runtime_launchers import get_runtime_launcher
 from sqlalchemy import delete, func, select, text, update
 
@@ -36,6 +38,7 @@ from shared.lib.background_jobs import queue_background_job
 from shared.lib.config import settings
 from shared.lib.connector_state import MESSAGE_INGRESS_CONNECTOR_ID, connector_is_paused, set_connector_paused
 from shared.lib.db import async_session_factory
+from shared.lib.knowledge_source_scrubbing import compile_scrub_rules
 from shared.lib.memory_catalog import BANK_INCIDENT_RCA, BANK_WORKFLOW_LEARNING, load_workflow_banks
 from shared.lib.message_bus import build_message_bus
 from shared.lib.models import (
@@ -52,6 +55,7 @@ from shared.lib.models import (
 )
 from shared.lib.object_store import BUCKET_AGENT_MEMORY, download_bytes, list_objects
 from shared.lib.platform_secrets import (
+    load_confluence_connections,
     load_connector_instances,
     load_github_app_connections,
     map_external_identity_groups,
@@ -89,6 +93,7 @@ class TaskResponse(BaseModel):
     prompt: str
     status: str
     channel: str | None
+    initiator: str | None
     metadata: dict
     message_channel: str | None
     message_thread: str | None
@@ -125,6 +130,7 @@ class CreateTaskRequest(BaseModel):
     workflow: str
     prompt: str
     channel: str
+    initiator: str | None = None
     metadata: dict[str, Any] | None = None
     message_channel: str | None = None
     message_thread: str | None = None
@@ -344,14 +350,67 @@ class PlatformBackgroundJobsResponse(BaseModel):
     offset: int
 
 
-class KnowledgeSourceWriteRequest(BaseModel):
+class KnowledgeSourceCommonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    canonical_alias: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    credential_ref: str = Field(min_length=1)
+    sync_policy: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class KnowledgeSourceWriteRequest(KnowledgeSourceCommonRequest):
+    source_kind: Literal["github"] = "github"
+    index_kind: Literal["code_graph"] = "code_graph"
     repository: str
-    credential_ref: str
     default_ref: str = "main"
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
-    sync_policy: dict[str, Any] = Field(default_factory=dict)
-    enabled: bool = True
+
+
+class ConfluenceSourceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    root_pages: list[str] | None = Field(default=None, min_length=1, max_length=100)
+    root_page_ids: list[str] | None = Field(default=None, min_length=1, max_length=100)
+    include_descendants: bool = True
+    body_format: Literal["storage"] = "storage"
+    lexical_config: Literal["simple", "english"] = "simple"
+    scrub_patterns: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("scrub_patterns")
+    @classmethod
+    def validate_scrub_patterns(cls, value: list[str]) -> list[str]:
+        compile_scrub_rules(value)
+        return [pattern for pattern in value if pattern.strip()]
+
+    @model_validator(mode="after")
+    def validate_roots(self):
+        if (self.root_pages is None) == (self.root_page_ids is None):
+            raise ValueError("Provide exactly one of root_pages or root_page_ids")
+        if self.root_page_ids is not None and any(not re.fullmatch(r"[0-9]+", root) for root in self.root_page_ids):
+            raise ValueError("root_page_ids must contain numeric page IDs")
+        return self
+
+
+class ConfluenceKnowledgeSourceWriteRequest(KnowledgeSourceCommonRequest):
+    source_kind: Literal["confluence"]
+    index_kind: Literal["hybrid_vector"]
+    source_config: ConfluenceSourceConfig
+
+
+def _legacy_source_kind(value: Any) -> Any:
+    if isinstance(value, dict) and "source_kind" not in value:
+        return {**value, "source_kind": "github"}
+    return value
+
+
+KnowledgeSourcePayload = Annotated[
+    KnowledgeSourceWriteRequest | ConfluenceKnowledgeSourceWriteRequest,
+    Field(discriminator="source_kind"),
+    BeforeValidator(_legacy_source_kind),
+]
 
 
 class GitHubConnectionResponse(BaseModel):
@@ -359,12 +418,22 @@ class GitHubConnectionResponse(BaseModel):
     web_base_url: str
 
 
+class ConfluenceConnectionResponse(BaseModel):
+    name: str
+    base_url: str
+
+
 class KnowledgeSourceVersionResponse(BaseModel):
     id: str
-    commit_sha: str
+    source_revision: str | None
+    index_kind: str
+    indexer_version: str | None
+    index_config_hash: str | None
+    stats: dict[str, Any]
+    commit_sha: str | None
     status: str
-    graphify_version: str
-    extraction_config_hash: str
+    graphify_version: str | None
+    extraction_config_hash: str | None
     artifact_keys: dict[str, Any]
     artifact_checksums: dict[str, Any]
     file_count: int
@@ -380,8 +449,14 @@ class KnowledgeSourceVersionResponse(BaseModel):
 class KnowledgeSourceResponse(BaseModel):
     id: str
     canonical_alias: str
-    repository_url: str
-    default_ref: str
+    display_name: str
+    source_kind: str
+    index_kind: str
+    source_config: dict[str, Any]
+    serving_suspended_at: str | None
+    serving_suspension_reason: str | None
+    repository_url: str | None
+    default_ref: str | None
     include_paths: list[str]
     exclude_paths: list[str]
     credential_ref: str | None
@@ -486,6 +561,7 @@ def _task_response(task: Task) -> TaskResponse:
         prompt=task.prompt,
         status=task.status,
         channel=task.channel,
+        initiator=task.initiator,
         metadata=task.task_metadata,
         message_channel=task.message_channel,
         message_thread=task.message_thread,
@@ -1116,6 +1192,11 @@ def _background_job_run_response(run: BackgroundJobRun) -> BackgroundJobRunRespo
 def _knowledge_source_version_response(version: KnowledgeSourceVersion) -> KnowledgeSourceVersionResponse:
     return KnowledgeSourceVersionResponse(
         id=str(version.id),
+        source_revision=version.source_revision or version.commit_sha,
+        index_kind=version.index_kind,
+        indexer_version=version.indexer_version or version.graphify_version,
+        index_config_hash=version.index_config_hash or version.extraction_config_hash,
+        stats=version.stats or {},
         commit_sha=version.commit_sha,
         status=version.status,
         graphify_version=version.graphify_version,
@@ -1137,6 +1218,12 @@ async def _knowledge_source_response(session, source: KnowledgeSource) -> Knowle
     return KnowledgeSourceResponse(
         id=str(source.id),
         canonical_alias=source.canonical_alias,
+        display_name=source.display_name or source.canonical_alias,
+        source_kind=source.source_kind,
+        index_kind=source.index_kind,
+        source_config=source.source_config or {},
+        serving_suspended_at=source.serving_suspended_at.isoformat() if source.serving_suspended_at else None,
+        serving_suspension_reason=source.serving_suspension_reason,
         repository_url=source.repository_url,
         default_ref=source.default_ref,
         include_paths=source.include_paths or [],
@@ -1152,19 +1239,101 @@ async def _knowledge_source_response(session, source: KnowledgeSource) -> Knowle
     )
 
 
-def _validated_knowledge_source_values(payload: KnowledgeSourceWriteRequest) -> dict[str, Any]:
+def _confluence_root_page_id(root: str, base_url: str) -> str:
+    root = root.strip()
+    if re.fullmatch(r"[0-9]+", root):
+        return root
+    try:
+        parsed = urlsplit(root)
+        base = urlsplit(base_url)
+        if (
+            (parsed.scheme, parsed.netloc.lower()) != (base.scheme, base.netloc.lower())
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+            or "\\" in root
+            or any(ord(char) < 32 for char in root)
+        ):
+            raise ValueError
+        relative_path = parsed.path.removeprefix(base.path.rstrip("/"))
+        if parsed.path != base.path.rstrip("/") + relative_path:
+            raise ValueError
+        page_match = re.fullmatch(r"/spaces/[^/]+/pages/([0-9]+)(?:/[^/]*)?", relative_path)
+        if page_match and not parsed.query:
+            return page_match.group(1)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        if relative_path == "/pages/viewpage.action" and set(query) == {"pageId"}:
+            ids = query["pageId"]
+            if len(ids) == 1 and re.fullmatch(r"[0-9]+", ids[0]):
+                return ids[0]
+    except ValueError:
+        pass
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Root pages must be numeric IDs or Confluence page URLs "
+            "on the selected connection's exact origin and base path"
+        ),
+    )
+
+
+def _validated_knowledge_source_values(payload: KnowledgeSourcePayload) -> dict[str, Any]:
+    if payload.sync_policy:
+        interval_sec = payload.sync_policy.get("interval_sec")
+        if set(payload.sync_policy) != {"interval_sec"} or type(interval_sec) is not int or interval_sec <= 0:
+            raise HTTPException(status_code=422, detail="sync_policy supports only a positive integer interval_sec")
+    display_name = payload.display_name.strip() if payload.display_name is not None else None
+    if display_name == "":
+        raise HTTPException(status_code=422, detail="display_name cannot be blank")
+    common = {
+        "source_kind": payload.source_kind,
+        "index_kind": payload.index_kind,
+        "display_name": display_name,
+        "sync_policy": payload.sync_policy,
+        "enabled": payload.enabled,
+    }
     platform_file = settings.platform_config_file
+    if isinstance(payload, ConfluenceKnowledgeSourceWriteRequest):
+        try:
+            connection = load_confluence_connections(platform_file).get(payload.credential_ref.strip())
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="Confluence connection configuration is invalid; contact the platform administrator",
+            ) from exc
+        if connection is None:
+            raise HTTPException(status_code=422, detail="credential_ref must name a configured Confluence connection")
+        config = payload.source_config
+        roots = config.root_pages if config.root_pages is not None else config.root_page_ids
+        root_ids = sorted({_confluence_root_page_id(root, connection.base_url) for root in roots})
+        return {
+            **common,
+            "canonical_alias": payload.canonical_alias,
+            "credential_ref": connection.name,
+            "repository_url": None,
+            "default_ref": None,
+            "include_paths": [],
+            "exclude_paths": [],
+            "source_config": {
+                "root_page_ids": root_ids,
+                "include_descendants": config.include_descendants,
+                "body_format": "storage",
+                "lexical_config": config.lexical_config,
+                "scrub_patterns": config.scrub_patterns,
+            },
+        }
     connections = load_github_app_connections(platform_file)
     connection = connections.get(payload.credential_ref.strip())
     if connection is None or not connection.web_base_url:
         raise HTTPException(status_code=422, detail="credential_ref must name a configured GitHub connection")
     repository = payload.repository.strip().strip("/")
     repository_parts = repository.split("/")
-    if len(repository_parts) != 2 or any(not part or "." in part or " " in part for part in repository_parts):
+    if len(repository_parts) != 2 or any(not re.fullmatch(r"[A-Za-z0-9_-]+", part) for part in repository_parts):
         raise HTTPException(status_code=422, detail="repository must use the format organization/repository")
     repository_url = f"{connection.web_base_url}/{repository}.git"
     values = {
-        "canonical_alias": repository_parts[-1],
+        **common,
+        "canonical_alias": payload.canonical_alias or repository_parts[-1],
         "repository_url": repository_url,
         "default_ref": payload.default_ref.strip(),
         "credential_ref": connection.name,
@@ -1175,21 +1344,15 @@ def _validated_knowledge_source_values(payload: KnowledgeSourceWriteRequest) -> 
         path = Path(pattern)
         if not pattern or "\\" in pattern or path.is_absolute() or ".." in path.parts:
             raise HTTPException(status_code=422, detail="Path scopes must be safe repository-relative glob patterns")
-    if payload.sync_policy:
-        interval_sec = payload.sync_policy.get("interval_sec")
-        if (
-            set(payload.sync_policy) != {"interval_sec"}
-            or isinstance(interval_sec, bool)
-            or not isinstance(interval_sec, int)
-        ):
-            raise HTTPException(status_code=422, detail="sync_policy supports only a positive integer interval_sec")
-        if interval_sec <= 0:
-            raise HTTPException(status_code=422, detail="sync_policy interval_sec must be positive")
     values.update(
         include_paths=payload.include_paths,
         exclude_paths=payload.exclude_paths,
-        sync_policy=payload.sync_policy,
-        enabled=payload.enabled,
+        source_config={
+            "repository_url": repository_url,
+            "default_ref": values["default_ref"],
+            "include_paths": payload.include_paths,
+            "exclude_paths": payload.exclude_paths,
+        },
     )
     return values
 
@@ -1457,6 +1620,7 @@ async def create_task_api(body: CreateTaskRequest):
             workflow=body.workflow,
             prompt=body.prompt,
             channel=body.channel,
+            initiator=body.initiator,
             metadata=body.metadata,
             message_channel=body.message_channel,
             message_thread=body.message_thread,
@@ -2099,9 +2263,21 @@ async def list_knowledge_source_github_connections():
     ]
 
 
+@router.get("/platform/knowledge-sources/confluence-connections", response_model=list[ConfluenceConnectionResponse])
+async def list_knowledge_source_confluence_connections():
+    connections = load_confluence_connections(settings.platform_config_file)
+    return [
+        ConfluenceConnectionResponse(name=connection.name, base_url=connection.base_url)
+        for connection in sorted(connections.values(), key=lambda item: item.name)
+    ]
+
+
 @router.post("/platform/knowledge-sources", response_model=KnowledgeSourceResponse, status_code=201)
-async def create_knowledge_source(payload: KnowledgeSourceWriteRequest):
+async def create_knowledge_source(payload: KnowledgeSourcePayload):
     values = _validated_knowledge_source_values(payload)
+    if not values["canonical_alias"]:
+        raise HTTPException(status_code=422, detail="canonical_alias is required for a new Confluence source")
+    values["display_name"] = values["display_name"] or values["canonical_alias"]
     async with async_session_factory() as session:
         source = KnowledgeSource(**values)
         session.add(source)
@@ -2113,7 +2289,7 @@ async def create_knowledge_source(payload: KnowledgeSourceWriteRequest):
             raise
         except Exception as exc:
             await session.rollback()
-            raise HTTPException(status_code=409, detail="Knowledge Source repository already exists") from exc
+            raise HTTPException(status_code=409, detail="Knowledge Source alias already exists") from exc
         await session.refresh(source)
         return await _knowledge_source_response(session, source)
 
@@ -2128,12 +2304,42 @@ async def get_knowledge_source(source_id: uuid.UUID):
 
 
 @router.put("/platform/knowledge-sources/{source_id}", response_model=KnowledgeSourceResponse)
-async def update_knowledge_source(source_id: uuid.UUID, payload: KnowledgeSourceWriteRequest):
+async def update_knowledge_source(source_id: uuid.UUID, payload: KnowledgeSourcePayload):
     values = _validated_knowledge_source_values(payload)
     async with async_session_factory() as session:
         source = await session.scalar(select(KnowledgeSource).where(KnowledgeSource.id == source_id).with_for_update())
         if source is None:
             raise HTTPException(status_code=404, detail="Knowledge Source not found")
+        if (values["source_kind"], values["index_kind"]) != (source.source_kind, source.index_kind):
+            raise HTTPException(status_code=422, detail="Source and index kinds are immutable; create a new source")
+        if payload.canonical_alias is not None and payload.canonical_alias != source.canonical_alias:
+            raise HTTPException(status_code=422, detail="canonical_alias is immutable; create a new source")
+        values["canonical_alias"] = source.canonical_alias
+        values["display_name"] = values["display_name"] or source.display_name or source.canonical_alias
+        sensitive_change = values["credential_ref"] != source.credential_ref or (
+            values["source_config"].get("root_page_ids") != (source.source_config or {}).get("root_page_ids")
+            if source.source_kind == "confluence"
+            else values["source_config"] != source.source_config
+        )
+        if sensitive_change:
+            active_run = await session.scalar(
+                select(BackgroundJobRun.id)
+                .where(
+                    BackgroundJobRun.job_type == "knowledge_source_sync",
+                    BackgroundJobRun.knowledge_source_id == source.id,
+                    BackgroundJobRun.status.in_(("queued", "running")),
+                )
+                .limit(1)
+            )
+            if active_run is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Wait for the active sync to finish before changing roots, repository scopes, or connection",
+                )
+            source.serving_suspended_at = datetime.now(UTC)
+            source.serving_suspension_reason = (
+                "Source roots, scope, or connection changed; queue a successful sync to resume serving"
+            )
         for field_name, value in values.items():
             setattr(source, field_name, value)
         source.updated_at = datetime.now(UTC)
@@ -2144,7 +2350,7 @@ async def update_knowledge_source(source_id: uuid.UUID, payload: KnowledgeSource
             raise
         except Exception as exc:
             await session.rollback()
-            raise HTTPException(status_code=409, detail="Knowledge Source repository already exists") from exc
+            raise HTTPException(status_code=409, detail="Knowledge Source alias already exists") from exc
         await session.refresh(source)
         return await _knowledge_source_response(session, source)
 
@@ -2152,7 +2358,7 @@ async def update_knowledge_source(source_id: uuid.UUID, payload: KnowledgeSource
 @router.post("/platform/knowledge-sources/{source_id}/sync", response_model=BackgroundJobRunResponse, status_code=202)
 async def queue_knowledge_source_sync(source_id: uuid.UUID):
     async with async_session_factory() as session:
-        source = await session.get(KnowledgeSource, source_id)
+        source = await session.scalar(select(KnowledgeSource).where(KnowledgeSource.id == source_id).with_for_update())
         if source is None:
             raise HTTPException(status_code=404, detail="Knowledge Source not found")
         if not source.enabled:

@@ -7,7 +7,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .
-RUN pip install --no-cache-dir ".[knowledge-indexer]"
+RUN pip install --no-cache-dir ".[knowledge-indexer]" \
+    && python -c "import bs4; import pgvector.sqlalchemy"
 
 COPY shared/ ./shared/
 COPY knowledge-indexer/ ./knowledge_indexer/

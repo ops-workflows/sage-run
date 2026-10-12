@@ -48,6 +48,16 @@ runtimeBundles:
 knowledgeSources:
   objectStoreBucket: sage-run-knowledge-sources
 
+knowledge:
+  embeddings:
+    openaiBaseUrl: https://llm.example.internal/v1
+    openaiModel: example-embedding-model
+    # Replace 0 with the model's verified output dimension before indexing.
+    dimensions: 0
+  rerank:
+    enabled: false
+  requireExplicitSourceGrants: false
+
 images:
   gateway:
     repository: sage-run-gateway
@@ -83,6 +93,10 @@ mcps:
     enabled: true
     module: mcps.core.mcp_platform
     port: 8105
+  knowledge:
+    enabled: true
+    module: mcps.core.mcp_knowledge
+    port: 8108
   salesforce:
     enabled: true
     module: mcps.integrations.mcp_salesforce

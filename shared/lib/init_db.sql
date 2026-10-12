@@ -27,6 +27,7 @@ CREATE TABLE task_queue.tasks (
     prompt          TEXT NOT NULL,
     metadata        JSONB NOT NULL DEFAULT '{}',
     channel         TEXT,
+    initiator       TEXT,
     message_channel TEXT,
     message_thread  TEXT,
     session_id      TEXT,
@@ -156,16 +157,26 @@ CREATE INDEX idx_schedules_enabled ON control_plane.schedules (enabled) WHERE en
 CREATE TABLE control_plane.knowledge_sources (
     id                            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     canonical_alias               TEXT NOT NULL UNIQUE,
-    repository_url                TEXT NOT NULL,
-    default_ref                   TEXT NOT NULL,
+    display_name                  TEXT,
+    source_kind                   TEXT NOT NULL DEFAULT 'github',
+    index_kind                    TEXT NOT NULL DEFAULT 'code_graph',
+    source_config                 JSONB NOT NULL DEFAULT '{}',
+    repository_url                TEXT,
+    default_ref                   TEXT,
     include_paths                 JSONB NOT NULL DEFAULT '[]',
     exclude_paths                 JSONB NOT NULL DEFAULT '[]',
     credential_ref                TEXT,
     sync_policy                   JSONB NOT NULL DEFAULT '{}',
     enabled                       BOOLEAN NOT NULL DEFAULT TRUE,
+    serving_suspended_at          TIMESTAMPTZ,
+    serving_suspension_reason      TEXT,
     current_successful_version_id UUID,
     created_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                    TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_knowledge_sources_kind_pair CHECK (
+        (source_kind = 'github' AND index_kind = 'code_graph') OR
+        (source_kind = 'confluence' AND index_kind = 'hybrid_vector')
+    )
 );
 
 CREATE INDEX idx_knowledge_sources_enabled ON control_plane.knowledge_sources (enabled);
@@ -173,10 +184,15 @@ CREATE INDEX idx_knowledge_sources_enabled ON control_plane.knowledge_sources (e
 CREATE TABLE control_plane.knowledge_source_versions (
     id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     source_id              UUID NOT NULL REFERENCES control_plane.knowledge_sources(id) ON DELETE CASCADE,
-    commit_sha             TEXT NOT NULL,
+    source_revision        TEXT,
+    index_kind             TEXT NOT NULL DEFAULT 'code_graph',
+    indexer_version        TEXT,
+    index_config_hash      TEXT,
+    stats                  JSONB NOT NULL DEFAULT '{}',
+    commit_sha             TEXT,
     status                 TEXT NOT NULL DEFAULT 'pending',
-    graphify_version       TEXT NOT NULL,
-    extraction_config_hash TEXT NOT NULL,
+    graphify_version       TEXT,
+    extraction_config_hash TEXT,
     artifact_keys          JSONB NOT NULL DEFAULT '{}',
     artifact_checksums     JSONB NOT NULL DEFAULT '{}',
     file_count             INT NOT NULL DEFAULT 0,
@@ -188,7 +204,11 @@ CREATE TABLE control_plane.knowledge_source_versions (
     finished_at            TIMESTAMPTZ,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_knowledge_source_versions_identity
-        UNIQUE (source_id, commit_sha, graphify_version, extraction_config_hash)
+        UNIQUE (source_id, commit_sha, graphify_version, extraction_config_hash),
+    CONSTRAINT ck_knowledge_source_versions_index_identity CHECK (
+        index_kind = 'code_graph' OR (index_kind = 'hybrid_vector' AND
+        source_revision IS NOT NULL AND indexer_version IS NOT NULL AND index_config_hash IS NOT NULL)
+    )
 );
 
 ALTER TABLE control_plane.knowledge_sources
@@ -201,6 +221,60 @@ CREATE INDEX idx_knowledge_source_versions_source
     ON control_plane.knowledge_source_versions (source_id, created_at DESC);
 CREATE INDEX idx_knowledge_source_versions_status
     ON control_plane.knowledge_source_versions (status, created_at DESC);
+CREATE UNIQUE INDEX uq_knowledge_source_versions_generic_identity
+    ON control_plane.knowledge_source_versions (source_id, source_revision, index_config_hash)
+    WHERE index_kind <> 'code_graph';
+
+CREATE TABLE control_plane.knowledge_document_revisions (
+    id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source_id          UUID NOT NULL REFERENCES control_plane.knowledge_sources(id) ON DELETE CASCADE,
+    external_id        TEXT NOT NULL,
+    provider_revision  TEXT NOT NULL,
+    title              TEXT NOT NULL,
+    canonical_url      TEXT NOT NULL,
+    hierarchy_path     JSONB NOT NULL DEFAULT '[]',
+    normalized_content TEXT NOT NULL,
+    content_hash       TEXT NOT NULL,
+    metadata           JSONB NOT NULL DEFAULT '{}',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_knowledge_document_revisions_identity UNIQUE (source_id, external_id, content_hash)
+);
+
+CREATE INDEX idx_knowledge_document_revisions_source
+    ON control_plane.knowledge_document_revisions (source_id, external_id);
+
+CREATE TABLE control_plane.knowledge_chunks (
+    id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_revision_id  UUID NOT NULL REFERENCES control_plane.knowledge_document_revisions(id) ON DELETE CASCADE,
+    index_config_hash     TEXT NOT NULL,
+    ordinal               INT NOT NULL,
+    heading_path          JSONB NOT NULL DEFAULT '[]',
+    content               TEXT NOT NULL,
+    content_hash          TEXT NOT NULL,
+    estimated_tokens      INT NOT NULL,
+    lexical_text          TEXT NOT NULL,
+    search_vector         TSVECTOR NOT NULL,
+    embedding             VECTOR NOT NULL,
+    embedding_model       TEXT NOT NULL,
+    embedding_dimensions  INT NOT NULL,
+    CONSTRAINT uq_knowledge_chunks_identity UNIQUE (document_revision_id, index_config_hash, ordinal),
+    CONSTRAINT ck_knowledge_chunks_embedding_dimensions
+        CHECK (embedding_dimensions > 0 AND vector_dims(embedding) = embedding_dimensions)
+);
+
+CREATE INDEX idx_knowledge_chunks_document ON control_plane.knowledge_chunks (document_revision_id);
+CREATE INDEX idx_knowledge_chunks_search ON control_plane.knowledge_chunks USING gin (search_vector);
+
+CREATE TABLE control_plane.knowledge_source_version_documents (
+    version_id           UUID NOT NULL REFERENCES control_plane.knowledge_source_versions(id) ON DELETE CASCADE,
+    document_revision_id UUID NOT NULL REFERENCES control_plane.knowledge_document_revisions(id) ON DELETE RESTRICT,
+    external_id          TEXT NOT NULL,
+    root_page_id         TEXT NOT NULL,
+    PRIMARY KEY (version_id, external_id)
+);
+
+CREATE INDEX idx_knowledge_source_version_documents_revision
+    ON control_plane.knowledge_source_version_documents (document_revision_id);
 
 CREATE TABLE control_plane.background_job_runs (
     id                          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

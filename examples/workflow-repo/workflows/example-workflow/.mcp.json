@@ -29,6 +29,14 @@
         "X-Message-Thread-Id": "${MESSAGE_THREAD_ID}"
       }
     },
+    "knowledge": {
+      "type": "http",
+      "url": "http://mcp-knowledge:8108/mcp",
+      "headers": {
+        "X-Task-Workflow": "${TASK_WORKFLOW}",
+        "X-Task-Id": "${TASK_ID}"
+      }
+    },
     "custom-example": {
       "type": "http",
       "url": "http://mcp-custom-example:8110/mcp",

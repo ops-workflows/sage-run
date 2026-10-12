@@ -18,7 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from sqlalchemy import select, text
+import httpx
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from shared.lib.background_jobs import (
@@ -30,18 +31,27 @@ from shared.lib.background_jobs import (
 )
 from shared.lib.config import settings
 from shared.lib.github_app import GitHubAppError, github_git_auth_environment, github_installation_token
+from shared.lib.knowledge_source_confluence import ConfluenceClient, ConfluenceSecurityError, stable_hash
+from shared.lib.knowledge_source_embeddings import EmbeddingClient, EmbeddingOptions
 from shared.lib.knowledge_source_graphify import (
     GRAPHIFY_VERSION,
     build_knowledge_source_bundle,
     run_graphify_code_extraction,
+)
+from shared.lib.knowledge_source_hybrid_index import (
+    INDEXER_VERSION,
+    HybridIndexOptions,
+    build_hybrid_index,
+    index_config_hash,
 )
 from shared.lib.knowledge_source_publication import (
     fail_knowledge_source_version,
     promote_knowledge_source_version,
     publish_knowledge_source_bundle,
 )
-from shared.lib.models import KnowledgeSource, KnowledgeSourceVersion
+from shared.lib.models import BackgroundJobRun, KnowledgeSource, KnowledgeSourceVersion, KnowledgeSourceVersionDocument
 from shared.lib.object_store import ObjectStore
+from shared.lib.platform_secrets import load_confluence_connections
 
 KNOWLEDGE_SOURCE_SYNC_JOB_TYPE = "knowledge_source_sync"
 SUPPORTED_TRIGGERS = frozenset({"scheduled", "manual", "retry"})
@@ -89,6 +99,10 @@ class KnowledgeSourceSyncResult:
     version_id: uuid.UUID
     run_id: uuid.UUID
     commit_sha: str
+
+    @property
+    def source_revision(self) -> str:
+        return self.commit_sha
 
 
 def extraction_config_hash(source: KnowledgeSource) -> str:
@@ -185,8 +199,6 @@ async def run_knowledge_source_sync(
     if trigger not in SUPPORTED_TRIGGERS:
         raise ValueError(f"Unsupported Knowledge Source sync trigger: {trigger}")
     active_config = config or KnowledgeSourceIndexerConfig.from_settings()
-    active_config.validate()
-    active_config.cache_root.mkdir(parents=True, exist_ok=True)
     lock_key = int.from_bytes(source_id.bytes[:8], byteorder="big", signed=True)
 
     async with engine.connect() as connection:
@@ -259,12 +271,18 @@ async def _run_locked_sync(
             error=f"Knowledge Source {label!r} is unavailable or disabled",
         )
         raise KnowledgeSourceSyncError(f"Knowledge Source {label!r} is unavailable or disabled")
+    if (source.source_kind, source.index_kind) == ("confluence", "hybrid_vector"):
+        return await _run_locked_hybrid_sync(session, source=source, run=run)
     phase = "resolve_ref"
     phase_started = time.monotonic()
     phase_timings: dict[str, float] = {}
     version: KnowledgeSourceVersion | None = None
     commit_sha = ""
     try:
+        if (source.source_kind, source.index_kind) != ("github", "code_graph"):
+            raise KnowledgeSourceSyncError("Unsupported Knowledge Source source/index pair")
+        config.validate()
+        config.cache_root.mkdir(parents=True, exist_ok=True)
         snapshot_dir, commit_sha = await asyncio.to_thread(prepare_repository_snapshot, source, config.cache_root)
         phase_timings[phase] = _elapsed(phase_started)
         config_hash = extraction_config_hash(source)
@@ -364,6 +382,15 @@ async def _run_locked_sync(
                 object_store=object_store,
             )
             phase_timings[phase] = _elapsed(phase_started)
+            version.source_revision = commit_sha
+            version.indexer_version = GRAPHIFY_VERSION
+            version.index_config_hash = config_hash
+            version.index_kind = "code_graph"
+            version.stats = {
+                "file_count": bundle.file_count,
+                "node_count": bundle.node_count,
+                "edge_count": bundle.edge_count,
+            }
             await promote_knowledge_source_version(
                 session,
                 source_id=source.id,
@@ -404,6 +431,215 @@ async def _run_locked_sync(
         raise KnowledgeSourceSyncError(
             f"Knowledge Source {source.canonical_alias!r} failed during {phase}: {error}"
         ) from exc
+
+
+def _hybrid_source_config_hash(source: KnowledgeSource) -> str:
+    return stable_hash(
+        {
+            "source_kind": source.source_kind,
+            "index_kind": source.index_kind,
+            "source_config": source.source_config,
+            "credential_ref": source.credential_ref,
+        }
+    )
+
+
+async def _run_locked_hybrid_sync(
+    session: AsyncSession,
+    *,
+    source: KnowledgeSource,
+    run: BackgroundJobRun,
+) -> KnowledgeSourceSyncResult:
+    source_id, run_id, alias = source.id, run.id, source.canonical_alias
+    captured_hash = _hybrid_source_config_hash(source)
+    captured_updated_at = source.updated_at
+    version_id: uuid.UUID | None = None
+    phase = "configure"
+    started = time.monotonic()
+    phase_timings: dict[str, float] = {}
+    revision = ""
+    try:
+        connections = await asyncio.to_thread(
+            load_confluence_connections,
+            settings.platform_config_file,
+            identity=settings.age_identity,
+        )
+        connection = connections.get(source.credential_ref or "")
+        if connection is None or not connection.token.strip():
+            raise KnowledgeSourceSyncError("Confluence connection or decrypted token is missing")
+        embedding_options = EmbeddingOptions.from_settings(settings)
+        options = HybridIndexOptions(
+            max_pages=settings.knowledge_source_max_pages,
+            max_chunks=settings.knowledge_source_max_chunks,
+            concurrency=settings.knowledge_source_fetch_concurrency,
+            lexical_config=(source.source_config or {}).get("lexical_config", "simple"),
+        )
+        heartbeat_lock = asyncio.Lock()
+        last_heartbeat = time.monotonic()
+
+        async def heartbeat() -> None:
+            nonlocal last_heartbeat
+            async with heartbeat_lock:
+                if time.monotonic() - last_heartbeat < 10:
+                    return
+                await heartbeat_background_job(session, run_id, summary={"phase": phase})
+                last_heartbeat = time.monotonic()
+
+        async with httpx.AsyncClient() as client:
+            embeddings = EmbeddingClient(embedding_options, client)
+            confluence = ConfluenceClient(
+                connection,
+                client,
+                concurrency=options.concurrency,
+                max_pages=options.max_pages,
+                max_body_chars=options.max_body_chars,
+                timeout_sec=settings.knowledge_source_request_timeout_sec,
+                retries=settings.knowledge_source_request_retries,
+                heartbeat=heartbeat,
+            )
+            version_id = uuid.uuid4()
+            version = KnowledgeSourceVersion(
+                id=version_id,
+                source_id=source_id,
+                source_revision=f"pending:{version_id}",
+                index_kind="hybrid_vector",
+                indexer_version=INDEXER_VERSION,
+                index_config_hash=index_config_hash(options, embeddings),
+                status="pending",
+                started_at=datetime.now(UTC),
+            )
+            session.add(version)
+            await session.flush()
+            run.knowledge_source_version_id = version_id
+            run.summary = {"phase": "build"}
+            await session.commit()
+            phase_timings[phase] = _elapsed(started)
+            phase, started = "build", time.monotonic()
+            build = await build_hybrid_index(
+                session,
+                source,
+                version,
+                connection,
+                client,
+                embeddings,
+                options=options,
+                confluence=confluence,
+                heartbeat=heartbeat,
+            )
+        phase_timings[phase] = _elapsed(started)
+        revision = build.source_revision
+        phase, started = "promote", time.monotonic()
+        current = await session.scalar(
+            select(KnowledgeSource)
+            .where(KnowledgeSource.id == source_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            current is None
+            or not current.enabled
+            or current.updated_at != captured_updated_at
+            or _hybrid_source_config_hash(current) != captured_hash
+        ):
+            raise KnowledgeSourceSyncError("Knowledge Source was disabled or edited during synchronization")
+        existing = await session.scalar(
+            select(KnowledgeSourceVersion).where(
+                KnowledgeSourceVersion.source_id == source_id,
+                KnowledgeSourceVersion.index_kind == "hybrid_vector",
+                KnowledgeSourceVersion.source_revision == revision,
+                KnowledgeSourceVersion.index_config_hash == build.index_config_hash,
+                KnowledgeSourceVersion.id != version_id,
+            )
+        )
+        skipped = existing is not None and existing.status == "succeeded"
+        if existing is not None:
+            run.knowledge_source_version_id = existing.id
+            await session.flush()
+            if skipped:
+                await session.execute(
+                    delete(KnowledgeSourceVersionDocument).where(
+                        KnowledgeSourceVersionDocument.version_id == version_id
+                    )
+                )
+            else:
+                await session.execute(
+                    delete(KnowledgeSourceVersionDocument).where(
+                        KnowledgeSourceVersionDocument.version_id == existing.id
+                    )
+                )
+                await session.execute(
+                    update(KnowledgeSourceVersionDocument)
+                    .where(KnowledgeSourceVersionDocument.version_id == version_id)
+                    .values(version_id=existing.id)
+                )
+            await session.delete(version)
+            await session.flush()
+            version = existing
+        if not skipped:
+            version.source_revision = revision
+            version.index_config_hash = build.index_config_hash
+            version.indexer_version = build.indexer_version
+            version.stats = build.stats
+            version.warnings = list(build.warnings)
+            version.status = "succeeded"
+            version.error = None
+            version.finished_at = datetime.now(UTC)
+        current.current_successful_version_id = version.id
+        current.serving_suspended_at = None
+        current.serving_suspension_reason = None
+        phase_timings[phase] = _elapsed(started)
+        result = KnowledgeSourceSyncResult(
+            "skipped" if skipped else "succeeded", source_id, version.id, run_id, revision
+        )
+        summary = {"source_revision": revision, "stats": build.stats, "phase_timings_sec": phase_timings}
+        if skipped:
+            summary["skip_reason"] = "unchanged_revision_and_config"
+        await finish_background_job(
+            session,
+            run_id,
+            status=result.status,
+            knowledge_source_version_id=version.id,
+            summary=summary,
+            warnings=list(build.warnings),
+        )
+        return result
+    except Exception as exc:
+        phase_timings[phase] = _elapsed(started)
+        error = str(exc)[-4000:] or exc.__class__.__name__
+        await session.rollback()
+        current = await session.scalar(
+            select(KnowledgeSource)
+            .where(KnowledgeSource.id == source_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            isinstance(exc, ConfluenceSecurityError)
+            and current is not None
+            and current.updated_at == captured_updated_at
+            and _hybrid_source_config_hash(current) == captured_hash
+        ):
+            current.serving_suspended_at = datetime.now(UTC)
+            current.serving_suspension_reason = error
+        if version_id is not None:
+            failed = await session.get(KnowledgeSourceVersion, version_id, populate_existing=True)
+            if failed is not None:
+                await session.execute(
+                    delete(KnowledgeSourceVersionDocument).where(
+                        KnowledgeSourceVersionDocument.version_id == version_id
+                    )
+                )
+                failed.status = "failed"
+                failed.finished_at = datetime.now(UTC)
+                failed.error = error
+        await finish_background_job(
+            session,
+            run_id,
+            status="failed",
+            summary={"source_revision": revision, "failure_phase": phase, "phase_timings_sec": phase_timings},
+            error=error,
+        )
+        raise KnowledgeSourceSyncError(f"Knowledge Source {alias!r} failed during {phase}: {error}") from exc
 
 
 def _validated_repository_url(source: KnowledgeSource) -> str:

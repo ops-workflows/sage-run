@@ -31,6 +31,24 @@ spec:
           env:
             {{- include "sage-run.commonEnv" $ | nindent 12 }}
             {{- if eq $name "knowledge" }}
+            {{- $knowledgeEnv := dict
+              "KNOWLEDGE_EMBEDDINGS_OPENAI_BASE_URL" $.Values.knowledge.embeddings.openaiBaseUrl
+              "KNOWLEDGE_EMBEDDINGS_OPENAI_MODEL" $.Values.knowledge.embeddings.openaiModel
+              "KNOWLEDGE_EMBEDDINGS_DIMENSIONS" $.Values.knowledge.embeddings.dimensions
+              "KNOWLEDGE_EMBEDDINGS_BATCH_SIZE" $.Values.knowledge.embeddings.batchSize
+              "KNOWLEDGE_EMBEDDINGS_TIMEOUT_SEC" $.Values.knowledge.embeddings.timeoutSec
+              "KNOWLEDGE_RERANK_ENABLED" $.Values.knowledge.rerank.enabled
+              "KNOWLEDGE_RERANK_BASE_URL" $.Values.knowledge.rerank.baseUrl
+              "KNOWLEDGE_RERANK_MODEL" $.Values.knowledge.rerank.model
+              "KNOWLEDGE_RERANK_TIMEOUT_SEC" $.Values.knowledge.rerank.timeoutSec
+              "KNOWLEDGE_RERANK_CANDIDATES" $.Values.knowledge.rerank.candidates
+              "KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS" $.Values.knowledge.requireExplicitSourceGrants }}
+            {{- range $key, $value := $knowledgeEnv }}
+            {{- if and (ne $value nil) (not (hasKey $.Values.platformEnv $key)) }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
             - name: KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET
               value: {{ required "knowledgeSources.objectStoreBucket is required" $.Values.knowledgeSources.objectStoreBucket | quote }}
             - name: KNOWLEDGE_SOURCE_SERVING_CACHE_ROOT

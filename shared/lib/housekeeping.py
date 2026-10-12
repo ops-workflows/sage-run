@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.lib.background_jobs import record_completed_background_job
@@ -19,8 +19,11 @@ from shared.lib.memory_catalog import BANK_WORKFLOW_LEARNING, load_workflow_bank
 from shared.lib.models import (
     Approval,
     BackgroundJobRun,
+    KnowledgeChunk,
+    KnowledgeDocumentRevision,
     KnowledgeSource,
     KnowledgeSourceVersion,
+    KnowledgeSourceVersionDocument,
     Session,
     SessionEvent,
     Task,
@@ -297,14 +300,23 @@ async def prune_knowledge_source_history(
 ) -> tuple[int, int, list[str]]:
     """Keep recent source history while preserving active and promoted indexes."""
     keep = max(0, int(keep_latest))
-    sources = list((await session.execute(select(KnowledgeSource))).scalars())
+    source_ids = list((await session.execute(select(KnowledgeSource.id))).scalars())
+    unlocked_source_ids: list[uuid.UUID] = []
     version_ids: list[uuid.UUID] = []
     run_ids: list[uuid.UUID] = []
     warnings: list[str] = []
     store = object_store
     bucket = settings.knowledge_source_object_store_bucket.strip()
 
-    for source in sources:
+    for source_id in source_ids:
+        lock_key = int.from_bytes(source_id.bytes[:8], byteorder="big", signed=True)
+        acquired = await session.scalar(text("SELECT pg_try_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
+        if not acquired:
+            continue
+        source = await session.get(KnowledgeSource, source_id, populate_existing=True)
+        if source is None:
+            continue
+        unlocked_source_ids.append(source_id)
         versions = list(
             (
                 await session.execute(
@@ -356,7 +368,31 @@ async def prune_knowledge_source_history(
         await session.execute(delete(BackgroundJobRun).where(BackgroundJobRun.id.in_(run_ids)))
     if version_ids:
         await session.execute(delete(KnowledgeSourceVersion).where(KnowledgeSourceVersion.id.in_(version_ids)))
-    if run_ids or version_ids:
+    if unlocked_source_ids:
+        await session.execute(
+            delete(KnowledgeChunk).where(
+                KnowledgeChunk.document_revision_id.in_(
+                    select(KnowledgeDocumentRevision.id).where(
+                        KnowledgeDocumentRevision.source_id.in_(unlocked_source_ids)
+                    )
+                ),
+                ~select(KnowledgeSourceVersionDocument.version_id)
+                .join(KnowledgeSourceVersion, KnowledgeSourceVersion.id == KnowledgeSourceVersionDocument.version_id)
+                .where(
+                    KnowledgeSourceVersionDocument.document_revision_id == KnowledgeChunk.document_revision_id,
+                    KnowledgeSourceVersion.index_config_hash == KnowledgeChunk.index_config_hash,
+                )
+                .exists(),
+            )
+        )
+        await session.execute(
+            delete(KnowledgeDocumentRevision).where(
+                KnowledgeDocumentRevision.source_id.in_(unlocked_source_ids),
+                ~select(KnowledgeSourceVersionDocument.version_id)
+                .where(KnowledgeSourceVersionDocument.document_revision_id == KnowledgeDocumentRevision.id)
+                .exists(),
+            )
+        )
         await session.commit()
     return len(version_ids), len(run_ids), warnings
 

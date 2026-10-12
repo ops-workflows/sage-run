@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 COPY mcps/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt "pgvector>=0.4.0" \
+	&& python -c "import pgvector.sqlalchemy"
 COPY shared/ ./shared/
 COPY mcps/ ./mcps/
 

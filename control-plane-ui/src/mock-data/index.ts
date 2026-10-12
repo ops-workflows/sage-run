@@ -19,7 +19,10 @@ import {
   MOCK_KNOWLEDGE_SOURCES,
   MOCK_KNOWLEDGE_SOURCE_VERSIONS,
   MOCK_GITHUB_CONNECTIONS,
+  MOCK_CONFLUENCE_CONNECTIONS,
+  mockKnowledgeSourceWrite,
 } from './knowledge-sources';
+import type { KnowledgeSource, BackgroundJobRun } from '@/lib/api';
 import { MOCK_SCHEDULES } from './schedules';
 import { getMockBackgroundJobs, MOCK_BACKGROUND_JOBS } from './background-jobs';
 import { getMockAnalytics, MOCK_ANALYTICS } from './analytics';
@@ -334,6 +337,18 @@ export async function handleMockApiRequest(
   if (path === 'platform/knowledge-sources' && method === 'GET') {
     return { status: 200, data: MOCK_KNOWLEDGE_SOURCES };
   }
+  if (path === 'platform/knowledge-sources' && method === 'POST') {
+    const result = mockKnowledgeSourceWrite(body);
+    if (result.status === 201)
+      MOCK_KNOWLEDGE_SOURCES.push(result.data as KnowledgeSource);
+    return result;
+  }
+  if (
+    path === 'platform/knowledge-sources/confluence-connections' &&
+    method === 'GET'
+  ) {
+    return { status: 200, data: MOCK_CONFLUENCE_CONNECTIONS };
+  }
   if (
     path === 'platform/knowledge-sources/github-connections' &&
     method === 'GET'
@@ -350,6 +365,84 @@ export async function handleMockApiRequest(
     );
     if (ks) return { status: 200, data: ks };
     return { status: 404, data: { detail: 'Knowledge source not found' } };
+  }
+  if (knowledgeSourceMatch && method === 'PUT') {
+    const index = MOCK_KNOWLEDGE_SOURCES.findIndex(
+      (item) => item.id === knowledgeSourceMatch[1],
+    );
+    if (index < 0)
+      return { status: 404, data: { detail: 'Knowledge source not found' } };
+    const previous = MOCK_KNOWLEDGE_SOURCES[index];
+    const result = mockKnowledgeSourceWrite(body, previous);
+    if (result.status === 200) {
+      const source = result.data as KnowledgeSource;
+      const sensitive =
+        previous.credential_ref !== source.credential_ref ||
+        (previous.source_kind === 'confluence' &&
+        source.source_kind === 'confluence'
+          ? JSON.stringify(previous.source_config.root_page_ids) !==
+            JSON.stringify(source.source_config.root_page_ids)
+          : JSON.stringify(previous.source_config) !==
+            JSON.stringify(source.source_config));
+      if (
+        sensitive &&
+        MOCK_BACKGROUND_JOBS.some(
+          (run) =>
+            run.knowledge_source_id === source.id &&
+            ['queued', 'running'].includes(run.status),
+        )
+      )
+        return {
+          status: 409,
+          data: {
+            detail:
+              'Wait for the active sync to finish before changing roots, scopes, or connection',
+          },
+        };
+      MOCK_KNOWLEDGE_SOURCES[index] = source;
+    }
+    return result;
+  }
+  const sourceSyncMatch = path.match(
+    /^platform\/knowledge-sources\/([^/]+)\/sync$/,
+  );
+  if (sourceSyncMatch && method === 'POST') {
+    const source = MOCK_KNOWLEDGE_SOURCES.find(
+      (item) => item.id === sourceSyncMatch[1],
+    );
+    if (!source)
+      return { status: 404, data: { detail: 'Knowledge source not found' } };
+    if (!source.enabled)
+      return { status: 409, data: { detail: 'Knowledge Source is disabled' } };
+    if (
+      MOCK_BACKGROUND_JOBS.some(
+        (run) =>
+          run.knowledge_source_id === source.id &&
+          ['queued', 'running'].includes(run.status),
+      )
+    )
+      return {
+        status: 409,
+        data: { detail: 'Knowledge Source sync is already active' },
+      };
+    const run: BackgroundJobRun = {
+      id: crypto.randomUUID(),
+      job_type: 'knowledge_source_sync',
+      scope: source.canonical_alias,
+      trigger: 'manual',
+      knowledge_source_id: source.id,
+      knowledge_source_version_id: null,
+      status: 'queued',
+      started_at: new Date().toISOString(),
+      heartbeat_at: null,
+      finished_at: null,
+      duration_sec: null,
+      summary: { phase: 'queued' },
+      warnings: [],
+      error: null,
+    };
+    MOCK_BACKGROUND_JOBS.unshift(run);
+    return { status: 202, data: run };
   }
 
   const knowledgeSourceVersionsMatch = path.match(

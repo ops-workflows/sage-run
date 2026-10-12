@@ -13,7 +13,7 @@ import httpx
 from sqlalchemy import select
 
 from gateway.message import resolve_approval_action
-from gateway.plugin_dir import MessageRoute, discover_all_message_routes
+from gateway.plugin_dir import MessageRoute, discover_all_message_routes, normalize_invocation_username
 from shared.lib.alert_envelope import parse_alert_envelope
 from shared.lib.config import settings
 from shared.lib.db import async_session_factory
@@ -136,6 +136,21 @@ def match_message_route(message: InboundMessage, routes: list[MessageRoute]) -> 
             continue
         prompt = _match_route_prompt(message, route, text)
         if prompt is None:
+            continue
+        if (
+            message.provider == "mattermost"
+            and not (message.is_bot or message.is_webhook)
+            and route.allowed_usernames is not None
+            and normalize_invocation_username(message.username) not in route.allowed_usernames
+        ):
+            logger.info(
+                "Human invocation denied provider=%s workflow=%s channel=%s username=%s reason=%s",
+                message.provider,
+                route.workflow,
+                route.channel,
+                normalize_invocation_username(message.username),
+                "username_not_allowed" if message.username.strip() else "missing_username",
+            )
             continue
         identity = (route.workflow, route.rule_id, route.match_type, route.pattern, route.trigger_words)
         matches.setdefault(identity, (route, prompt))
@@ -317,6 +332,7 @@ class GatewayMessageIngress:
                 workflow=route.workflow,
                 prompt=prompt,
                 channel=message.provider,
+                initiator=message.username or None,
                 metadata=metadata,
                 message_channel=message.channel_name or message.channel_id,
                 message_thread=message.thread_id,

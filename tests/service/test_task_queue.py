@@ -26,11 +26,14 @@ async def test_create_task_persists_metadata_and_emits_event(db_session) -> None
         db_session,
         workflow="platform-test",
         prompt="hello",
+        initiator="alice",
         metadata={"source": "unit"},
         message_channel="platform-test-channel",
         message_thread="thread-1",
     )
     assert task.status == "queued"
+    await db_session.refresh(task)
+    assert task.initiator == "alice"
     assert task.message_channel == "platform-test-channel"
     assert task.task_metadata == {"source": "unit"}
     # task_created event
@@ -58,6 +61,7 @@ async def test_threadless_task_uses_workflow_default_message_channel(db_session,
     )
 
     assert task.message_channel == "workflow-default"
+    assert task.initiator is None
     assert task.task_metadata == {"source": "connector"}
 
 
@@ -230,6 +234,7 @@ async def test_coalesce_merges_into_existing_task(db_session) -> None:
         workflow="platform-test",
         prompt="alert-a",
         coalesce_key="alert-group-1",
+        initiator="original-sender",
         metadata={"alert_id": "A1"},
         coalesce_window_sec=600,
     )
@@ -238,6 +243,7 @@ async def test_coalesce_merges_into_existing_task(db_session) -> None:
         workflow="platform-test",
         prompt="alert-b",
         coalesce_key="alert-group-1",
+        initiator="later-sender",
         metadata={
             "alert_id": "A2",
             "message_id": "message-2",
@@ -247,6 +253,7 @@ async def test_coalesce_merges_into_existing_task(db_session) -> None:
     )
     assert merged.id == first.id, "second create must merge into the first"
     alerts = merged.task_metadata.get("coalesced_alerts")
+    assert merged.initiator == "original-sender"
     assert alerts and alerts[0]["alert_id"] == "A2"
     assert merged.task_metadata["alert_occurrence_count"] == 2
     assert merged.task_metadata["alert_state_transitions"] == [{"state": "recovery", "message_id": "message-2"}]
