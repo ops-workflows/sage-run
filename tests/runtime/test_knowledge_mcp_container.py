@@ -34,7 +34,7 @@ pytestmark = pytest.mark.scenario
 MINIO_ACCESS_KEY = "knowledge_test"
 MINIO_SECRET_KEY = "knowledge-test-secret"
 KNOWLEDGE_BUCKET = "knowledge-smoke"
-MINIO_TEST_IMAGE = os.environ.get("MINIO_TEST_IMAGE", "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z")
+MINIO_TEST_IMAGE = os.environ.get("MINIO_TEST_IMAGE", "cgr.dev/chainguard/minio:latest")
 
 
 def _wait_for_port(container, container_port: str, timeout_sec: float = 30) -> int:

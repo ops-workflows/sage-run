@@ -47,7 +47,10 @@ services:
       - sage-run-network
 
   minio:
-    image: minio/minio
+    # MinIO publishes community releases as source only; Chainguard builds that source.
+    image: cgr.dev/chainguard/minio:latest
+    # Keeps volumes written by the former root-run minio/minio image writable.
+    user: "0:0"
     restart: unless-stopped
     command: server /data --console-address ":9001"
     volumes:
@@ -67,13 +70,13 @@ services:
       - sage-run-network
 
   minio-init:
-    image: minio/mc
+    image: cgr.dev/chainguard/minio:latest
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-        mc alias set local http://minio:9000 $${OBJECT_STORE_ACCESS_KEY} $${OBJECT_STORE_SECRET_KEY};
+        mc alias set local http://minio:9000 \"$${OBJECT_STORE_ACCESS_KEY}\" \"$${OBJECT_STORE_SECRET_KEY}\";
         mc mb --ignore-existing local/agent-memory;
         mc mb --ignore-existing local/sage-run-bundles;
         mc mb --ignore-existing local/$${KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET};

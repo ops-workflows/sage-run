@@ -32,8 +32,8 @@ infrastructure:
     storageSize: 20Gi
   objectStore:
     enabled: false
-    image: minio/minio:latest
-    clientImage: minio/mc:latest
+    image: cgr.dev/chainguard/minio:latest
+    clientImage: cgr.dev/chainguard/minio:latest
     accessKey: sage_run
     buckets:
       - agent-memory

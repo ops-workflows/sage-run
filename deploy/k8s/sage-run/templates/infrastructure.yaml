@@ -109,6 +109,9 @@ spec:
         app.kubernetes.io/component: object-store
     spec:
       {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        # The image runs as non-root 65532; this keeps the data volume writable.
+        fsGroup: 65532
       containers:
         - name: minio
           image: {{ .Values.infrastructure.objectStore.image }}
