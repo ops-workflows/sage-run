@@ -14,7 +14,7 @@ export async function proxyGatewayRequest(
     process.env.INTERNAL_GATEWAY_URL === 'mock';
 
   if (isMock && prefix === 'api') {
-    let requestBody: unknown = undefined;
+    let requestBody: unknown;
     if (!BODYLESS_METHODS.has(request.method)) {
       try {
         requestBody = await request.clone().json();

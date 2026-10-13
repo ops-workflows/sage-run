@@ -7,7 +7,7 @@ import {
 } from './workflows';
 import { MOCK_TASKS, getMockTaskList } from './tasks';
 import { MOCK_SESSIONS } from './sessions';
-import { MOCK_APPROVALS, getMockPlatformApprovals } from './approvals';
+import { getMockPlatformApprovals } from './approvals';
 import { MOCK_MCP_SERVERS } from './mcp-catalog';
 import { MOCK_CONNECTORS } from './connectors';
 import {
@@ -25,7 +25,7 @@ import {
 import type { KnowledgeSource, BackgroundJobRun } from '@/lib/api';
 import { MOCK_SCHEDULES } from './schedules';
 import { getMockBackgroundJobs, MOCK_BACKGROUND_JOBS } from './background-jobs';
-import { getMockAnalytics, MOCK_ANALYTICS } from './analytics';
+import { getMockAnalytics } from './analytics';
 
 export async function handleMockApiRequest(
   method: string,

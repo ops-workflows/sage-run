@@ -40,7 +40,7 @@ TEST_COMPOSE ?= AGE_IDENTITY=test-only-not-a-real-age-key LLM_API_KEY=test-only-
 
 .PHONY: help unit-tests service-tests runtime-tests tests \
 	ensure-test-db up compose-build runtime-build mcp-build clean-test-containers \
-	init bootstrap sync set-platform-secret set-workflow-secret k8s-bootstrap k8s-platform-config k8s-upgrade \
+	init bootstrap create-github-app sync set-platform-secret set-workflow-secret k8s-bootstrap k8s-platform-config k8s-upgrade \
 	k8s-deploy k8s-update
 
 init: ## Install Python dependencies
@@ -48,6 +48,9 @@ init: ## Install Python dependencies
 
 bootstrap: ## Guided operator bootstrap (workflow-repo pointer, AGE identity, model key)
 	$(PYTHON) scripts/bootstrap.py
+
+create-github-app: ## Register an organization GitHub App and save its credentials privately
+	$(PYTHON) scripts/create_github_app.py $(GITHUB_APP_ARGS)
 
 sync: ## Sync platform config and workflows through the running gateway
 	@curl --fail --silent --show-error --request POST "$(GATEWAY_URL)/api/platform/workflow-repo/sync" | \

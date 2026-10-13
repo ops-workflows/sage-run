@@ -1,5 +1,24 @@
 # Deployment
 
+## Clone the platform
+
+Clone the public platform repository on the deployment host. This example uses
+`/home/ubuntu/sage-run`; choose a writable checkout path for your deployment user.
+
+```sh
+git -c credential.helper= clone \
+   https://github.com/ops-workflows/sage-run.git \
+   /home/ubuntu/sage-run
+
+cd /home/ubuntu/sage-run
+```
+
+The repository is public, so this HTTPS clone requires no credentials or PAT.
+`-c credential.helper=` disables configured credential helpers only for this
+command; it does not change Git configuration for later commands. If cloning a
+private repository instead, enter your username and PAT at Git's prompts rather
+than putting the PAT in the URL or command line.
+
 ## Bootstrap (`make bootstrap`)
 
 `make bootstrap` runs `scripts/bootstrap.py`, a guided prompt that produces
@@ -54,6 +73,75 @@ The public hostname and gateway callback base URL must both use HTTPS whenever
 Mattermost approval callbacks are enabled. Any ingress layer that permits the
 callback must allow `POST /webhooks/message/actions/approval`; Gateway verifies
 the signed callback context for that route.
+
+## Register a GitHub App
+
+Use a separate GitHub App registration for each GitHub.com or GitHub Enterprise
+Server host. The helper requires Python 3.11+ and a browser signed in as an
+organization owner or a member allowed to manage organization GitHub Apps:
+
+```sh
+make create-github-app
+```
+
+It prompts for an organization URL (for example `https://github.com/acme` or
+`https://ghes.example.com/platform-ops`) and an App name. Organization
+settings URLs and `host/organization` paths also work. It opens a local form;
+choose **Continue to GitHub**, review the name, then **Create GitHub App**.
+Registration is not a headless REST operation: GitHub's
+[manifest handshake](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
+requires browser approval. The script then exchanges the one-time code through
+the REST API without a PAT or stored `gh` credentials. GHES uses `/api/v3` and
+normal TLS verification; trust the instance's CA on the machine running the
+helper rather than disabling verification.
+
+The manifest grants repository **Contents, Issues, and Pull Requests: write**
+and **Metadata: read**, with no subscribed events. The App is private to its
+owning organization, webhooks are inactive, and user OAuth authorization is not
+requested. These are service-identity defaults, not a clone of any existing
+App's unexposed administrative settings. The homepage is the target organization
+URL. The loopback redirect is only for registration, not a runtime OAuth callback.
+
+Credentials are saved in a unique directory under
+`~/.config/sage-run/github-apps/<host>/`. The directory has mode `0700`, and
+files have mode `0600`:
+
+- `private-key.pem`: App private key for SAGE authentication.
+- `credentials.json`: complete API response, including the PEM, client secret,
+  and webhook secret if supplied. Treat this entire file as a secret.
+- `connection.json`: web/API base URLs, App ID, installation/settings URLs,
+  and a suggested private-key secret name. It is connection metadata, not a
+  complete `platform-config.yaml`; `installation_id` is initially unset.
+
+The script never prints secret values or overwrites existing output directories.
+Keep these plaintext files out of Git and encrypt the PEM with
+`scripts/set_secret.py --scope shared --name github_app_private_key --value-file
+/path/to/private-key.pem`, supplying the instance's `--identity` and
+`--platform-file`. Set the connection's `private_key_secret` to the same secret
+name, then securely archive or remove the plaintext credential files.
+
+Open the printed installation URL and choose **Only select repositories**,
+including the workflow repository and any repositories the workflows need.
+Copy the installation ID from the resulting installation URL into the named
+connection's `installation_id`. An App ID and an installation ID are different.
+Choose that connection for `github.workflow_repo_connection` when appropriate.
+
+For an SSH deployment host, forward the helper's loopback port from your
+workstation, then run the command in that SSH session:
+
+```sh
+ssh -L 8765:127.0.0.1:8765 ubuntu@your-host
+cd /home/ubuntu/sage-run
+make create-github-app GITHUB_APP_ARGS="--no-browser"
+```
+
+Open the printed `http://127.0.0.1:8765/register/...` URL in your workstation's
+browser. No public listener or firewall change is needed. Use `--port` and a
+matching forward if that port is occupied. Browser approval times out after
+600 seconds; `--timeout` can extend it up to GitHub's one-hour handshake limit.
+`GITHUB_APP_ARGS="--help"` lists all options, including `--org`, `--name`, and
+`--output-dir` (which must be a new directory). Cancellation never deletes an
+already-registered App; inspect its settings before retrying after an error.
 
 ## Kubernetes deployment
 
