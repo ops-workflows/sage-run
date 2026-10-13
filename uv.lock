@@ -3194,6 +3194,7 @@ source = { editable = "." }
 dependencies = [
     { name = "apscheduler" },
     { name = "asyncpg" },
+    { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "claude-agent-sdk" },
     { name = "docker" },
@@ -3219,7 +3220,6 @@ dependencies = [
 
 [package.optional-dependencies]
 connectors = [
-    { name = "beautifulsoup4" },
     { name = "google-cloud-pubsub" },
     { name = "google-cloud-storage" },
 ]
@@ -3231,7 +3231,6 @@ dev = [
     { name = "zstandard" },
 ]
 knowledge-indexer = [
-    { name = "beautifulsoup4" },
     { name = "zstandard" },
 ]
 kubernetes = [
@@ -3242,8 +3241,7 @@ kubernetes = [
 requires-dist = [
     { name = "apscheduler", specifier = ">=3.10.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },
-    { name = "beautifulsoup4", marker = "extra == 'connectors'", specifier = ">=4.12.3" },
-    { name = "beautifulsoup4", marker = "extra == 'knowledge-indexer'", specifier = ">=4.12.3" },
+    { name = "beautifulsoup4", specifier = ">=4.12.3" },
     { name = "boto3", specifier = ">=1.35.0" },
     { name = "claude-agent-sdk", specifier = "==0.2.110" },
     { name = "docker", specifier = ">=7.1.0" },
