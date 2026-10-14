@@ -100,6 +100,52 @@ def test_first_release_requires_basic_authentication(platform_file, auth_type, u
         load_confluence_connections(str(platform_file))
 
 
+def _set_connection(platform_file, **values):
+    config = yaml.safe_load(platform_file.read_text())
+    connection = config["confluence"]["connections"][" corporate-wiki "]
+    connection.update(values)
+    for key in [key for key, value in values.items() if value is None]:
+        del connection[key]
+    platform_file.write_text(yaml.safe_dump(config))
+
+
+def test_cloud_is_the_default_deployment(platform_file):
+    assert load_confluence_connections(str(platform_file))["corporate-wiki"].deployment == "cloud"
+
+
+def test_data_center_defaults_to_bearer_without_username_and_keeps_context_path(platform_file):
+    _set_connection(
+        platform_file,
+        deployment=" Data_Center ",
+        base_url="https://atlas.example/confluence/",
+        auth_type=None,
+        username=None,
+    )
+    connection = load_confluence_connections(str(platform_file))["corporate-wiki"]
+    assert (connection.deployment, connection.auth_type, connection.username) == ("data_center", "bearer", "")
+    assert connection.base_url == "https://atlas.example/confluence"
+
+
+def test_data_center_allows_basic_with_username(platform_file):
+    _set_connection(platform_file, deployment="data_center", base_url="https://atlas.example/confluence")
+    connection = load_confluence_connections(str(platform_file))["corporate-wiki"]
+    assert (connection.deployment, connection.auth_type) == ("data_center", "basic")
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"deployment": "server"}, "must be cloud or data_center"),
+        ({"deployment": "data_center", "auth_type": "basic", "username": ""}, "requires bearer authentication"),
+        ({"deployment": "data_center", "auth_type": "oauth"}, "requires bearer authentication"),
+    ],
+)
+def test_invalid_deployment_combinations_are_rejected(platform_file, values, message):
+    _set_connection(platform_file, **values)
+    with pytest.raises(ValueError, match=message):
+        load_confluence_connections(str(platform_file))
+
+
 def test_missing_token_reference_is_safe(platform_file):
     config = yaml.safe_load(platform_file.read_text())
     del config["secrets"]["WIKI_TOKEN"]

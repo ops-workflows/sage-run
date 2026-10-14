@@ -66,7 +66,8 @@ expanded to `.github/workflows`.
 
 ### Confluence connections
 
-Define named Confluence Cloud connections in `platform-config.yaml`:
+Define named Confluence connections in `platform-config.yaml`. Set
+`deployment` to `cloud` (the default) or `data_center`:
 
 ```yaml
 confluence:
@@ -76,21 +77,31 @@ confluence:
       auth_type: basic
       username: knowledge-reader@example.com
       token_secret: CONFLUENCE_TEAM_TOKEN
+    corporate-wiki:
+      deployment: data_center
+      base_url: https://confluence.example.com/confluence
+      auth_type: bearer
+      token_secret: CONFLUENCE_DC_TOKEN
 secrets:
   CONFLUENCE_TEAM_TOKEN:
+    encrypted: "ENC[age,...]"
+  CONFLUENCE_DC_TOKEN:
     encrypted: "ENC[age,...]"
 ```
 
 `credential_ref` on a Confluence source is the exact connection name, not a
-token or URL. Basic authentication uses the service account's email and API
-token. Keep the token age-encrypted; the indexer resolves it using the existing
-`AGE_IDENTITY` bootstrap flow. Use HTTPS; HTTP is accepted only for loopback
-tests. Connection discovery exposes names and base URLs, never tokens. Grant
-the service account read access only to the pages intended for indexing.
-The indexed snapshot reflects that account's access, not the requesting
-Mattermost user's Confluence permissions. Only `auth_type: basic` is supported;
-other authentication types, including bearer, are rejected by configuration
-validation. Confluence Data Center is not certified by this implementation.
+token or URL. Cloud connections require a base URL ending in `/wiki` and basic
+authentication with the service account's email and API token. Data Center
+connections keep the configured context path (for example `/confluence`) and
+default to `auth_type: bearer` with a personal access token; `auth_type: basic`
+with a `username` is also accepted. Keep tokens age-encrypted; the indexer
+resolves them using the existing `AGE_IDENTITY` bootstrap flow. Use HTTPS; HTTP
+is accepted only for loopback tests. Connection discovery exposes names and
+base URLs, never tokens. Grant the service account read access only to the
+pages intended for indexing. The indexed snapshot reflects that account's
+access, not the requesting Mattermost user's Confluence permissions. Cloud uses
+the REST v2 page APIs; Data Center uses REST v1 content APIs and walks child
+pages from each configured root.
 
 ### Platform config file
 

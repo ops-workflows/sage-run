@@ -26,6 +26,9 @@ async def source_client(async_engine, monkeypatch):
             "other-wiki": ConfluenceConnection(
                 "other-wiki", "https://other.atlassian.net/wiki", "other-email", "other-token"
             ),
+            "dc-wiki": ConfluenceConnection(
+                "dc-wiki", "https://atlas.example/confluence", "", "dc-token", "bearer", "data_center"
+            ),
         },
     )
     monkeypatch.setattr(
@@ -86,8 +89,25 @@ async def test_confluence_normalized_source_and_redacted_connections(source_clie
     assert connections.status_code == 200
     assert connections.json() == [
         {"name": "corporate-wiki", "base_url": "https://company.atlassian.net/wiki"},
+        {"name": "dc-wiki", "base_url": "https://atlas.example/confluence"},
         {"name": "other-wiki", "base_url": "https://other.atlassian.net/wiki"},
     ]
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "https://atlas.example/confluence/spaces/OPS/pages/123/Runbooks",
+        "https://atlas.example/confluence/pages/viewpage.action?pageId=123",
+    ],
+)
+async def test_data_center_page_urls_resolve_against_context_path(source_client, root):
+    payload = confluence_payload()
+    payload["credential_ref"] = "dc-wiki"
+    payload["source_config"]["root_pages"] = [root]
+    response = await source_client.post("/api/platform/knowledge-sources", json=payload)
+    assert response.status_code == 201, response.text
+    assert response.json()["source_config"]["root_page_ids"] == ["123"]
 
 
 @pytest.mark.parametrize(

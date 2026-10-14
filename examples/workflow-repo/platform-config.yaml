@@ -67,6 +67,12 @@ confluence:
       auth_type: basic
       username: knowledge-reader@example.com
       token_secret: CONFLUENCE_TEAM_TOKEN
+    # Confluence Data Center uses its context path and a personal access token:
+    # corporate-wiki:
+    #   deployment: data_center
+    #   base_url: https://confluence.example.com/confluence
+    #   auth_type: bearer
+    #   token_secret: CONFLUENCE_DC_TOKEN
 
 # Use the same endpoint/model as Hindsight, with its verified output dimension.
 # 0 leaves hybrid indexing unconfigured; deployment env overrides this section.

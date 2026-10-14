@@ -258,3 +258,113 @@ def test_oversized_code_and_table_blocks_respect_token_and_character_limits(body
     chunks = chunk_document(document, "Title", max_chars=150, max_tokens=30, overlap_chars=20)
     assert len(chunks) > 2
     assert all(len(chunk.lexical_text) <= 90 and chunk.estimated_tokens <= 30 for chunk in chunks)
+
+
+def data_center_connection():
+    return SimpleNamespace(
+        base_url="https://atlas.example/confluence",
+        username="",
+        token="pat",
+        auth_type="bearer",
+        deployment="data_center",
+    )
+
+
+def dc_page(page_id, title, version, *parents):
+    return {
+        "id": page_id,
+        "type": "page",
+        "status": "current",
+        "title": title,
+        "version": {"number": version},
+        "ancestors": [{"id": parent} for parent in parents],
+        "_links": {"webui": f"/spaces/OPS/pages/{page_id}/{title}"},
+    }
+
+
+async def test_data_center_discovery_walks_child_pages_with_context_relative_links():
+    requests = []
+    children = {
+        "1": [dc_page("2", "Child", 4, "9", "1")],
+        "2": [dc_page("3", "Grandchild", 7, "9", "1", "2")],
+        "3": [],
+    }
+
+    def handler(request):
+        requests.append(request)
+        assert request.headers["Authorization"] == "Bearer pat"
+        path = request.url.path
+        if path == "/confluence/rest/api/content/1":
+            assert request.url.params["expand"] == "version,ancestors"
+            return httpx.Response(200, json=dc_page("1", "Root", 3, "9"))
+        parent = path.split("/")[-3]
+        results = children[parent]
+        if parent == "1" and "start" not in request.url.params:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [],
+                    "_links": {"next": "/rest/api/content/1/child/page?expand=version%2Cancestors&limit=100&start=1"},
+                },
+            )
+        return httpx.Response(200, json={"results": results, "_links": {"context": "/confluence"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await ConfluenceClient(data_center_connection(), client).discover(["1"])
+
+    assert [(page.page_id, page.provider_revision) for page in snapshot.pages] == [("1", "3"), ("2", "4"), ("3", "7")]
+    assert snapshot.pages[2].hierarchy_path == ("Root", "Child")
+    assert snapshot.pages[2].parent_id == "2"
+    assert snapshot.pages[1].canonical_url == "https://atlas.example/confluence/spaces/OPS/pages/2/Child"
+    assert all(request.url.host == "atlas.example" for request in requests)
+    assert all(request.url.path.startswith("/confluence/rest/api/content/") for request in requests)
+    assert len(requests) == 5
+
+
+@pytest.mark.parametrize(
+    "next_link",
+    [
+        "//evil.example/confluence/rest/api/content/1/child/page",
+        "https://evil.example/confluence/rest/api/content/1/child/page",
+        "/rest/api/content/1/child/attachment",
+        "/rest/api/content/1/%63hild/page",
+    ],
+)
+async def test_data_center_pagination_rejects_untrusted_destinations(next_link):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path.endswith("/child/page"):
+            return httpx.Response(200, json={"results": [], "_links": {"next": next_link}})
+        return httpx.Response(200, json=dc_page("1", "Root", 1))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ConfluenceSecurityError):
+            await ConfluenceClient(data_center_connection(), client).discover(["1"])
+    assert len(requests) == 2
+
+
+async def test_data_center_fetch_body_uses_rest_v1_storage_expansion():
+    page = PageMetadata("2", "4", "Child", "https://atlas.example/confluence/spaces/OPS/pages/2", (), "1")
+
+    def handler(request):
+        assert request.url.path == "/confluence/rest/api/content/2"
+        assert request.url.params["expand"] == "body.storage,version"
+        return httpx.Response(
+            200,
+            json={"id": "2", "status": "current", "version": {"number": 4}, "body": {"storage": {"value": "<p>x</p>"}}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert await ConfluenceClient(data_center_connection(), client).fetch_body(page) == "<p>x</p>"
+
+
+async def test_data_center_basic_authentication_requires_username():
+    config = data_center_connection()
+    config.auth_type = "basic"
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ValueError, match="Data Center requires bearer"):
+            ConfluenceClient(config, client)
+        config.username = "svc"
+        assert ConfluenceClient(config, client).base_url == "https://atlas.example/confluence"

@@ -83,6 +83,7 @@ class ConfluenceConnection:
     username: str
     token: str = field(repr=False)
     auth_type: str = "basic"
+    deployment: str = "cloud"
 
 
 class _KnowledgeConfigSection(BaseModel):
@@ -196,9 +197,17 @@ def load_confluence_connections(path: str, *, identity: str | None = None) -> di
             continue
         base_url = _confluence_base_url(str(raw_connection.get("base_url") or "").strip(), name)
         username = str(raw_connection.get("username") or "").strip()
-        auth_type = str(raw_connection.get("auth_type") or "basic").strip().lower()
-        if auth_type != "basic" or not username:
+        deployment = str(raw_connection.get("deployment") or "cloud").strip().lower()
+        if deployment not in {"cloud", "data_center"}:
+            raise ValueError(f"confluence.connections.{name}.deployment must be cloud or data_center")
+        default_auth = "bearer" if deployment == "data_center" else "basic"
+        auth_type = str(raw_connection.get("auth_type") or default_auth).strip().lower()
+        if deployment == "cloud" and (auth_type != "basic" or not username):
             raise ValueError(f"confluence.connections.{name} requires basic authentication and a username")
+        if deployment == "data_center" and not (auth_type == "bearer" or (auth_type == "basic" and username)):
+            raise ValueError(
+                f"confluence.connections.{name} requires bearer authentication, or basic authentication with a username"
+            )
         token_secret = str(raw_connection.get("token_secret") or "").strip()
         token = ""
         if token_secret and identity:
@@ -208,7 +217,12 @@ def load_confluence_connections(path: str, *, identity: str | None = None) -> di
             else:
                 logger.warning("confluence.connections.%s references a missing token secret in %s", name, path)
         connections[name] = ConfluenceConnection(
-            name=name, base_url=base_url, username=username, token=token, auth_type=auth_type
+            name=name,
+            base_url=base_url,
+            username=username,
+            token=token,
+            auth_type=auth_type,
+            deployment=deployment,
         )
     return connections
 

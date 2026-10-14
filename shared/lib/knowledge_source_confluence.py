@@ -1,4 +1,4 @@
-"""Bounded Confluence Cloud discovery and deterministic storage-body processing."""
+"""Bounded Confluence Cloud and Data Center discovery and deterministic storage-body processing."""
 
 from __future__ import annotations
 
@@ -267,6 +267,23 @@ def chunk_document(
     return tuple(chunks)
 
 
+class _BearerAuth(httpx.Auth):
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self._token}"
+        yield request
+
+
+def _data_center_page(item: dict[str, Any]) -> dict[str, Any]:
+    """Map a Data Center REST v1 page onto the Cloud v2 fields discovery relies on."""
+    ancestors = item.get("ancestors")
+    parent = ancestors[-1] if isinstance(ancestors, list) and ancestors else None
+    parent_id = parent.get("id") if isinstance(parent, dict) else None
+    return {**item, "parentId": str(parent_id) if parent_id is not None else None}
+
+
 class ConfluenceClient:
     """Client ownership remains with the caller; redirects are never followed."""
 
@@ -297,10 +314,21 @@ class ConfluenceClient:
             or base.fragment
         ):
             raise ValueError("Confluence requires an HTTPS origin without credentials")
-        if base.path.rstrip("/") not in {"", "/wiki"}:
-            raise ValueError("Confluence Cloud base URL must use /wiki")
-        if connection.auth_type != "basic" or not connection.username:
-            raise ValueError("Confluence requires basic authentication and a username")
+        deployment = getattr(connection, "deployment", "cloud")
+        if deployment == "cloud":
+            if base.path.rstrip("/") not in {"", "/wiki"}:
+                raise ValueError("Confluence Cloud base URL must use /wiki")
+            if connection.auth_type != "basic" or not connection.username:
+                raise ValueError("Confluence requires basic authentication and a username")
+            self.base_url = f"{base.scheme}://{base.netloc}/wiki"
+        elif deployment == "data_center":
+            if not (connection.auth_type == "bearer" or (connection.auth_type == "basic" and connection.username)):
+                raise ValueError(
+                    "Confluence Data Center requires bearer authentication, or basic authentication with a username"
+                )
+            self.base_url = f"{base.scheme}://{base.netloc}{base.path.rstrip('/')}"
+        else:
+            raise ValueError("Unsupported Confluence deployment")
         if (
             min(concurrency, max_pages, max_body_chars, timeout_sec) <= 0
             or retries < 0
@@ -309,9 +337,14 @@ class ConfluenceClient:
             or not math.isfinite(max_retry_delay)
         ):
             raise ValueError("Invalid Confluence bounds")
-        self.base_url = f"{base.scheme}://{base.netloc}/wiki"
+        self.deployment = deployment
+        self.base_path = urlsplit(self.base_url).path
         self.client = client
-        self.auth = httpx.BasicAuth(connection.username, connection.token)
+        self.auth: httpx.Auth = (
+            _BearerAuth(connection.token)
+            if connection.auth_type == "bearer"
+            else httpx.BasicAuth(connection.username, connection.token)
+        )
         self.headers = {"Accept": "application/json"}
         self.semaphore = asyncio.Semaphore(concurrency)
         self.concurrency = concurrency
@@ -325,7 +358,11 @@ class ConfluenceClient:
 
     def _url(self, link: str, expected_path: str, *, current_url: str | None = None) -> str:
         try:
-            url = urljoin(current_url or self.base_url + "/", link)
+            # Data Center returns pagination and UI links relative to its context path.
+            if self.deployment == "data_center" and link.startswith("/") and not link.startswith("//"):
+                url = self.base_url + link
+            else:
+                url = urljoin(current_url or self.base_url + "/", link)
             parsed, origin = urlsplit(url), urlsplit(self.base_url)
             same_origin = (
                 parsed.scheme,
@@ -415,13 +452,16 @@ class ConfluenceClient:
         skipped = 0
         warnings: list[str] = []
         for root_id in roots:
-            root = await self._get(f"{self.base_url}/api/v2/pages/{root_id}", root=True)
+            root = await self._get_page(root_id, root=True)
             if root is None or root.get("status", "current") != "current":
                 raise ConfluenceSecurityError("Configured Confluence root is not current")
             metadata[root_id] = root
             items[root_id] = {**root, "type": "page"}
             owners[root_id] = root_id
             if not include_descendants:
+                continue
+            if self.deployment == "data_center":
+                await self._discover_data_center_children(root_id, items, owners, metadata, warnings)
                 continue
             endpoint = f"/wiki/api/v2/pages/{root_id}/descendants"
             url: str | None = f"{self.base_url}/api/v2/pages/{root_id}/descendants?limit=100"
@@ -468,7 +508,7 @@ class ConfluenceClient:
             warnings.append(f"Skipped {skipped} non-current or unsupported descendants")
 
         async def fetch(page_id: str) -> tuple[str, dict[str, Any] | None]:
-            return page_id, await self._get(f"{self.base_url}/api/v2/pages/{page_id}", root=page_id in roots)
+            return page_id, await self._get_page(page_id, root=page_id in roots)
 
         for offset in range(0, len(page_ids), self.concurrency):
             batch = [page_id for page_id in page_ids[offset : offset + self.concurrency] if page_id not in metadata]
@@ -497,9 +537,14 @@ class ConfluenceClient:
                 raise ConfluenceError("Confluence hierarchy cycle")
             webui = page.get("_links", {}).get("webui")
             if webui and isinstance(webui, str):
-                if webui.startswith("/spaces/") or webui.startswith("/pages/"):
-                    webui = "/wiki" + webui
-                canonical = urljoin(self.base_url + "/", webui)
+                if self.deployment == "data_center" and webui.startswith("/") and not webui.startswith("//"):
+                    canonical = self.base_url + webui
+                else:
+                    if webui.startswith("/spaces/") or webui.startswith("/pages/"):
+                        webui = "/wiki" + webui
+                    canonical = urljoin(self.base_url + "/", webui)
+            elif self.deployment == "data_center":
+                canonical = f"{self.base_url}/pages/viewpage.action?pageId={page_id}"
             else:
                 canonical = f"{self.base_url}/pages/{page_id}"
             if (
@@ -520,11 +565,81 @@ class ConfluenceClient:
             )
         return SourceSnapshot(tuple(pages), tuple(warnings), skipped)
 
+    async def _get_page(self, page_id: str, *, root: bool) -> dict[str, Any] | None:
+        if self.deployment == "data_center":
+            page = await self._get(f"{self.base_url}/rest/api/content/{page_id}?expand=version,ancestors", root=root)
+            return _data_center_page(page) if page is not None else None
+        return await self._get(f"{self.base_url}/api/v2/pages/{page_id}", root=root)
+
+    async def _data_center_children(self, parent_id: str, *, root: bool) -> list[dict[str, Any]] | None:
+        endpoint = f"{self.base_path}/rest/api/content/{parent_id}/child/page"
+        url: str | None = f"{self.base_url}/rest/api/content/{parent_id}/child/page?limit=100&expand=version,ancestors"
+        visited: set[str] = set()
+        children: list[dict[str, Any]] = []
+        while url:
+            url = self._url(url, endpoint)
+            if url in visited or len(visited) >= self.max_pages:
+                raise ConfluenceLimitError("Confluence pagination cycle or limit exceeded")
+            visited.add(url)
+            response = await self._get(url, root=root)
+            if response is None:
+                return None
+            if not isinstance(response.get("results"), list):
+                raise ConfluenceError("Malformed Confluence children")
+            for item in response["results"]:
+                if not isinstance(item, dict) or not re.fullmatch(r"[0-9]+", str(item.get("id", ""))):
+                    raise ConfluenceError("Malformed Confluence child ID")
+                children.append(_data_center_page(item))
+            if len(children) > self.max_pages:
+                raise ConfluenceLimitError("Confluence discovery limit exceeded")
+            next_link = response.get("_links", {}).get("next")
+            if next_link is not None and not isinstance(next_link, str):
+                raise ConfluenceError("Malformed Confluence pagination link")
+            url = self._url(next_link, endpoint, current_url=url) if next_link else None
+        return children
+
+    async def _discover_data_center_children(
+        self,
+        root_id: str,
+        items: dict[str, dict[str, Any]],
+        owners: dict[str, str],
+        metadata: dict[str, dict[str, Any]],
+        warnings: list[str],
+    ) -> None:
+        # Walk child/page level by level; descendant/page fails on large Data Center spaces.
+        frontier = [root_id]
+        while frontier:
+            next_frontier: list[str] = []
+            for offset in range(0, len(frontier), self.concurrency):
+                batch = frontier[offset : offset + self.concurrency]
+                results = await asyncio.gather(
+                    *(self._data_center_children(parent_id, root=parent_id == root_id) for parent_id in batch)
+                )
+                for parent_id, children in zip(batch, results, strict=True):
+                    if children is None:
+                        if len(warnings) < 100:
+                            warnings.append(f"Omitted children of inaccessible page {parent_id}")
+                        continue
+                    for child in children:
+                        page_id = str(child["id"])
+                        if page_id in items:
+                            continue
+                        items[page_id] = child
+                        owners.setdefault(page_id, root_id)
+                        if child.get("type") == "page" and child.get("status", "current") == "current":
+                            metadata[page_id] = child
+                        next_frontier.append(page_id)
+                        if len(items) > self.max_pages:
+                            raise ConfluenceLimitError("Confluence discovery limit exceeded")
+            frontier = next_frontier
+
     async def fetch_body(self, page: PageMetadata) -> str | None:
-        response = await self._get(
-            f"{self.base_url}/api/v2/pages/{page.page_id}?body-format=storage",
-            root=page.page_id == page.root_page_id,
+        url = (
+            f"{self.base_url}/rest/api/content/{page.page_id}?expand=body.storage,version"
+            if self.deployment == "data_center"
+            else f"{self.base_url}/api/v2/pages/{page.page_id}?body-format=storage"
         )
+        response = await self._get(url, root=page.page_id == page.root_page_id)
         if response is None:
             return None
         if response.get("status", "current") != "current":

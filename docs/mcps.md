@@ -132,7 +132,7 @@ both services. Missing lists then grant no access. Every source operation,
 including listing and graph tools, must apply the same workflow authorization.
 See [Workflow Authoring](workflow-authoring.md#knowledge-source-access) for
 source-create and workflow examples. Deployment validation does not certify
-provider relevance/latency or Confluence Data Center compatibility.
+provider relevance or latency.
 
 ### `platform` — platform self-service
 
