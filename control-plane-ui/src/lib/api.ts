@@ -159,6 +159,7 @@ export interface SessionDetail {
   duration_sec: number | null;
   tokens_input: number | null;
   tokens_output: number | null;
+  cost_usd?: number | null;
   turns: number | null;
   task: Task | null;
   tools_used: Array<{ name: string; count: number; total_duration: number }>;

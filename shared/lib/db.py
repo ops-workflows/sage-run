@@ -116,6 +116,7 @@ async def ensure_runtime_schema() -> None:
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS initiator TEXT"))
         await conn.execute(text("ALTER TABLE control_plane.sessions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE control_plane.sessions ADD COLUMN IF NOT EXISTS cost_usd FLOAT"))
         await conn.execute(
             text("ALTER TABLE control_plane.session_events ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
         )

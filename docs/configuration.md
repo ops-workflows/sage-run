@@ -508,7 +508,9 @@ the chat model.
 Claude Code prices models it does not know at its default Anthropic model's
 rate, so `total_cost_usd` for self-hosted models is wrong unless the profile
 declares `model_costs`. The runtime writes those prices into Claude Code's
-`~/.claude.json` model-cost cache before each session. This cache is an
+`~/.claude.json` model-cost cache before each session. The resulting estimate
+is stored as `control_plane.sessions.cost_usd` and shown in the session trace
+usage tooltip. This cache is an
 undocumented Claude Code internal, so re-check cost reporting after CLI
 upgrades. The model gateway's own spend log remains the billing source.
 

@@ -160,6 +160,7 @@ class Session(Base):
     duration_sec: Mapped[float | None] = mapped_column(Float)
     tokens_input: Mapped[int] = mapped_column(Integer, default=0)
     tokens_output: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
     turns: Mapped[int] = mapped_column(Integer, default=0)
     tools_used: Mapped[list] = mapped_column(JSONB, default=list)
     subagents_used: Mapped[list] = mapped_column(JSONB, default=list)

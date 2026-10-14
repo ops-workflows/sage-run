@@ -230,6 +230,27 @@ async def test_session_detail_endpoint_returns_parsed_trace(
 
 
 @pytest.mark.asyncio
+async def test_session_detail_endpoint_returns_session_cost(
+    async_engine, fixture_workflows_dir: Path, db_session
+) -> None:
+    from shared.lib.models import Session, Task
+
+    task = Task(id=uuid.uuid4(), workflow="platform-test", prompt="Investigate alert", status="succeeded")
+    db_session.add(task)
+    await db_session.commit()
+    db_session.add(
+        Session(task_id=task.id, status="succeeded", tokens_input=17639, tokens_output=18, cost_usd=0.00097425)
+    )
+    await db_session.commit()
+
+    async with await _make_client(fixture_workflows_dir) as client:
+        response = await client.get(f"/api/sessions/{task.id}")
+
+    assert response.status_code == 200
+    assert response.json()["cost_usd"] == pytest.approx(0.00097425)
+
+
+@pytest.mark.asyncio
 async def test_unknown_route_returns_404(async_engine, fixture_workflows_dir: Path) -> None:
     async with await _make_client(fixture_workflows_dir) as client:
         resp = await client.get("/definitely-not-a-route")

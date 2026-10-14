@@ -96,6 +96,7 @@ CREATE TABLE control_plane.sessions (
     duration_sec    FLOAT,
     tokens_input    INT DEFAULT 0,
     tokens_output   INT DEFAULT 0,
+    cost_usd        FLOAT,
     turns           INT DEFAULT 0,
     tools_used      JSONB DEFAULT '[]',
     subagents_used  JSONB DEFAULT '[]',

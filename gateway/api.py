@@ -161,6 +161,7 @@ class SessionDetailResponse(BaseModel):
     duration_sec: float | None
     tokens_input: int | None = None
     tokens_output: int | None = None
+    cost_usd: float | None = None
     turns: int | None = None
     task: TaskResponse | None = None
     tools_used: list = Field(default_factory=list)
@@ -1836,6 +1837,7 @@ async def get_session_detail(task_id: str):
         duration_sec=sess.duration_sec if sess else (task.duration_sec if task else None),
         tokens_input=sess.tokens_input if sess else None,
         tokens_output=sess.tokens_output if sess else None,
+        cost_usd=sess.cost_usd if sess else None,
         turns=sess.turns if sess else None,
         task=(_task_response(task) if task else None),
         tools_used=sess.tools_used if sess else [],

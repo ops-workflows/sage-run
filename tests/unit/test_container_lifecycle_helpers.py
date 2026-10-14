@@ -19,6 +19,7 @@ from session_manager.container_lifecycle import (
     _cleanup_stale_container_name,
     _get_agent_env_vars,
     _get_session_model_selector,
+    _lifecycle_cost_usd,
     _load_active_release,
     _resolve_plugin_mount,
     _resolve_workflow_bundle,
@@ -37,6 +38,21 @@ def test_agent_env_vars_coerces_scalars_to_strings():
     cfg = {"env": {"A": 1, "B": True, "C": "value", "D": 3.14}}
     env = _get_agent_env_vars(cfg)
     assert env == {"A": "1", "B": "True", "C": "value", "D": "3.14"}
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"total_cost_usd": 0.00097425}, 0.00097425),
+        ({"total_cost_usd": 0}, 0.0),
+        ({}, None),
+        ({"total_cost_usd": "0.1"}, None),
+        ({"total_cost_usd": True}, None),
+        ({"total_cost_usd": -1}, None),
+    ],
+)
+def test_lifecycle_cost_usd(data, expected):
+    assert _lifecycle_cost_usd(data) == expected
 
 
 def test_agent_env_vars_skips_none_and_non_scalar():

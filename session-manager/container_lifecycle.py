@@ -91,6 +91,14 @@ def _apply_runtime_env_overrides(environment: dict[str, str], overrides: dict[st
         environment[env_name] = value
 
 
+def _lifecycle_cost_usd(lifecycle_data: dict) -> float | None:
+    """Return Claude Code's reported session cost, or None when absent or invalid."""
+    value = lifecycle_data.get("total_cost_usd")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return float(value)
+
+
 def _get_session_model_selector(agent_config: dict) -> str | None:
     """Return the workflow's model selector or direct model override."""
     session_config = agent_config.get("session", {})
@@ -462,6 +470,7 @@ async def monitor_containers() -> None:
                             input_tok = 0
                             output_tok = 0
                             turns = 0
+                            cost_usd: float | None = None
 
                             # Read the latest session_complete payload first so we can
                             # persist the final result text onto the task record.
@@ -495,6 +504,7 @@ async def monitor_containers() -> None:
                                 input_tok = int(lifecycle_data.get("input_tokens", 0) or 0)
                                 output_tok = int(lifecycle_data.get("output_tokens", 0) or 0)
                                 turns = int(lifecycle_data.get("turns", 0) or 0)
+                                cost_usd = _lifecycle_cost_usd(lifecycle_data)
 
                             if db_session and db_session.started:
                                 ended_at = datetime.now(UTC)
@@ -547,6 +557,7 @@ async def monitor_containers() -> None:
                                     .values(
                                         tokens_input=input_tok,
                                         tokens_output=output_tok,
+                                        cost_usd=cost_usd,
                                         turns=turns,
                                     )
                                 )

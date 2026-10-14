@@ -489,10 +489,12 @@ function TokenStat({
   total,
   input,
   output,
+  cost,
 }: {
   total: number | string;
   input?: string;
   output?: string;
+  cost?: string;
 }) {
   const hasTooltip = true;
   const totalDisplay = formatCompactTokenTotal(total);
@@ -534,9 +536,21 @@ function TokenStat({
               Observed total only
             </div>
           )}
+          {cost && (
+            <div className="mt-1 flex items-baseline gap-2 text-xs">
+              <span className="font-semibold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
+                COST:
+              </span>
+              <span className="font-mono text-[var(--color-text-primary)]">
+                {cost}
+              </span>
+            </div>
+          )}
           <p className="mt-2 max-w-[240px] text-[10px] leading-relaxed text-[var(--color-text-tertiary)]">
             Cumulative observed token usage across the coordinator and
             subagents. This is not context-window occupancy.
+            {cost &&
+              ' Cost is estimated from the configured model prices.'}
           </p>
         </div>
       )}
@@ -890,6 +904,11 @@ export default function SessionDetailPage() {
       : task.status === 'lost' || sessionDetail.status === 'running'
         ? 'n/a'
         : '0';
+  const costUsd = sessionDetail.cost_usd;
+  const costDisplay =
+    costUsd != null && costUsd > 0
+      ? `$${costUsd.toFixed(costUsd < 1 ? 4 : 2)}`
+      : undefined;
   const avgHeartbeatGap =
     heartbeats.length > 1
       ? Math.round(
@@ -1005,6 +1024,7 @@ export default function SessionDetailPage() {
             total={totalTokensDisplay}
             input={hasFinalTokenTotals ? inputTokensDisplay : undefined}
             output={hasFinalTokenTotals ? outputTokensDisplay : undefined}
+            cost={costDisplay}
           />
         </div>
       </header>
