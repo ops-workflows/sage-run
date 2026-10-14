@@ -36,6 +36,39 @@ export default function KnowledgeSourceDetailPage() {
   const currentVersion = versions.find(
     (version) => version.id === source?.current_successful_version_id,
   );
+  const history = [
+    ...runs.map((run) => ({
+      id: run.id,
+      trigger: run.trigger,
+      startedAt: run.started_at,
+      status: run.status,
+      duration: run.duration_sec,
+      version: versions.find(
+        (version) => version.id === run.knowledge_source_version_id,
+      ),
+      error: run.error,
+      warnings: run.warnings,
+    })),
+    ...versions
+      .filter(
+        (version) =>
+          !runs.some((run) => run.knowledge_source_version_id === version.id),
+      )
+      .map((version) => ({
+        id: version.id,
+        trigger: 'Version',
+        startedAt: version.created_at,
+        status: version.status,
+        duration: null,
+        version,
+        error: version.error,
+        warnings: version.warnings.map(String),
+      })),
+  ].sort(
+    (first, second) =>
+      new Date(second.startedAt).getTime() -
+      new Date(first.startedAt).getTime(),
+  );
 
   const syncActive = runs.some(
     (run) => run.status === 'queued' || run.status === 'running',
@@ -136,10 +169,9 @@ export default function KnowledgeSourceDetailPage() {
             {source.display_name}
           </h1>
           <p className="mt-2 break-words text-sm text-[var(--color-text-tertiary)]">
-            {source.canonical_alias} ·{' '}
             {source.source_kind === 'github'
-              ? 'GitHub / Code graph'
-              : 'Confluence / Hybrid search'}
+              ? `${source.source_config.repository_url} · ${source.source_config.default_ref}`
+              : `${source.canonical_alias} · Confluence / Hybrid search`}
             {currentVersion
               ? ` · Current index: ${currentVersion.source_revision?.slice(0, 12) || 'Unknown revision'}`
               : ' · No promoted index yet'}
@@ -177,12 +209,6 @@ export default function KnowledgeSourceDetailPage() {
       {!source.enabled ? (
         <p className="text-sm text-[var(--color-warning)]">Source disabled</p>
       ) : null}
-      {currentVersion ? (
-        <section>
-          <h2 className="mb-3 text-lg font-medium">Current version</h2>
-          <VersionMetrics version={currentVersion} />
-        </section>
-      ) : null}
       <section>
         <h2 className="mb-3 text-lg font-medium">Configuration</h2>
         <KnowledgeSourceForm
@@ -199,76 +225,62 @@ export default function KnowledgeSourceDetailPage() {
       <section>
         <h2 className="mb-3 text-lg font-medium">Sync history</h2>
         <div className="divide-y divide-ops-border border-y border-ops-border">
-          {runs.map((run) => {
-            const version = versions.find(
-              (item) => item.id === run.knowledge_source_version_id,
-            );
+          {history.map((entry) => {
+            const version = entry.version;
+            const entryError = entry.error || version?.error;
+            const warnings = [
+              ...new Set([
+                ...entry.warnings,
+                ...(version?.warnings.map(String) || []),
+              ]),
+            ];
             return (
               <div
-                key={run.id}
+                key={entry.id}
                 className="grid gap-2 py-4 text-sm sm:grid-cols-[1fr_auto]"
               >
                 <div>
-                  <span className="font-medium capitalize">{run.trigger}</span>
-                  <span className="ml-3 text-[var(--color-text-tertiary)]">
-                    {new Date(run.started_at).toLocaleString()}
+                  <span className="font-medium capitalize">
+                    {entry.trigger}
                   </span>
+                  <span className="ml-3 text-[var(--color-text-tertiary)]">
+                    {new Date(entry.startedAt).toLocaleString()}
+                  </span>
+                  {version?.id === source.current_successful_version_id ? (
+                    <span className="ml-3 text-[var(--color-text-secondary)]">
+                      Current
+                    </span>
+                  ) : null}
                 </div>
                 <div>
-                  {run.status} ·{' '}
-                  {run.duration_sec === null
-                    ? 'pending'
-                    : `${run.duration_sec.toFixed(1)}s`}
+                  {entry.status}
+                  {entry.duration !== null
+                    ? ` · ${entry.duration.toFixed(1)}s`
+                    : ''}
                 </div>
                 {version ? (
                   <div className="sm:col-span-2">
                     <VersionMetrics version={version} />
                   </div>
                 ) : null}
-                {run.error ? (
-                  <p className="text-[var(--color-error)] sm:col-span-2">
-                    {run.error}
+                {entryError ? (
+                  <p className="break-words text-[var(--color-error)] sm:col-span-2">
+                    {entryError}
                   </p>
                 ) : null}
-                {run.warnings.length > 0 ? (
+                {warnings.length > 0 ? (
                   <p className="break-words text-[var(--color-warning)] sm:col-span-2">
-                    {run.warnings.join('; ')}
+                    {warnings.join('; ')}
                   </p>
                 ) : null}
               </div>
             );
           })}
-          {runs.length === 0 ? (
+          {history.length === 0 ? (
             <p className="py-6 text-sm text-[var(--color-text-tertiary)]">
               No sync attempts yet.
             </p>
           ) : null}
-        </div>
-      </section>
-      <section>
-        <h2 className="mb-3 text-lg font-medium">Version history</h2>
-        <div className="divide-y divide-ops-border border-y border-ops-border">
-          {versions.map((version) => (
-            <article key={version.id} className="space-y-2 py-4">
-              <p className="text-sm">
-                {new Date(version.created_at).toLocaleString()}
-                {version.id === source.current_successful_version_id
-                  ? ' · Current'
-                  : ''}
-              </p>
-              <VersionMetrics version={version} />
-              {version.error ? (
-                <p className="break-words text-sm text-[var(--color-error)]">
-                  {version.error}
-                </p>
-              ) : null}
-              {version.warnings.length ? (
-                <p className="break-words text-xs text-[var(--color-warning)]">
-                  {version.warnings.map(String).join('; ')}
-                </p>
-              ) : null}
-            </article>
-          ))}
         </div>
       </section>
     </div>
@@ -277,39 +289,32 @@ export default function KnowledgeSourceDetailPage() {
 
 function VersionMetrics({ version }: { version: KnowledgeSourceVersion }) {
   return (
-    <div className="space-y-2 text-xs text-[var(--color-text-secondary)]">
-      <p className="break-all font-mono">
-        {version.source_revision || version.commit_sha || 'Unknown revision'} ·{' '}
-        {version.index_kind === 'code_graph' ? 'Graphify' : 'Hybrid index'}{' '}
-        {version.indexer_version || version.graphify_version}
-      </p>
-      <p className="break-all font-mono">
-        Config: {version.index_config_hash || 'Unavailable'}
-      </p>
+    <p className="break-words font-mono text-xs text-[var(--color-text-tertiary)]">
+      {version.source_revision?.slice(0, 12) || 'Unknown revision'} ·{' '}
+      {version.index_kind === 'code_graph' ? 'Graphify' : 'Hybrid index'}{' '}
+      {version.indexer_version || version.graphify_version}
       {version.index_kind === 'code_graph' ? (
-        <p>
+        <>
+          {' · '}
           {version.file_count} files · {version.node_count} nodes ·{' '}
           {version.edge_count} edges
-        </p>
+        </>
       ) : (
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
-          {Object.entries(version.stats)
-            .filter(
-              ([, value]) =>
-                typeof value === 'number' || typeof value === 'string',
-            )
-            .map(([name, value]) => (
-              <div key={name} className="min-w-0">
-                <dt className="break-words capitalize">
-                  {name.replaceAll('_', ' ')}
-                </dt>
-                <dd className="break-words font-mono text-[var(--color-text-primary)]">
-                  {String(value)}
-                </dd>
-              </div>
-            ))}
-        </dl>
+        <>
+          {typeof version.stats.indexed_pages === 'number'
+            ? ` · ${version.stats.indexed_pages} pages`
+            : ''}
+          {typeof version.stats.chunk_count === 'number'
+            ? ` · ${version.stats.chunk_count} chunks`
+            : ''}
+          {typeof version.stats.chunks_embedded === 'number'
+            ? ` · ${version.stats.chunks_embedded} embedded`
+            : ''}
+          {typeof version.stats.chunks_reused === 'number'
+            ? ` · ${version.stats.chunks_reused} reused`
+            : ''}
+        </>
       )}
-    </div>
+    </p>
   );
 }

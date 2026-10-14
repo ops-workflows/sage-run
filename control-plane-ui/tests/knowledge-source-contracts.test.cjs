@@ -28,6 +28,77 @@ const { MOCK_KNOWLEDGE_SOURCES, MOCK_CONFLUENCE_CONNECTIONS, MOCK_GITHUB_CONNECT
 const { MOCK_BACKGROUND_JOBS } = require('../src/mock-data/background-jobs.ts');
 const { handleMockApiRequest } = require('../src/mock-data/index.ts');
 const { TaskInitiator } = require('../src/components/task-initiator.tsx');
+const { MOCK_KNOWLEDGE_SOURCE_VERSIONS } = require('../src/mock-data/knowledge-sources.ts');
+
+function renderSourceDetail(source, versions, runs) {
+  const originalLoad = Module._load;
+  const originalState = React.useState;
+  const originalEffect = React.useEffect;
+  const states = [source, sourceForm(source), versions, runs, MOCK_GITHUB_CONNECTIONS, MOCK_CONFLUENCE_CONNECTIONS, null, false];
+  try {
+    Module._load = function (request, ...args) {
+      return request === 'next/navigation' ? { useParams: () => ({ sourceId: source.id }) } : originalLoad.call(this, request, ...args);
+    };
+    React.useState = () => [states.shift(), () => {}];
+    React.useEffect = () => {};
+    const DetailPage = require('../src/app/knowledge-sources/[sourceId]/page.tsx').default;
+    return renderToStaticMarkup(React.createElement(DetailPage));
+  } finally {
+    Module._load = originalLoad;
+    React.useState = originalState;
+    React.useEffect = originalEffect;
+  }
+}
+
+test('detail page renders each linked version once in one compact history', () => {
+  for (const source of MOCK_KNOWLEDGE_SOURCES) {
+    const version = structuredClone(MOCK_KNOWLEDGE_SOURCE_VERSIONS[source.id][0]);
+    version.stats.chunk_count = 330;
+    version.stats.scrub_signature = 'internal-scrub-signature';
+    const html = renderSourceDetail(source, [version], [{
+      id: 'sync', trigger: 'manual', started_at: version.created_at, status: 'succeeded', duration_sec: 6,
+      knowledge_source_version_id: version.id, error: null, warnings: [],
+    }]);
+    assert.equal((html.match(/Sync history/g) || []).length, 1);
+    assert.doesNotMatch(html, /Current version|Version history|Config:|internal-scrub-signature/);
+    assert.ok(!html.includes(version.index_config_hash));
+    assert.ok(!html.includes(version.source_revision));
+    assert.equal((html.match(source.index_kind === 'code_graph' ? /Graphify/g : /Hybrid index/g) || []).length, 1);
+    assert.match(html, /Current index:/);
+    assert.match(html, /Current<\/span>/);
+    if (source.source_kind === 'confluence') {
+      assert.match(html, /40 pages · 330 chunks · 18 embedded · 312 reused/);
+    } else {
+      assert.ok(html.includes(source.source_config.repository_url));
+      assert.match(html, /files · .*nodes · .*edges/);
+    }
+  }
+});
+
+test('merged history retains unlinked versions, failures and active syncs in date order', () => {
+  const source = MOCK_KNOWLEDGE_SOURCES.find((item) => item.source_kind === 'confluence');
+  const version = structuredClone(MOCK_KNOWLEDGE_SOURCE_VERSIONS[source.id][0]);
+  const olderVersion = { ...version, id: 'older', source_revision: 'older-snapshot', status: 'failed',
+    created_at: '2026-10-01T08:00:00Z', error: 'Historical failure', warnings: ['Historical warning'] };
+  const html = renderSourceDetail(source, [olderVersion, version], [
+    { id: 'failed', trigger: 'scheduled', started_at: '2026-10-03T08:00:00Z', status: 'failed', duration_sec: 3,
+      knowledge_source_version_id: null, error: 'Provider unavailable', warnings: ['Retry later'] },
+    { id: 'active', trigger: 'manual', started_at: '2026-10-04T08:00:00Z', status: 'queued', duration_sec: null,
+      knowledge_source_version_id: null, error: null, warnings: [] },
+    { id: 'success', trigger: 'manual', started_at: version.created_at, status: 'succeeded', duration_sec: 6,
+      knowledge_source_version_id: version.id, error: null, warnings: ['Shared warning'] },
+  ]);
+  assert.equal((html.match(/Hybrid index/g) || []).length, 2);
+  assert.match(html, /Historical failure/);
+  assert.match(html, /Historical warning/);
+  assert.match(html, /Provider unavailable/);
+  assert.match(html, /Retry later/);
+  assert.match(html, /disabled=""[^>]*>.*?Sync active/);
+  assert.ok(html.indexOf('queued') < html.indexOf('Provider unavailable'));
+  assert.ok(html.indexOf('Provider unavailable') < html.indexOf('Hybrid index'));
+  assert.ok(html.indexOf('Hybrid index') < html.indexOf('older-snapsh'));
+});
+
 const initialSources = structuredClone(MOCK_KNOWLEDGE_SOURCES);
 const initialJobs = structuredClone(MOCK_BACKGROUND_JOBS);
 const originalFetch = global.fetch;
