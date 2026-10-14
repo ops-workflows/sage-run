@@ -549,8 +549,7 @@ function TokenStat({
           <p className="mt-2 max-w-[240px] text-[10px] leading-relaxed text-[var(--color-text-tertiary)]">
             Cumulative observed token usage across the coordinator and
             subagents. This is not context-window occupancy.
-            {cost &&
-              ' Cost is estimated from the configured model prices.'}
+            {cost && ' Cost is estimated from the configured model prices.'}
           </p>
         </div>
       )}
