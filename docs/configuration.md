@@ -505,6 +505,13 @@ endpoint for both clients, but its embedding model must still be an actual
 embedding model exposed by that endpoint; it is configured independently from
 the chat model.
 
+Claude Code prices models it does not know at its default Anthropic model's
+rate, so `total_cost_usd` for self-hosted models is wrong unless the profile
+declares `model_costs`. The runtime writes those prices into Claude Code's
+`~/.claude.json` model-cost cache before each session. This cache is an
+undocumented Claude Code internal, so re-check cost reporting after CLI
+upgrades. The model gateway's own spend log remains the billing source.
+
 ### Compose environment files
 
 For Compose deployments, two files are loaded automatically by the
@@ -585,6 +592,8 @@ model_profiles:      # named env-var bundles selected via agent.yaml session.mod
     CLAUDE_CODE_MAX_CONTEXT_TOKENS: "65536"
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: "65536"
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "90"
+    model_costs:     # optional, USD per million tokens; cache_* default to input
+      some-model-name: {input: 0.15, output: 1, cache_read: 0.05}
 
 memory:
   backend: hindsight

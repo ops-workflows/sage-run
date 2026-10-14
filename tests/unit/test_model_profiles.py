@@ -9,6 +9,7 @@ Validates that:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -77,3 +78,28 @@ model_profiles:
     env = load_platform_runtime_env(str(config), model_selector="local")
     assert env["ANTHROPIC_BASE_URL"] == "http://local-llm:8000"
     assert env["ANTHROPIC_AUTH_TOKEN"] == "omlx-test-token"  # noqa: S105 - test fixture value.
+
+
+def test_model_costs_serialize_to_runtime_env(tmp_path):
+    config = tmp_path / "platform-config.yaml"
+    config.write_text(
+        """
+model_profiles:
+  local:
+    ANTHROPIC_MODEL: qwen
+    model_costs:
+      qwen: {input: 0.15, output: 1, cache_read: 0.05}
+      broken: {input: 0.15}
+""".strip()
+    )
+
+    env = load_platform_runtime_env(str(config), model_selector="local")
+
+    assert env["ANTHROPIC_MODEL"] == "qwen"
+    assert "model_costs" not in env
+    assert json.loads(env["MODEL_COSTS_JSON"]) == {"qwen": {"input": 0.15, "output": 1.0, "cache_read": 0.05}}
+
+
+def test_profile_without_model_costs_sets_no_costs_env():
+    env = load_platform_runtime_env(str(FIXTURE_PLATFORM_CONFIG), model_selector="test")
+    assert "MODEL_COSTS_JSON" not in env

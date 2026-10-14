@@ -18,6 +18,7 @@ without Docker Compose needing to decrypt or template secret values.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -39,6 +40,9 @@ ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
 INLINE_ENV_PLACEHOLDER_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 MODEL_PROFILE_ENV_ALIASES: dict[str, str] = {}
+MODEL_COSTS_ENV_VAR = "MODEL_COSTS_JSON"
+MODEL_COST_REQUIRED_FIELDS = ("input", "output")
+MODEL_COST_OPTIONAL_FIELDS = ("cache_read", "cache_write")
 PLATFORM_GROUPS = (
     "platform-admin",
     "workflow-operator",
@@ -473,13 +477,56 @@ def _resolve_model_runtime_env(data: dict[str, Any], *, selector: str, path: str
     if profile is None:
         return _direct_model_override(selector)
 
-    if isinstance(profile, dict) and isinstance(profile.get("runtime_env"), dict):
-        return _normalize_runtime_env_values(profile["runtime_env"], path=path)
-    if isinstance(profile, dict):
-        return _normalize_runtime_env_values(profile, path=path)
+    if not isinstance(profile, dict):
+        logger.warning("Skipping non-mapping model profile %s in %s", selector, path)
+        return {}
 
-    logger.warning("Skipping non-mapping model profile %s in %s", selector, path)
-    return {}
+    if isinstance(profile.get("runtime_env"), dict):
+        normalized = _normalize_runtime_env_values(profile["runtime_env"], path=path)
+    else:
+        env_values = {key: value for key, value in profile.items() if key != "model_costs"}
+        normalized = _normalize_runtime_env_values(env_values, path=path)
+
+    model_costs = _normalize_model_costs(profile.get("model_costs"), selector=selector, path=path)
+    if model_costs:
+        normalized[MODEL_COSTS_ENV_VAR] = json.dumps(model_costs, sort_keys=True)
+    return normalized
+
+
+def _is_price(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+
+
+def _normalize_model_costs(value: Any, *, selector: str, path: str) -> dict[str, dict[str, float]]:
+    """Validate ``model_costs`` prices (USD per million tokens) keyed by model name."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        logger.warning("Skipping non-mapping model_costs in model profile %s in %s", selector, path)
+        return {}
+
+    costs: dict[str, dict[str, float]] = {}
+    for model, prices in value.items():
+        valid = (
+            isinstance(prices, dict)
+            and all(_is_price(prices.get(field)) for field in MODEL_COST_REQUIRED_FIELDS)
+            and all(prices.get(field) is None or _is_price(prices[field]) for field in MODEL_COST_OPTIONAL_FIELDS)
+        )
+        if not valid:
+            logger.warning(
+                "Skipping model_costs.%s in model profile %s in %s: input and output must be "
+                "non-negative numbers, cache_read/cache_write optional non-negative numbers",
+                model,
+                selector,
+                path,
+            )
+            continue
+        costs[str(model)] = {
+            field: float(prices[field])
+            for field in (*MODEL_COST_REQUIRED_FIELDS, *MODEL_COST_OPTIONAL_FIELDS)
+            if prices.get(field) is not None
+        }
+    return costs
 
 
 def _direct_model_override(model_name: str) -> dict[str, str]:

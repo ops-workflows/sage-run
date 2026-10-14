@@ -543,6 +543,52 @@ def _load_claude_settings() -> dict[str, Any]:
     return _load_json_settings(CLAUDE_SETTINGS_PATH)
 
 
+def _seed_claude_model_costs() -> None:
+    """Price non-Anthropic models in Claude Code's own cost estimate.
+
+    ``MODEL_COSTS_JSON`` carries ``model_profiles.<name>.model_costs`` (USD per
+    million tokens). Claude Code falls back to the default Anthropic model's
+    price for unknown models unless they appear in the undocumented
+    ``additionalModelCostsCache`` of its global ``~/.claude.json``.
+    """
+    raw = os.environ.get("MODEL_COSTS_JSON", "").strip()
+    if not raw:
+        return
+    try:
+        model_costs = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Ignoring invalid MODEL_COSTS_JSON")
+        return
+    if not isinstance(model_costs, dict):
+        logger.warning("Ignoring non-mapping MODEL_COSTS_JSON")
+        return
+
+    cache: dict[str, dict[str, float]] = {}
+    for model, prices in model_costs.items():
+        if not isinstance(prices, dict) or "input" not in prices or "output" not in prices:
+            continue
+        cache[str(model)] = {
+            "inputTokens": prices["input"],
+            "outputTokens": prices["output"],
+            "promptCacheWriteTokens": prices.get("cache_write", prices["input"]),
+            "promptCacheReadTokens": prices.get("cache_read", prices["input"]),
+            "webSearchRequests": 0,
+        }
+    if not cache:
+        return
+
+    config_path = Path.home() / ".claude.json"
+    config = _load_json_settings(config_path)
+    existing = config.get("additionalModelCostsCache")
+    config["additionalModelCostsCache"] = {**(existing if isinstance(existing, dict) else {}), **cache}
+    try:
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+    except OSError as exc:
+        logger.warning("Could not write model costs to %s: %s", config_path, exc)
+        return
+    logger.info("Seeded Claude Code model costs for: %s", ", ".join(sorted(cache)))
+
+
 def _load_project_mcp_servers_config() -> dict[str, Any] | None:
     """Return the staged ``.mcp.json`` config for explicit SDK wiring."""
     config = _load_json_settings(PLUGIN_DIR / ".mcp.json")
@@ -1952,7 +1998,7 @@ async def run_agent_session(secret_env: dict[str, str], progress_state: dict[str
                         "output_tokens": int(total_output_tokens or 0),
                         "total_tokens": int((total_input_tokens or 0) + (total_output_tokens or 0)),
                     }
-                model_usage = getattr(message, "modelUsage", {}) or {}
+                model_usage = getattr(message, "model_usage", None) or {}
                 msg_record["result_preview"] = result_text[:2000]
                 msg_record["num_turns"] = num_turns
                 msg_record["total_cost_usd"] = total_cost_usd
@@ -2125,6 +2171,7 @@ async def main():
 
     secret_env = _load_secret_env()
     logger.info("Loaded %d secret env vars for harness + MCP auth", len(secret_env))
+    _seed_claude_model_costs()
 
     await report_event(
         "session_start",

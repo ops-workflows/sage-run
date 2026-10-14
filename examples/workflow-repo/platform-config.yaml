@@ -207,6 +207,10 @@ model_profiles:
     CLAUDE_CODE_MAX_CONTEXT_TOKENS: "65536"
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: "65536"
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "90"
+    # Optional prices in USD per million tokens for Claude Code's cost estimate;
+    # cache_read/cache_write default to input. Keep in sync with the gateway.
+    model_costs:
+      example-model: {input: 0.15, output: 1, cache_read: 0.05}
 
 memory:
   backend: hindsight
