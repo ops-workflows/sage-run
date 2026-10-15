@@ -1,6 +1,6 @@
 """Layer 1 — task_queue.
 
-Covers: create_task, dequeue with SKIP LOCKED, coalescing.
+Covers: create_task, dequeue with SKIP LOCKED, duplicate submission.
 """
 
 from __future__ import annotations
@@ -13,10 +13,12 @@ import pytest
 pytestmark = pytest.mark.service
 
 from shared.lib.task_queue import (  # noqa: E402
+    DedupeCheck,
     complete_task,
     create_task,
     dequeue_task,
     heartbeat,
+    submit_task,
 )
 
 
@@ -228,72 +230,82 @@ async def test_dequeue_skips_locked_across_connections(async_engine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_coalesce_merges_into_existing_task(db_session) -> None:
-    first = await create_task(
+async def test_duplicate_merges_into_active_task(db_session) -> None:
+    check = DedupeCheck(key="alert-group-1", window_sec=600)
+    first = await submit_task(
         db_session,
         workflow="platform-test",
         prompt="alert-a",
-        coalesce_key="alert-group-1",
         initiator="original-sender",
         metadata={"alert_id": "A1"},
-        coalesce_window_sec=600,
+        dedupe=[check],
     )
-    merged = await create_task(
+    merged = await submit_task(
         db_session,
         workflow="platform-test",
         prompt="alert-b",
-        coalesce_key="alert-group-1",
         initiator="later-sender",
-        metadata={
-            "alert_id": "A2",
-            "message_id": "message-2",
-            "alert_envelope": {"state": "recovery"},
-        },
-        coalesce_window_sec=600,
+        metadata={"alert_id": "A2", "message_id": "message-2", "alert_envelope": {"state": "recovery"}},
+        dedupe=[check],
     )
-    assert merged.id == first.id, "second create must merge into the first"
-    alerts = merged.task_metadata.get("coalesced_alerts")
-    assert merged.initiator == "original-sender"
-    assert alerts and alerts[0]["alert_id"] == "A2"
-    assert merged.task_metadata["alert_occurrence_count"] == 2
-    assert merged.task_metadata["alert_state_transitions"] == [{"state": "recovery", "message_id": "message-2"}]
+    assert first.duplicate_of is None
+    assert first.task.dedupe_keys == ["alert-group-1"]
+    assert merged.duplicate_of == check
+    assert merged.task.id == first.task.id
+    assert merged.task.initiator == "original-sender"
+    assert merged.task.task_metadata["duplicate_alerts"][0]["alert_id"] == "A2"
+    assert merged.task.task_metadata["alert_occurrence_count"] == 2
+    assert merged.task.task_metadata["alert_state_transitions"] == [{"state": "recovery", "message_id": "message-2"}]
 
 
 @pytest.mark.asyncio
-async def test_coalesce_into_succeeded_task_requires_opt_in(db_session) -> None:
-    first = await create_task(
-        db_session,
-        workflow="platform-test",
-        prompt="alert-a",
-        coalesce_key="persistent-alert",
-        coalesce_window_sec=3600,
-    )
+async def test_duplicate_of_finished_task_requires_any_statuses(db_session) -> None:
+    active_only = DedupeCheck(key="persistent-alert", window_sec=3600)
+    first = await submit_task(db_session, workflow="platform-test", prompt="alert-a", dedupe=[active_only])
     await dequeue_task(db_session, workflow="platform-test")
-    await complete_task(db_session, first.id, status="succeeded", tokens_used=1, duration_sec=1.0)
+    await complete_task(db_session, first.task.id, status="failed", tokens_used=1, duration_sec=1.0)
 
-    separate = await create_task(
-        db_session,
-        workflow="platform-test",
-        prompt="alert-b",
-        coalesce_key="persistent-alert",
-        coalesce_window_sec=3600,
-    )
-    assert separate.id != first.id
+    separate = await submit_task(db_session, workflow="platform-test", prompt="alert-b", dedupe=[active_only])
+    assert separate.duplicate_of is None
+    assert separate.task.id != first.task.id
 
     await dequeue_task(db_session, workflow="platform-test")
-    await complete_task(db_session, separate.id, status="succeeded", tokens_used=1, duration_sec=1.0)
-    absorbed = await create_task(
+    await complete_task(db_session, separate.task.id, status="succeeded", tokens_used=1, duration_sec=1.0)
+    any_status = DedupeCheck(key="persistent-alert", window_sec=3600, include_completed=True, action="reply")
+    absorbed = await submit_task(
         db_session,
         workflow="platform-test",
         prompt="alert-c",
-        coalesce_key="persistent-alert",
         metadata={"message_id": "message-3"},
-        coalesce_window_sec=3600,
-        coalesce_include_succeeded=True,
+        dedupe=[any_status],
     )
-    assert absorbed.id == separate.id
-    assert absorbed.status == "succeeded"
-    assert absorbed.task_metadata["alert_occurrence_count"] == 2
+    assert absorbed.duplicate_of == any_status
+    assert absorbed.task.id == separate.task.id
+    assert absorbed.task.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_checks_apply_in_order_and_new_task_carries_all_keys(db_session) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    by_app = DedupeCheck(key="app", window_sec=300, include_completed=True, action="reply")
+    by_identity = DedupeCheck(key="identity", window_sec=3600)
+    first = await submit_task(db_session, workflow="platform-test", prompt="a", dedupe=[by_app, by_identity])
+    assert sorted(first.task.dedupe_keys) == ["app", "identity"]
+
+    first.task.created = datetime.now(UTC) - timedelta(minutes=10)
+    await db_session.commit()
+
+    outside_app_window = await submit_task(
+        db_session, workflow="platform-test", prompt="b", dedupe=[by_app, by_identity]
+    )
+    assert outside_app_window.task.id == first.task.id
+    assert outside_app_window.duplicate_of == by_identity
+
+    other_identity = DedupeCheck(key="other-identity", window_sec=3600)
+    fresh = await submit_task(db_session, workflow="platform-test", prompt="c", dedupe=[by_app, other_identity])
+    assert fresh.duplicate_of is None
+    assert fresh.task.id != first.task.id
 
 
 @pytest.mark.asyncio
@@ -305,22 +317,21 @@ async def test_concurrent_same_key_alerts_create_one_task(async_engine, db_sessi
 
     factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
-    async def create(alert_id: str):
+    async def submit(alert_id: str):
         async with factory() as session:
-            return await create_task(
+            return await submit_task(
                 session,
                 workflow="platform-test",
                 prompt=f"alert-{alert_id}",
-                coalesce_key="concurrent-alert-group",
                 metadata={"alert_id": alert_id},
-                coalesce_window_sec=600,
+                dedupe=[DedupeCheck(key="concurrent-alert-group", window_sec=600)],
             )
 
-    first, second = await asyncio.gather(create("A1"), create("A2"))
+    first, second = await asyncio.gather(submit("A1"), submit("A2"))
 
-    assert first.id == second.id
+    assert first.task.id == second.task.id
     count = await db_session.scalar(
-        select(func.count()).select_from(Task).where(Task.coalesce_key == "concurrent-alert-group")
+        select(func.count()).select_from(Task).where(Task.dedupe_keys.contains(["concurrent-alert-group"]))
     )
     assert count == 1
 

@@ -73,7 +73,6 @@ export const MOCK_AGENTS: Agent[] = [
         heartbeat_interval_sec: 30,
         lost_task_timeout_sec: 300,
         runtime_timeout_sec: 600,
-        alert_coalesce_window_sec: 300,
         container_image: 'cloud-ops-agent-runtime:latest',
         memory_volumes: [
           'agent-memory-enterprise-crm-investigator:/workspace/.claude/agent-memory',

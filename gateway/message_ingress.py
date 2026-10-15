@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import select
 
 from gateway.message import resolve_approval_action
 from gateway.plugin_dir import MessageRoute, discover_all_message_routes, normalize_invocation_username
-from shared.lib.alert_envelope import parse_alert_envelope
+from shared.lib.alert_envelope import AlertEnvelope, parse_alert_envelope
 from shared.lib.config import settings
 from shared.lib.db import async_session_factory
 from shared.lib.mattermost_api import (
@@ -52,7 +54,7 @@ from shared.lib.slack_api import (
 from shared.lib.slack_api import (
     update_post as update_slack_post,
 )
-from shared.lib.task_queue import TERMINAL_STATUSES, create_task
+from shared.lib.task_queue import DedupeCheck, submit_task
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,56 @@ THREAD_CONTEXT_PRIOR_MESSAGE_CHARS = 4_000
 _ACCOUNT_PATTERN = re.compile(r"(?<!\d)\d{12}(?!\d)")
 _ENVIRONMENT_PATTERN = re.compile(r"(?i)(?<![a-z0-9])(production|prod|uat|development|dev|staging|test)(?![a-z0-9])")
 _ENVIRONMENT_ALIASES = {"prod": "production", "dev": "development"}
+
+
+def _label_values(text: str, key: str) -> set[str]:
+    return {value.lower() for value in re.findall(rf"(?im)(?:^|[\s,]){re.escape(key)}\s*[=:][ \t]*([^,\s]+)", text)}
+
+
+def _dedupe_part(part: str, message: InboundMessage, envelope: AlertEnvelope | None) -> str:
+    if part == "sender":
+        sender = message.webhook_id or message.webhook_name
+        return f"{message.user_id}/{sender}" if message.user_id else ""
+    if part.startswith("alert."):
+        return str(getattr(envelope, part.removeprefix("alert."), "") if envelope else "").lower()
+    values = _label_values(message.text[:MAX_ROUTE_INPUT_CHARS], part.removeprefix("label:").lower())
+    return values.pop() if len(values) == 1 else ""
+
+
+def dedupe_checks(route: MessageRoute, message: InboundMessage, envelope: AlertEnvelope | None) -> list[DedupeCheck]:
+    """Build one check per route policy whose key parts are all present in the message."""
+    checks = []
+    for policy in route.dedupe:
+        parts = [(part, _dedupe_part(part, message, envelope)) for part in policy.key]
+        if not all(value for _part, value in parts):
+            continue
+        canonical = "\x1f".join([route.workflow, route.rule_id, *(f"{part}={value}" for part, value in parts)])
+        checks.append(
+            DedupeCheck(
+                key=f"dedupe:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}",
+                window_sec=policy.window_sec,
+                include_completed=policy.statuses == "any",
+                action=policy.action,
+            )
+        )
+    return checks
+
+
+def duplicate_notice(task: Task, message: InboundMessage) -> str:
+    minutes = int((datetime.now(UTC) - task.created).total_seconds() // 60)
+    age = "less than a minute ago" if minutes < 1 else f"{minutes} min ago"
+    links = []
+    if message.provider == "mattermost" and task.message_thread and message.team_name:
+        api_url = settings.message_bus.api_url.rstrip("/")
+        links.append(f"[original thread]({api_url}/{message.team_name}/pl/{task.message_thread})")
+    ui_url = settings.control_plane_ui_url.strip().rstrip("/")
+    if ui_url:
+        links.append(f"[task]({ui_url}/tasks/{task.id})")
+    reference = " · ".join(links) if links else f"task {task.id}"
+    return (
+        f":link: Possible duplicate of an alert received {age} (investigation {task.status}); "
+        f"not investigating separately. See {reference}."
+    )
 
 
 def _matches_route_constraints(text: str, route: MessageRoute) -> bool:
@@ -76,9 +128,7 @@ def _matches_route_constraints(text: str, route: MessageRoute) -> bool:
         if not environments or not environments.issubset(set(route.allowed_environments)):
             return False
     for key, allowed_values in route.required_labels:
-        values = {
-            value.lower() for value in re.findall(rf"(?im)(?:^|[\s,]){re.escape(key)}\s*[=:][ \t]*([^,\s]+)", text)
-        }
+        values = _label_values(text, key)
         if not values or not values.issubset(set(allowed_values)):
             return False
     return True
@@ -333,7 +383,7 @@ class GatewayMessageIngress:
             metadata["alert_occurrence_count"] = 1
             metadata["alert_state_transitions"] = [{"state": envelope.state, "message_id": message.message_id}]
         async with async_session_factory() as session:
-            task = await create_task(
+            submission = await submit_task(
                 session,
                 workflow=route.workflow,
                 prompt=prompt,
@@ -342,14 +392,12 @@ class GatewayMessageIngress:
                 metadata=metadata,
                 message_channel=message.channel_name or message.channel_id,
                 message_thread=message.thread_id,
-                coalesce_key=envelope.coalesce_key(route.workflow) if envelope is not None else None,
-                coalesce_window_sec=route.coalesce_window_sec,
-                coalesce_include_succeeded=route.coalesce_include_succeeded,
+                dedupe=dedupe_checks(route, message, envelope),
             )
-        if getattr(task, "status", None) in TERMINAL_STATUSES:
-            logger.info("Alert %s matched recently completed task %s", message.message_id, task.id)
-            return
-        await self._post_acknowledgement(message)
+        if submission.duplicate_of is None:
+            await self._post_to_thread(message, ":brain: Working on it...")
+        elif submission.duplicate_of.action == "reply":
+            await self._post_to_thread(message, duplicate_notice(submission.task, message))
 
     async def _hydrate_thread_prompt(self, message: InboundMessage, prompt: str) -> tuple[str, int] | None:
         if message.message_id == message.thread_id:
@@ -450,7 +498,7 @@ class GatewayMessageIngress:
             logger.info("Recorded message reply for task %s", task.id)
             return True
 
-    async def _post_acknowledgement(self, message: InboundMessage) -> None:
+    async def _post_to_thread(self, message: InboundMessage, text: str) -> None:
         async def client_factory() -> httpx.AsyncClient:
             return self._client
 
@@ -467,9 +515,9 @@ class GatewayMessageIngress:
             get_thread_id=lambda: thread_id,
             set_thread_id=lambda _thread_id: None,
         )
-        posted = await bus.post_to_thread(":brain: Working on it...")
+        posted = await bus.post_to_thread(text)
         if posted is None:
-            logger.warning("Unable to post message acknowledgement for %s", message.message_id)
+            logger.warning("Unable to post thread reply for %s", message.message_id)
 
     async def _handle_interactive_action(self, action: InteractiveAction) -> None:
         if action.provider != "slack" or action.action_id not in {"sage_run_approval", "agentic_ops_approval"}:

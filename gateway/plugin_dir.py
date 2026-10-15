@@ -31,6 +31,20 @@ AGENT_YAML_SCHEMA_PATH = REPO_ROOT / "schemas" / "agent-yaml-schema.json"
 
 
 @dataclass(frozen=True)
+class DedupePolicy:
+    """Treat a routed alert as a duplicate of a recent task sharing the same key values."""
+
+    key: tuple[str, ...]
+    window_sec: int
+    statuses: str = "active"
+    action: str = "merge"
+
+
+DEDUPE_KEY_PARTS = frozenset({"sender", "alert.source", "alert.identity", "alert.account"})
+_DEDUPE_LABEL_PART = re.compile(r"^label:[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+
+
+@dataclass(frozen=True)
 class MessageRoute:
     """A workflow-owned rule for turning a human message into a task."""
 
@@ -51,8 +65,7 @@ class MessageRoute:
     allowed_accounts: tuple[str, ...] = ()
     allowed_environments: tuple[str, ...] = ()
     required_labels: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    coalesce_window_sec: int = 300
-    coalesce_include_succeeded: bool = False
+    dedupe: tuple[DedupePolicy, ...] = ()
     allowed_usernames: tuple[str, ...] | None = None
 
 
@@ -122,8 +135,6 @@ def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
     for workflow, config in workflows:
         messaging = _messaging_config(config)
         policies = _channel_policies(messaging)
-        runtime = config.get("runtime") if isinstance(config.get("runtime"), dict) else {}
-        coalesce_window_sec = int(runtime.get("alert_coalesce_window_sec", 300))
         triggers = tuple(
             trigger
             for raw_trigger in messaging.get("trigger_words", ["@agent"])
@@ -138,7 +149,6 @@ def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
                         channel=channel,
                         trigger_words=triggers,
                         allowed_usernames=policies.get(channel),
-                        coalesce_window_sec=coalesce_window_sec,
                     )
                 )
         for raw_rule in messaging.get("rules") or []:
@@ -172,8 +182,7 @@ def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
                 for key, values in (raw_labels.items() if isinstance(raw_labels, dict) else ())
                 if str(key).strip() and isinstance(values, list)
             )
-            coalesce = raw_rule.get("coalesce")
-            coalesce = coalesce if isinstance(coalesce, dict) else {}
+            dedupe = _dedupe_policies(workflow, rule_id, raw_rule.get("dedupe"))
             rule_channels = raw_rule.get("channels") or messaging.get("channels") or []
             for raw_channel in rule_channels:
                 channel = str(raw_channel).strip().lower()
@@ -210,11 +219,37 @@ def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
                             if str(value).strip()
                         ),
                         required_labels=required_labels,
-                        coalesce_window_sec=int(coalesce.get("window_sec", coalesce_window_sec)),
-                        coalesce_include_succeeded=bool(coalesce.get("include_succeeded", False)),
+                        dedupe=dedupe,
                     )
                 )
     return routes
+
+
+def _dedupe_policies(workflow: str, rule_id: str, raw: object) -> tuple[DedupePolicy, ...]:
+    if raw is None:
+        return ()
+    error = f"Workflow {workflow!r} messaging rule {rule_id!r} has an invalid dedupe policy"
+    if not isinstance(raw, list) or len(raw) > 3:
+        raise ValueError(error)
+    policies = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError(error)
+        key = tuple(str(part).strip() for part in item.get("key") or [])
+        window_sec = item.get("window_sec")
+        statuses = str(item.get("statuses") or "active")
+        action = str(item.get("action") or "merge")
+        if (
+            not key
+            or any(part not in DEDUPE_KEY_PARTS and not _DEDUPE_LABEL_PART.fullmatch(part) for part in key)
+            or not isinstance(window_sec, int)
+            or not 1 <= window_sec <= 86_400
+            or statuses not in {"active", "any"}
+            or action not in {"merge", "reply"}
+        ):
+            raise ValueError(error)
+        policies.append(DedupePolicy(key=key, window_sec=window_sec, statuses=statuses, action=action))
+    return tuple(policies)
 
 
 def discover_message_routes(plugins_dir: Path) -> list[MessageRoute]:

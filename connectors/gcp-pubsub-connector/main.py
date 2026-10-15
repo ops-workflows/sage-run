@@ -282,7 +282,7 @@ async def _create_task(
     config: dict[str, Any],
 ) -> None:
     from shared.lib.db import async_session_factory
-    from shared.lib.task_queue import create_task
+    from shared.lib.task_queue import DedupeCheck, submit_task
 
     target = config.get("target", {}) if isinstance(config.get("target"), dict) else {}
     coalescing = config.get("coalescing", {}) if isinstance(config.get("coalescing"), dict) else {}
@@ -301,22 +301,26 @@ async def _create_task(
     prompt_template = str(target.get("prompt_template") or "Process this Pub/Sub event:\n\n{payload_text}")
     prompt = _render_prompt(prompt_template, values)
 
-    coalesce_key = None
+    dedupe = []
     if coalescing.get("enabled"):
         key_field = str(coalescing.get("key_field") or "event_id")
-        coalesce_key = f"{target.get('workflow', 'example-workflow')}:{metadata.get(key_field, 'unknown')}"
+        dedupe.append(
+            DedupeCheck(
+                key=f"{target.get('workflow', 'example-workflow')}:{metadata.get(key_field, 'unknown')}",
+                window_sec=int(coalescing.get("window_sec") or 300),
+            )
+        )
 
     async with async_session_factory() as session:
-        task = await create_task(
+        submission = await submit_task(
             session,
             workflow=str(target.get("workflow") or "example-workflow"),
             prompt=prompt,
             channel=str(target.get("channel") or "gcp-pubsub"),
             metadata=metadata,
-            coalesce_key=coalesce_key,
-            coalesce_window_sec=int(coalescing.get("window_sec") or 300),
+            dedupe=dedupe,
         )
-        logger.info("Created task %s from Pub/Sub message", task.id)
+        logger.info("Submitted Pub/Sub message to task %s", submission.task.id)
 
 
 async def _create_task_if_active(

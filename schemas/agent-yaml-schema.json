@@ -133,13 +133,6 @@
           },
           "additionalProperties": false
         },
-        "alert_coalesce_window_sec": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 600,
-          "default": 300,
-          "description": "Window to coalesce duplicate alerts (0 = disabled)"
-        },
         "container_image": {
           "type": "string",
           "description": "Override the default runtime image"
@@ -322,16 +315,38 @@
                   }
                 }
               },
-              "coalesce": {
-                "type": "object",
-                "additionalProperties": false,
-                "description": "Per-rule alert coalescing; overrides runtime.alert_coalesce_window_sec",
-                "properties": {
-                  "window_sec": {"type": "integer", "minimum": 0, "maximum": 21600},
-                  "include_succeeded": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Also absorb repeats into a succeeded task created within the window"
+              "dedupe": {
+                "type": "array",
+                "maxItems": 3,
+                "description": "Ordered duplicate policies; the first policy matching a recent task absorbs the alert",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["key", "window_sec"],
+                  "properties": {
+                    "key": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "description": "Values that must all match; the workflow and rule are always part of the key",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(sender|alert\\.source|alert\\.identity|alert\\.account|label:[A-Za-z][A-Za-z0-9_.-]{0,63})$"
+                      }
+                    },
+                    "window_sec": {"type": "integer", "minimum": 1, "maximum": 86400},
+                    "statuses": {
+                      "type": "string",
+                      "enum": ["active", "any"],
+                      "default": "active",
+                      "description": "active matches queued, running, or waiting tasks; any also matches finished tasks"
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": ["merge", "reply"],
+                      "default": "merge",
+                      "description": "merge folds the alert silently; reply also posts a duplicate notice in the alert thread"
+                    }
                   }
                 }
               }

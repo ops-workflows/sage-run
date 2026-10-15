@@ -115,6 +115,12 @@ async def ensure_runtime_schema() -> None:
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS wait_deadline TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS initiator TEXT"))
+        await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS dedupe_keys TEXT[]"))
+        await conn.execute(text("DROP INDEX IF EXISTS task_queue.idx_tasks_coalesce"))
+        await conn.execute(text("ALTER TABLE task_queue.tasks DROP COLUMN IF EXISTS coalesce_key"))
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_tasks_dedupe_keys ON task_queue.tasks USING gin (dedupe_keys)")
+        )
         await conn.execute(text("ALTER TABLE control_plane.sessions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE control_plane.sessions ADD COLUMN IF NOT EXISTS cost_usd FLOAT"))
         await conn.execute(

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from gateway.message_ingress import GatewayMessageIngress, match_message_route
+from gateway.message_ingress import GatewayMessageIngress, dedupe_checks, match_message_route
 from gateway.plugin_dir import MessageRoute
+from shared.lib.alert_envelope import parse_alert_envelope
 from shared.lib.mattermost_api import fetch_thread_messages as fetch_mattermost_thread_messages
 from shared.lib.message_ingress import (
     InboundMessage,
@@ -534,7 +536,7 @@ async def test_denied_invocation_does_not_hydrate_or_create_task(monkeypatch) ->
     create = AsyncMock()
     monkeypatch.setattr(ingress, "_record_question_reply", reply)
     monkeypatch.setattr(ingress, "_hydrate_thread_prompt", hydrate)
-    monkeypatch.setattr("gateway.message_ingress.create_task", create)
+    monkeypatch.setattr("gateway.message_ingress.submit_task", create)
     try:
         await ingress._handle_message(
             InboundMessage(
@@ -742,28 +744,31 @@ async def test_gateway_message_ingress_can_pause_and_resume(monkeypatch) -> None
     await ingress.stop()
 
 
-async def test_gateway_creates_structured_alert_task_with_envelope_and_coalesce_key(monkeypatch) -> None:
-    route = MessageRoute(
-        workflow="alert-triage",
-        channel="alerts",
-        rule_id="production-alarm",
+def _alert_route(**overrides) -> MessageRoute:
+    values = {
+        "workflow": "alert-triage",
+        "channel": "alerts",
+        "rule_id": "production-alarm",
+        "provider": "mattermost",
+        "priority": 100,
+        "match_type": "regex",
+        "pattern": r"production-.*?Alarm",
+        "trusted_user_ids": ("user-1",),
+        "trusted_webhook_names": ("AWS CloudWatch",),
+        "allow_bot": True,
+        "root_posts_only": True,
+        "preserve_full_body": True,
+        "allowed_accounts": ("123456789012",),
+        "allowed_environments": ("production",),
+    }
+    return MessageRoute(**{**values, **overrides})
+
+
+def _alert_message(post_id: str = "post-1", application: str = "site-backend", name: str = "gatewayAlarm"):
+    return InboundMessage(
         provider="mattermost",
-        priority=100,
-        match_type="regex",
-        pattern=r"production-.*?Alarm",
-        trusted_user_ids=("user-1",),
-        trusted_webhook_names=("AWS CloudWatch",),
-        allow_bot=True,
-        root_posts_only=True,
-        preserve_full_body=True,
-        allowed_accounts=("123456789012",),
-        allowed_environments=("production",),
-        coalesce_window_sec=90,
-    )
-    message = InboundMessage(
-        provider="mattermost",
-        message_id="post-1",
-        thread_id="post-1",
+        message_id=post_id,
+        thread_id=post_id,
         channel_id="channel-1",
         channel_name="alerts",
         team_id="team-1",
@@ -772,15 +777,20 @@ async def test_gateway_creates_structured_alert_task_with_envelope_and_coalesce_
         username="company-webhooks",
         text=(
             "Status: firing\n"
-            "Alertname: production-api-gatewayAlarm\n"
-            "Labels: alertarn=arn:aws:cloudwatch:eu-west-1:123456789012:"
-            "alarm:production-api-gatewayAlarm, environment=production"
+            f"Alertname: production-{name}\n"
+            f"Labels: application={application}, alertarn=arn:aws:cloudwatch:eu-west-1:123456789012:"
+            f"alarm:production-{name}, environment=production"
         ),
         is_bot=True,
         is_webhook=True,
+        webhook_id="hook-1",
         webhook_name="AWS CloudWatch",
     )
+
+
+async def _handle_with_submission(monkeypatch, route: MessageRoute, message: InboundMessage, submission):
     captured: dict[str, object] = {}
+    posted: list[str] = []
 
     class SessionContext:
         async def __aenter__(self):
@@ -789,22 +799,32 @@ async def test_gateway_creates_structured_alert_task_with_envelope_and_coalesce_
         async def __aexit__(self, *_args) -> None:
             return None
 
-    async def create_task(_session, **kwargs):
+    async def submit_task(_session, **kwargs):
         captured.update(kwargs)
-        return object()
+        return submission
 
-    async def acknowledge(_message) -> None:
-        return None
+    async def post_to_thread(_message, text) -> None:
+        posted.append(text)
 
     monkeypatch.setattr("gateway.message_ingress.async_session_factory", SessionContext)
-    monkeypatch.setattr("gateway.message_ingress.create_task", create_task)
+    monkeypatch.setattr("gateway.message_ingress.submit_task", submit_task)
     ingress = GatewayMessageIngress()
     ingress._routes = [route]
-    monkeypatch.setattr(ingress, "_post_acknowledgement", acknowledge)
+    monkeypatch.setattr(ingress, "_post_to_thread", post_to_thread)
     try:
         await ingress._handle_message(message)
     finally:
         await ingress.stop()
+    return captured, posted
+
+
+async def test_gateway_creates_structured_alert_task_with_envelope(monkeypatch) -> None:
+    from shared.lib.task_queue import TaskSubmission
+
+    message = _alert_message()
+    captured, posted = await _handle_with_submission(
+        monkeypatch, _alert_route(), message, TaskSubmission(task=SimpleNamespace(id="task-1"))
+    )
 
     metadata = captured["metadata"]
     assert captured["initiator"] == message.username
@@ -814,76 +834,79 @@ async def test_gateway_creates_structured_alert_task_with_envelope_and_coalesce_
     assert metadata["alert_envelope"] == {
         "version": 1,
         "source": "aws",
-        "identity": "production-api-gatewayAlarm",
+        "identity": "production-gatewayAlarm",
         "state": "firing",
         "account": "123456789012",
         "region": "eu-west-1",
         "environment": "production",
     }
-    assert str(captured["coalesce_key"]).startswith("alert:v1:")
-    assert captured["coalesce_window_sec"] == 90
-    assert captured["coalesce_include_succeeded"] is False
+    assert captured["dedupe"] == []
+    assert posted == [":brain: Working on it..."]
 
 
-async def test_gateway_skips_acknowledgement_when_alert_joins_succeeded_task(monkeypatch) -> None:
-    from types import SimpleNamespace
+def test_dedupe_checks_scope_keys_by_rule_and_skip_missing_parts() -> None:
+    from gateway.plugin_dir import DedupePolicy
 
-    route = MessageRoute(
-        workflow="alert-triage",
-        channel="alerts",
-        rule_id="gcp-alert",
-        match_type="regex",
-        pattern=r"\[ALERT - ",
-        preserve_full_body=True,
-        trusted_user_ids=("user-1",),
-        trusted_webhook_names=("GCP Alert",),
-        allow_bot=True,
-        coalesce_window_sec=3600,
-        coalesce_include_succeeded=True,
+    policies = (
+        DedupePolicy(key=("label:application",), window_sec=300, statuses="any", action="reply"),
+        DedupePolicy(key=("alert.identity", "sender"), window_sec=3600),
+        DedupePolicy(key=("label:missing",), window_sec=60),
     )
-    message = InboundMessage(
-        provider="mattermost",
-        message_id="post-2",
-        thread_id="post-2",
-        channel_id="channel-1",
-        channel_name="alerts",
-        team_id="team-1",
-        team_name="",
-        user_id="user-1",
-        username="alice",
-        text="[ALERT - Error] [api][prod] 5xx\nPolicy: 5xx alert\nProject: example-prod-1234\nState: open",
-        is_bot=True,
-        is_webhook=True,
-        webhook_name="GCP Alert",
+    route = _alert_route(dedupe=policies)
+    envelope = parse_alert_envelope(_alert_message().text)
+
+    first = dedupe_checks(route, _alert_message("post-1", name="aAlarm"), envelope)
+    same_app = dedupe_checks(route, _alert_message("post-2", name="bAlarm"), parse_alert_envelope("Alertname: b"))
+    other_app = dedupe_checks(route, _alert_message("post-3", application="other"), envelope)
+    other_rule = dedupe_checks(_alert_route(rule_id="other-rule", dedupe=policies), _alert_message(), envelope)
+
+    assert [(check.window_sec, check.include_completed, check.action) for check in first] == [
+        (300, True, "reply"),
+        (3600, False, "merge"),
+    ]
+    assert first[0].key == same_app[0].key
+    assert first[1].key != same_app[1].key
+    assert first[0].key != other_app[0].key
+    assert first[0].key != other_rule[0].key
+
+
+async def test_gateway_replies_to_duplicate_with_original_thread_and_task(monkeypatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from shared.lib.config import settings
+    from shared.lib.platform_secrets import MessageBusConfig
+    from shared.lib.task_queue import DedupeCheck, TaskSubmission
+
+    monkeypatch.setattr(
+        settings,
+        "_message_bus",
+        MessageBusConfig(provider="mattermost", api_url="https://chat.example", bot_token="token"),
     )
-    captured: dict[str, object] = {}
-    acknowledged: list[str] = []
+    monkeypatch.setattr(settings, "control_plane_ui_url", "https://sage.example/")
+    original = SimpleNamespace(
+        id="task-1",
+        status="running",
+        message_thread="root-post",
+        created=datetime.now(UTC) - timedelta(minutes=3),
+    )
+    submission = TaskSubmission(task=original, duplicate_of=DedupeCheck(key="k", window_sec=300, action="reply"))
 
-    class SessionContext:
-        async def __aenter__(self):
-            return object()
+    _captured, posted = await _handle_with_submission(monkeypatch, _alert_route(), _alert_message("post-2"), submission)
 
-        async def __aexit__(self, *_args) -> None:
-            return None
+    assert posted == [
+        ":link: Possible duplicate of an alert received 3 min ago (investigation running); not investigating "
+        "separately. See [original thread](https://chat.example/company/pl/root-post) · "
+        "[task](https://sage.example/tasks/task-1)."
+    ]
 
-    async def create_task(_session, **kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(id="task-1", status="succeeded")
 
-    async def acknowledge(posted) -> None:
-        acknowledged.append(posted.message_id)
+async def test_gateway_merges_duplicate_silently(monkeypatch) -> None:
+    from shared.lib.task_queue import DedupeCheck, TaskSubmission
 
-    monkeypatch.setattr("gateway.message_ingress.async_session_factory", SessionContext)
-    monkeypatch.setattr("gateway.message_ingress.create_task", create_task)
-    ingress = GatewayMessageIngress()
-    ingress._routes = [route]
-    monkeypatch.setattr(ingress, "_post_acknowledgement", acknowledge)
-    try:
-        await ingress._handle_message(message)
-    finally:
-        await ingress.stop()
+    submission = TaskSubmission(
+        task=SimpleNamespace(id="task-1"), duplicate_of=DedupeCheck(key="k", window_sec=300, action="merge")
+    )
 
-    assert captured["coalesce_window_sec"] == 3600
-    assert captured["coalesce_include_succeeded"] is True
-    assert captured["metadata"]["alert_envelope"]["source"] == "gcp"
-    assert acknowledged == []
+    _captured, posted = await _handle_with_submission(monkeypatch, _alert_route(), _alert_message("post-2"), submission)
+
+    assert posted == []

@@ -11,6 +11,7 @@ import yaml
 pytestmark = pytest.mark.unit
 
 from gateway.plugin_dir import (  # noqa: E402
+    DedupePolicy,
     MessageRoute,
     discover_message_routes,
     discover_plugin_configs,
@@ -103,7 +104,6 @@ def test_discover_message_routes_maps_channel_to_workflow(fixture_workflows_dir:
             workflow="platform-test",
             channel="platform-test-channel",
             trigger_words=("@agent",),
-            coalesce_window_sec=60,
         )
     ]
 
@@ -135,7 +135,10 @@ def test_discover_message_routes_adds_structured_rule(tmp_path: Path) -> None:
                         "accounts": ["123456789012"],
                         "labels": {"Application": ["Site-Backend"]},
                     },
-                    "coalesce": {"window_sec": 3600, "include_succeeded": True},
+                    "dedupe": [
+                        {"key": ["label:application"], "window_sec": 300, "statuses": "any", "action": "reply"},
+                        {"key": ["alert.identity"], "window_sec": 3600},
+                    ],
                 }
             ]
         },
@@ -162,10 +165,40 @@ def test_discover_message_routes_adds_structured_rule(tmp_path: Path) -> None:
             allowed_accounts=("123456789012",),
             allowed_environments=("production",),
             required_labels=(("application", ("site-backend",)),),
-            coalesce_window_sec=3600,
-            coalesce_include_succeeded=True,
+            dedupe=(
+                DedupePolicy(key=("label:application",), window_sec=300, statuses="any", action="reply"),
+                DedupePolicy(key=("alert.identity",), window_sec=3600),
+            ),
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    "dedupe",
+    [
+        {"key": ["label:application"], "window_sec": 300},
+        [{"key": [], "window_sec": 300}],
+        [{"key": ["body"], "window_sec": 300}],
+        [{"key": ["sender"], "window_sec": 0}],
+        [{"key": ["sender"], "window_sec": 300, "action": "drop"}],
+        [{"key": ["sender"], "window_sec": 300, "statuses": "succeeded"}],
+    ],
+)
+def test_discover_message_routes_rejects_invalid_dedupe(tmp_path: Path, dedupe) -> None:
+    workflow_dir = tmp_path / "alerts"
+    workflow_dir.mkdir()
+    config = {
+        "name": "alerts",
+        "description": "Test alerts",
+        "messaging": {
+            "channels": ["alerts"],
+            "rules": [{"id": "rule", "match": {"type": "prefix", "pattern": "ALERT"}, "dedupe": dedupe}],
+        },
+    }
+    (workflow_dir / "agent.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid dedupe policy"):
+        discover_message_routes(tmp_path)
 
 
 def test_discover_message_routes_rejects_unsafe_regex(tmp_path: Path) -> None:

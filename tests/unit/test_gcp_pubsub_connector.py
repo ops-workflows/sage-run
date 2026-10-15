@@ -279,16 +279,16 @@ async def test_create_task_defers_message_channel_to_workflow(monkeypatch):
         async def __aexit__(self, exc_type, exc_value, traceback):
             return False
 
-    async def fake_create_task(session, **kwargs):
+    async def fake_submit_task(session, **kwargs):
         captured.update(kwargs)
 
         class Task:
             id = "task-123"
 
-        return Task()
+        return task_queue.TaskSubmission(task=Task())
 
     monkeypatch.setattr(db, "async_session_factory", lambda: FakeSession())
-    monkeypatch.setattr(task_queue, "create_task", fake_create_task)
+    monkeypatch.setattr(task_queue, "submit_task", fake_submit_task)
 
     await main._create_task(
         {"event_id": "event-1"},
@@ -303,3 +303,4 @@ async def test_create_task_defers_message_channel_to_workflow(monkeypatch):
     )
 
     assert "message_channel" not in captured
+    assert captured["dedupe"] == []

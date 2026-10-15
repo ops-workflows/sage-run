@@ -19,7 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -36,6 +36,7 @@ class Task(Base):
         Index("idx_tasks_status", "status"),
         Index("idx_tasks_workflow", "workflow"),
         Index("idx_tasks_created", "created"),
+        Index("idx_tasks_dedupe_keys", "dedupe_keys", postgresql_using="gin"),
         {"schema": "task_queue"},
     )
 
@@ -73,7 +74,7 @@ class Task(Base):
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)
     duration_sec: Mapped[float | None] = mapped_column(Float)
     error: Mapped[str | None] = mapped_column(Text)
-    coalesce_key: Mapped[str | None] = mapped_column(Text)
+    dedupe_keys: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
     updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))

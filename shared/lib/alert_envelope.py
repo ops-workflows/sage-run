@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import asdict, dataclass
 
@@ -35,21 +34,6 @@ class AlertEnvelope:
 
     def as_metadata(self) -> dict[str, object]:
         return asdict(self)
-
-    def coalesce_key(self, workflow: str) -> str:
-        canonical = "\x1f".join(
-            (
-                workflow.strip().lower(),
-                self.source,
-                self.account,
-                self.region,
-                self.environment,
-                self.identity.lower(),
-                str(self.version),
-            )
-        )
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        return f"alert:v{self.version}:{digest}"
 
 
 def _canonical_state(value: str) -> str:

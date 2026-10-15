@@ -29,7 +29,7 @@ The table below shows which feature groups are covered at each layer.
 
 | Group | Coverage baseline | Unit | Service | Runtime | Primary tests |
 |---|---|:---:|:---:|:---:|---|
-| Intake and routing | Gateway message ingress, schedules, connectors, API task creation, workflow handoff, alert coalescing | ✅ | ✅ | — | `test_message_ingress.py`, `test_gateway_api.py`, `test_task_queue.py::test_coalesce_merges_into_existing_task`, `test_scheduler_and_pause.py::test_schedule_handler_creates_task_and_updates_last_run` |
+| Intake and routing | Gateway message ingress, schedules, connectors, API task creation, workflow handoff, alert coalescing | ✅ | ✅ | — | `test_message_ingress.py`, `test_gateway_api.py`, `test_task_queue.py::test_duplicate_merges_into_active_task`, `test_scheduler_and_pause.py::test_schedule_handler_creates_task_and_updates_last_run` |
 | Runtime and workspace | real Claude SDK/CLI invocation, staged writable workspace, shared `CLAUDE.md`, shared skills, shared hook executables, plugin-local files | — | ✅ (provisioner only) | ✅ | `test_provisioner.py`, `test_test_plugin_fixture.py`, `test_plugin_dir.py`, `tests/runtime/test_happy_path_scenario.py`, `tests/runtime/test_instruction_surface_scenario.py` |
 | Human-in-the-loop | approval requests, approval rejection, `AskUserQuestion`, late-session question reminder, gateway-correlated message replies | ✅ | ✅ | ✅ | `test_approvals_helpers.py`, `test_budget_reminder.py`, `test_concurrent_approvals.py`, `test_gateway_api.py::test_message_reply_endpoint_returns_websocket_ingested_reply`, `test_event_collector.py::test_approval_requested_creates_pending_approval`, `tests/runtime/test_approval_scenario.py`, `tests/runtime/test_subagent_and_questions_scenario.py` |
 | Queue and lifecycle | Postgres queueing, dequeue concurrency, container spawn, heartbeat, lost-task detection, runtime timeout, manual rerun | — | ✅ | ✅ | `test_task_queue.py` (all 6), `test_event_collector.py::test_session_timeout_marks_timed_out`, `test_container_lifecycle_helpers.py`, `tests/runtime/test_timeout_scenario.py`, `tests/runtime/test_lifecycle_scenario.py` |
@@ -77,7 +77,7 @@ the behavior is fully verified via unit or service tests with mocks and fakes.
 | direct `POST /api/tasks` path | `tests/service/test_task_queue.py::test_create_task_persists_metadata_and_emits_event` |
 | scheduled task metadata (`triggered_by=scheduler`) | `tests/service/test_scheduler_and_pause.py::test_schedule_handler_creates_task_and_updates_last_run` |
 | MCP workflow handoff | Exercised via gateway API wiring in `test_gateway_api.py`; full end-to-end handoff is Layer 2 (deferred; see scope note). |
-| alert coalescing within window | `tests/service/test_task_queue.py::test_coalesce_merges_into_existing_task` |
+| alert deduplication within window | `tests/service/test_task_queue.py::test_duplicate_merges_into_active_task`, `test_duplicate_checks_apply_in_order_and_new_task_carries_all_keys` |
 | trigger-word stripping / routing helpers | `tests/unit/test_message_webhook_helpers.py` (all 11 tests) |
 
 ### Queue, concurrency, and session lifecycle
@@ -262,7 +262,7 @@ the behavior is fully verified via unit or service tests with mocks and fakes.
 
 | Case | Coverage |
 |---|---|
-| coalesce merges into existing task | `tests/service/test_task_queue.py::test_coalesce_merges_into_existing_task` |
+| duplicate merges into existing task | `tests/service/test_task_queue.py::test_duplicate_merges_into_active_task` |
 | workflow handoff end-to-end | Layer 2 / deferred |
 
 #### Large outputs and file handling
@@ -309,7 +309,7 @@ the behavior is fully verified via unit or service tests with mocks and fakes.
 Items still not covered by automated tests (deliberately or pending):
 
 - Builder API smoke — handler validation is inlined with an LLM call; no separable helpers to unit test today. Tracked as future work.
-- Workflow handoff end-to-end (MCP `create_task` from within a session) — only the coalesce path is covered at the service layer; the handoff path requires a runtime scenario.
+- Workflow handoff end-to-end (MCP `create_task` from within a session) — only the duplicate-submission path is covered at the service layer; the handoff path requires a runtime scenario.
 - Real MinIO round-trip for memory backup/restore — the helpers are unit tested; the MinIO leg is stubbed at the service layer. A dedicated integration test is deferred.
 
 ---

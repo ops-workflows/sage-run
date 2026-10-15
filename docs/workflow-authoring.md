@@ -37,16 +37,15 @@ workflows/<name>/
 | `runtime.lost_task_timeout_sec` | int, default `300` | Heartbeat-loss timeout before marking a task lost (60–3600). |
 | `runtime.runtime_timeout_sec` | int, default `300` | Wall-clock ceiling per session attempt (60–7200). |
 | `runtime.ask_user_question_reminder` | object | `enabled`, `min_turns`, `turn_budget_ratio`, `time_budget_ratio`, `recent_question_turn_window` — nudges the agent to ask before burning its turn/time budget. |
-| `runtime.alert_coalesce_window_sec` | int, default `300` | Default connector alert-dedup window. |
 | `runtime.container_image` | string | Override the runtime image for this workflow. |
 | `runtime.memory_volumes` | list[string] | Named memory volumes for this workflow. |
 | `schedules[]` | array | `name`, `cron` (5-field APScheduler `CronTrigger` syntax), `prompt`, optional `message_channel`, `enabled` (default `true`). Numeric weekdays use APScheduler numbering: Monday is `0` through Sunday `6`. |
 | `messaging.channels` | list[string] | Message-bus channel names or provider IDs this workflow listens on. Names are resolved to IDs visible to the configured bot at gateway startup. |
 | `messaging.trigger_words` | list[string] | Prefixes that create a task in configured channels (for example, `@agent`). |
 | `messaging.channel_policies` | object | Per-configured-channel human Mattermost invocation policy; omit the map or channel entry to allow all; each entry requires `allowed_usernames`, with an empty list denying all humans. |
-| `messaging.rules[]` | array | Deterministic alert routes: `id`, `match` (`prefix` or a restricted `regex` without groups, alternation, or `+`), `trusted_senders`, `allow_bot`, `root_posts_only`, `preserve_full_body`, `priority`, `constraints`, and `coalesce`. |
+| `messaging.rules[]` | array | Deterministic alert routes: `id`, `match` (`prefix` or a restricted `regex` without groups, alternation, or `+`), `trusted_senders`, `allow_bot`, `root_posts_only`, `preserve_full_body`, `priority`, `constraints`, and `dedupe`. |
 | `messaging.rules[].constraints` | object | `environments`, 12-digit `accounts`, and `labels`. Each `labels` key must appear in the alert as `key=value` or `key: value`, and every occurrence must use an allowed value (case-insensitive), so label order does not matter. |
-| `messaging.rules[].coalesce` | object | `window_sec` (0–21600) overrides `runtime.alert_coalesce_window_sec` for the rule. `include_succeeded: true` also folds a repeat of the same alert identity into a task that succeeded within the window, without a new acknowledgement. |
+| `messaging.rules[].dedupe` | list (max 3) | Ordered duplicate policies. Each has `key` (one or more of `sender`, `alert.source`, `alert.identity`, `alert.account`, `label:<name>`), `window_sec` (1–86400), `statuses` (`active` for queued/running/waiting tasks, or `any`), and `action` (`merge` or `reply`). The workflow and rule are always part of the key, so different rules never deduplicate each other. A policy is skipped when any key part is absent from the alert. The first policy that finds a task created within its window absorbs the alert into that task; `merge` does so silently and `reply` also posts a duplicate notice linking the original thread and task in the alert's thread. Without a matching policy, a new task is created. |
 | `knowledge.sources` | list[string] | Canonical Knowledge Source aliases this workflow may access; requires the `knowledge` MCP in `.mcp.json`. |
 
 `agent.yaml` is validated against

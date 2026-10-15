@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import case, func, literal, or_, select, text, update
@@ -22,6 +24,8 @@ logger = logging.getLogger(__name__)
 RUNNABLE_STATUSES = ("resume_pending", "queued")
 WAITING_STATUSES = ("waiting_approval", "waiting_user_input")
 TERMINAL_STATUSES = ("succeeded", "failed", "lost", "timed_out")
+ACTIVE_STATUSES = ("queued", "running", "resume_pending", *WAITING_STATUSES)
+MAX_RECORDED_DUPLICATES = 50
 
 
 def _message_channel_from_config(config: dict | None) -> str:
@@ -74,74 +78,12 @@ async def create_task(
     metadata: dict | None = None,
     message_channel: str | None = None,
     message_thread: str | None = None,
-    coalesce_key: str | None = None,
-    coalesce_window_sec: int = 300,
-    coalesce_include_succeeded: bool = False,
+    dedupe_keys: Sequence[str] = (),
 ) -> Task:
-    """Create a new task, with optional alert coalescing.
-
-    If coalesce_key is provided, checks for recent queued/running tasks with the
-    same key. If found within the window, appends to the existing task instead.
-    With coalesce_include_succeeded, a recently succeeded task also absorbs the
-    repeat so a persistent alert is not reinvestigated on every notification.
-    """
+    """Create a new queued task."""
     message_channel, metadata = await _normalize_message_route(
         session, workflow, message_channel, message_thread, metadata
     )
-
-    if coalesce_key:
-        cutoff = datetime.now(UTC) - timedelta(seconds=coalesce_window_sec)
-        lock_key = int.from_bytes(
-            hashlib.sha256(coalesce_key.encode("utf-8")).digest()[:8],
-            byteorder="big",
-            signed=True,
-        )
-        await session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
-        coalescing_statuses = ["queued", "running", "resume_pending", *WAITING_STATUSES]
-        if coalesce_include_succeeded:
-            coalescing_statuses.append("succeeded")
-        existing = await session.execute(
-            select(Task)
-            .where(
-                Task.coalesce_key == coalesce_key,
-                Task.status.in_(coalescing_statuses),
-                Task.created >= cutoff,
-            )
-            .order_by(Task.created.desc())
-            .limit(1)
-        )
-        existing_task = existing.scalar_one_or_none()
-        if existing_task:
-            existing_metadata = dict(existing_task.task_metadata or {})
-            alerts = list(existing_metadata.get("coalesced_alerts", []))
-            alerts.append(metadata)
-            transitions = list(existing_metadata.get("alert_state_transitions", []))
-            envelope = metadata.get("alert_envelope") if isinstance(metadata, dict) else None
-            if isinstance(envelope, dict):
-                transitions.append(
-                    {
-                        "state": str(envelope.get("state") or "unknown"),
-                        "message_id": str(metadata.get("message_id") or ""),
-                    }
-                )
-            existing_task.task_metadata = {
-                **existing_metadata,
-                "coalesced_alerts": alerts,
-                "alert_occurrence_count": int(existing_metadata.get("alert_occurrence_count", 1)) + 1,
-                "alert_state_transitions": transitions,
-            }
-            await session.flush()
-            logger.info("Coalesced alert into existing task %s", existing_task.id)
-
-            event = TaskEvent(
-                task_id=existing_task.id,
-                event_type="alert_coalesced",
-                data={"new_metadata": metadata},
-            )
-            session.add(event)
-            await session.commit()
-            return existing_task
-
     task = Task(
         workflow=workflow,
         status="queued",
@@ -151,7 +93,7 @@ async def create_task(
         initiator=initiator,
         message_channel=message_channel,
         message_thread=message_thread,
-        coalesce_key=coalesce_key,
+        dedupe_keys=list(dedupe_keys) or None,
     )
     session.add(task)
     await session.flush()
@@ -166,6 +108,98 @@ async def create_task(
     await session.commit()
     logger.info("Created task %s for workflow %s", task.id, workflow)
     return task
+
+
+@dataclass(frozen=True)
+class DedupeCheck:
+    """One duplicate policy: a task created with ``key`` within ``window_sec`` absorbs the new one."""
+
+    key: str
+    window_sec: int
+    include_completed: bool = False
+    action: str = "merge"
+
+
+@dataclass(frozen=True)
+class TaskSubmission:
+    task: Task
+    duplicate_of: DedupeCheck | None = None
+
+
+def _advisory_lock_id(key: str) -> int:
+    return int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], byteorder="big", signed=True)
+
+
+def _merge_duplicate_metadata(existing: dict, metadata: dict) -> dict:
+    duplicates = [*existing.get("duplicate_alerts", []), metadata][-MAX_RECORDED_DUPLICATES:]
+    transitions = list(existing.get("alert_state_transitions", []))
+    envelope = metadata.get("alert_envelope")
+    if isinstance(envelope, dict):
+        transitions = [
+            *transitions,
+            {"state": str(envelope.get("state") or "unknown"), "message_id": str(metadata.get("message_id") or "")},
+        ][-MAX_RECORDED_DUPLICATES:]
+    return {
+        **existing,
+        "duplicate_alerts": duplicates,
+        "alert_occurrence_count": int(existing.get("alert_occurrence_count", 1)) + 1,
+        "alert_state_transitions": transitions,
+    }
+
+
+async def submit_task(
+    session: AsyncSession,
+    *,
+    workflow: str,
+    prompt: str,
+    dedupe: Sequence[DedupeCheck],
+    channel: str | None = None,
+    initiator: str | None = None,
+    metadata: dict | None = None,
+    message_channel: str | None = None,
+    message_thread: str | None = None,
+) -> TaskSubmission:
+    """Merge into the first recent task matching a duplicate check in order, or create a task carrying every key."""
+    checks = [check for check in dedupe if check.key and check.window_sec > 0]
+    for key in sorted({check.key for check in checks}):
+        await session.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": _advisory_lock_id(key)})
+
+    now = datetime.now(UTC)
+    for check in checks:
+        query = select(Task).where(
+            Task.dedupe_keys.contains([check.key]),
+            Task.created >= now - timedelta(seconds=check.window_sec),
+        )
+        if not check.include_completed:
+            query = query.where(Task.status.in_(ACTIVE_STATUSES))
+        existing = await session.scalar(query.order_by(Task.created.desc()).limit(1))
+        if existing is None:
+            continue
+        new_metadata = dict(metadata or {})
+        existing.task_metadata = _merge_duplicate_metadata(dict(existing.task_metadata or {}), new_metadata)
+        session.add(
+            TaskEvent(
+                task_id=existing.id,
+                event_type="duplicate_merged",
+                data={"dedupe_key": check.key, "action": check.action, "new_metadata": new_metadata},
+            )
+        )
+        await session.commit()
+        logger.info("Merged duplicate into task %s (action=%s)", existing.id, check.action)
+        return TaskSubmission(task=existing, duplicate_of=check)
+
+    task = await create_task(
+        session,
+        workflow=workflow,
+        prompt=prompt,
+        channel=channel,
+        initiator=initiator,
+        metadata=metadata,
+        message_channel=message_channel,
+        message_thread=message_thread,
+        dedupe_keys=[check.key for check in checks],
+    )
+    return TaskSubmission(task=task)
 
 
 async def dequeue_task(

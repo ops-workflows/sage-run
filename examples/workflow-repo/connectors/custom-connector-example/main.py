@@ -53,28 +53,32 @@ def _load_instance_config() -> dict[str, Any]:
 
 async def _create_task_from_record(record: dict[str, Any], config: dict[str, Any]) -> None:
     from shared.lib.db import async_session_factory
-    from shared.lib.task_queue import create_task
+    from shared.lib.task_queue import DedupeCheck, submit_task
 
     target = config.get("target", {}) if isinstance(config.get("target"), dict) else {}
     coalescing = config.get("coalescing", {}) if isinstance(config.get("coalescing"), dict) else {}
 
-    coalesce_key = None
+    dedupe = []
     if coalescing.get("enabled"):
         key_field = str(coalescing.get("key_field") or "id")
-        coalesce_key = f"{target.get('workflow', 'example-workflow')}:{record.get(key_field, 'unknown')}"
+        dedupe.append(
+            DedupeCheck(
+                key=f"{target.get('workflow', 'example-workflow')}:{record.get(key_field, 'unknown')}",
+                window_sec=int(coalescing.get("window_sec") or 300),
+            )
+        )
 
     async with async_session_factory() as session:
-        task = await create_task(
+        submission = await submit_task(
             session,
             workflow=str(target.get("workflow") or "example-workflow"),
             prompt=f"Process this event:\n\n{record}",
             channel=str(target.get("channel") or "custom-example"),
             metadata={"source": "custom-connector-example", "record": record},
             message_channel=str(target.get("message_channel") or "") or None,
-            coalesce_key=coalesce_key,
-            coalesce_window_sec=int(coalescing.get("window_sec") or 300),
+            dedupe=dedupe,
         )
-        logger.info("Created task %s from custom connector event", task.id)
+        logger.info("Submitted custom connector event to task %s", submission.task.id)
 
 
 async def run_polling_consumer(config: dict[str, Any]) -> None:

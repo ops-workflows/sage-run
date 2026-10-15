@@ -39,7 +39,7 @@ CREATE TABLE task_queue.tasks (
     tokens_used     INT DEFAULT 0,
     duration_sec    FLOAT,
     error           TEXT,
-    coalesce_key    TEXT,
+    dedupe_keys     TEXT[],
     archived_at     TIMESTAMPTZ,
     created         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated         TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -47,7 +47,7 @@ CREATE TABLE task_queue.tasks (
 
 CREATE INDEX idx_tasks_status ON task_queue.tasks (status);
 CREATE INDEX idx_tasks_workflow ON task_queue.tasks (workflow);
-CREATE INDEX idx_tasks_coalesce ON task_queue.tasks (coalesce_key, status) WHERE coalesce_key IS NOT NULL;
+CREATE INDEX idx_tasks_dedupe_keys ON task_queue.tasks USING gin (dedupe_keys);
 CREATE INDEX idx_tasks_heartbeat ON task_queue.tasks (heartbeat) WHERE status = 'running';
 CREATE INDEX idx_tasks_created ON task_queue.tasks (created DESC);
 CREATE INDEX idx_tasks_archived_at ON task_queue.tasks (archived_at);

@@ -143,32 +143,34 @@ def _build_prompt(parsed: dict, config: dict) -> str:
 async def _create_task_from_record(parsed: dict, config: dict) -> None:
     """Create a task in Postgres from a parsed ServiceNow record."""
     from shared.lib.db import async_session_factory
-    from shared.lib.task_queue import create_task
+    from shared.lib.task_queue import DedupeCheck, submit_task
 
     target = config.get("target", {})
     coalescing = config.get("coalescing", {})
 
-    coalesce_key = None
-    coalesce_window = 300
+    dedupe = []
     if coalescing.get("enabled"):
         key_field = str(coalescing["key_field"])
-        coalesce_key = f"{target['workflow']}:{parsed.get(key_field, 'unknown')}"
-        coalesce_window = coalescing.get("window_sec", 300)
+        dedupe.append(
+            DedupeCheck(
+                key=f"{target['workflow']}:{parsed.get(key_field, 'unknown')}",
+                window_sec=int(coalescing.get("window_sec", 300)),
+            )
+        )
 
     prompt = _build_prompt(parsed, config)
     metadata = {**parsed, "source": "servicenow-connector"}
 
     async with async_session_factory() as session:
-        task = await create_task(
+        submission = await submit_task(
             session,
             workflow=target["workflow"],
             prompt=prompt,
             channel=str(target.get("channel") or "servicenow"),
             metadata=metadata,
-            coalesce_key=coalesce_key,
-            coalesce_window_sec=coalesce_window,
+            dedupe=dedupe,
         )
-        logger.info("Created task %s from ServiceNow record", task.id)
+        logger.info("Submitted ServiceNow record to task %s", submission.task.id)
 
 
 async def run_polling_consumer(config: dict) -> None:
