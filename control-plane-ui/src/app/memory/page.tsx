@@ -817,7 +817,7 @@ function HindsightSection({
       })}
       {banks.length === 0 ? (
         <div className="px-2 py-3 text-sm text-[var(--color-text-tertiary)]">
-          No Hindsight banks discovered
+          No Hindsight banks configured
         </div>
       ) : null}
     </div>

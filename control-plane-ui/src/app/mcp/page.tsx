@@ -83,31 +83,53 @@ function McpPageContent() {
 
       {!loading && !error ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
-          <aside className="max-h-[70vh] overflow-y-auto rounded-card border border-ops-border bg-ops-surface">
-            {servers.map((server) => {
-              const active = selectedId === server.id;
+          <aside
+            aria-label="MCP servers"
+            className="max-h-[70vh] overflow-y-auto rounded-card border border-ops-border bg-ops-surface"
+          >
+            {(['platform', 'workflow'] as const).map((group) => {
+              const groupedServers = servers.filter(
+                (server) => server.group === group,
+              );
+              if (groupedServers.length === 0) return null;
               return (
-                <button
-                  key={server.id}
-                  onClick={() => setSelectedId(server.id)}
-                  className={`w-full border-b border-ops-border px-4 py-3 text-left transition-colors last:border-0 ${
-                    active
-                      ? 'bg-[var(--color-accent-muted)]'
-                      : 'hover:bg-[var(--color-surface-raised)]'
-                  }`}
-                >
-                  <div className="text-sm font-medium text-[var(--color-text-primary)]">
-                    {server.name}
-                  </div>
-                  <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                    {server.tools.length} tools
-                  </div>
-                </button>
+                <div key={group}>
+                  <h2 className="border-b border-ops-border px-4 py-3 text-xs font-semibold uppercase text-[var(--color-text-tertiary)]">
+                    {group === 'platform' ? 'Platform MCPs' : 'Workflow MCPs'}
+                  </h2>
+                  {groupedServers.map((server) => {
+                    const active = selectedId === server.id;
+                    return (
+                      <button
+                        key={server.id}
+                        onClick={() => setSelectedId(server.id)}
+                        aria-pressed={active}
+                        className={`w-full border-b border-ops-border px-4 py-3 text-left transition-colors last:border-0 ${
+                          active
+                            ? 'bg-[var(--color-accent-muted)]'
+                            : 'hover:bg-[var(--color-surface-raised)]'
+                        }`}
+                      >
+                        <div className="break-words text-sm font-medium text-[var(--color-text-primary)]">
+                          {server.name}
+                        </div>
+                        <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                          {server.tools.length} tools
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
+            {servers.length === 0 ? (
+              <p className="px-4 py-3 text-sm text-[var(--color-text-tertiary)]">
+                No enabled MCP servers.
+              </p>
+            ) : null}
           </aside>
 
-          <section className="rounded-card border border-ops-border bg-ops-surface p-5">
+          <section className="min-w-0 rounded-card border border-ops-border bg-ops-surface p-5">
             {selected ? (
               <>
                 <div className="flex flex-wrap items-center gap-2">

@@ -16,6 +16,32 @@ import pytest
 pytestmark = pytest.mark.service
 
 
+def test_memory_catalog_only_lists_configured_banks(monkeypatch, tmp_path) -> None:
+    from gateway import api as gateway_api
+    from shared.lib.config import settings
+
+    config = tmp_path / "platform-config.yaml"
+    config.write_text(
+        "memory:\n"
+        "  banks:\n"
+        "    business:\n"
+        "      example-workflow: service-decisions\n"
+        "    learning:\n"
+        "      example-workflow: service-learning\n"
+    )
+    monkeypatch.setattr(settings, "platform_config_file", str(config))
+
+    banks = gateway_api._hindsight_banks_catalog({"incident-rca", "service-decisions", "old-bank"})
+
+    assert {bank.bank_id for bank in banks} == {"service-decisions", "service-learning"}
+    assert all(bank.workflows == ["example-workflow"] for bank in banks)
+    assert next(bank for bank in banks if bank.bank_id == "service-decisions").listed_in_hindsight is True
+    assert next(bank for bank in banks if bank.bank_id == "service-learning").listed_in_hindsight is False
+
+    config.write_text("memory:\n  banks: {}\n")
+    assert gateway_api._hindsight_banks_catalog({"incident-rca", "old-bank"}) == []
+
+
 async def _make_client(fixture_workflows_dir: Path) -> httpx.AsyncClient:
     from shared.lib.config import settings
 
@@ -111,3 +137,47 @@ async def test_platform_mcp_endpoint_returns_catalog(async_engine, fixture_workf
         # The test fixture plugin declares a `testserver` MCP, but whether
         # it shows up here depends on mcps catalog — the point is
         # that the endpoint returns 200 and a list.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("root_kind", ["repo", "workflows", "package"])
+async def test_mcp_catalog_includes_core_and_enabled_workflow_servers(
+    async_engine, monkeypatch, tmp_path, root_kind
+) -> None:
+    from shared.lib.config import settings
+
+    config = tmp_path / "platform-config.yaml"
+    config.write_text("mcps:\n  enabled: [custom-service, gcp-logging]\n")
+    monkeypatch.setattr(settings, "platform_config_file", str(config))
+    for server_id in ("custom-service", "disabled-service"):
+        directory = tmp_path / "mcps" / server_id
+        directory.mkdir(parents=True)
+        (directory / f"mcp_{server_id.replace('-', '_')}.py").write_text(
+            '"""Custom workflow service."""\n'
+            'mcp = FastMCP("Custom Service")\n'
+            '@mcp.tool(annotations={"readOnlyHint": True})\n'
+            "async def inspect_service():\n"
+            '    """Inspect service state."""\n'
+            "    return {}\n"
+        )
+    workflow = tmp_path / "workflows" / "example-workflow"
+    workflow.mkdir(parents=True)
+    (workflow / "agent.yaml").write_text("name: example-workflow\n")
+    (workflow / ".mcp.json").write_text('{"mcpServers": {"custom-service": {}, "knowledge": {}}}')
+
+    catalog_root = {"repo": tmp_path, "workflows": workflow.parent, "package": workflow}[root_kind]
+    async with await _make_client(catalog_root) as client:
+        response = await client.get("/api/platform/mcp")
+    assert response.status_code == 200
+    servers = {server["id"]: server for server in response.json()}
+    assert {"message", "memory", "platform", "knowledge", "gcp-logging", "custom-service"} <= servers.keys()
+    assert "disabled-service" not in servers
+    assert "salesforce" not in servers
+    assert servers["knowledge"]["group"] == "platform"
+    assert any(tool["name"] == "list_sources" for tool in servers["knowledge"]["tools"])
+    custom = servers["custom-service"]
+    assert custom["group"] == "workflow"
+    assert custom["used_by"] == ["example-workflow"]
+    assert custom["tools"] == [
+        {"name": "inspect_service", "description": "Inspect service state.", "read_only": True, "open_world": False}
+    ]

@@ -39,7 +39,7 @@ from shared.lib.config import settings
 from shared.lib.connector_state import MESSAGE_INGRESS_CONNECTOR_ID, connector_is_paused, set_connector_paused
 from shared.lib.db import async_session_factory
 from shared.lib.knowledge_source_scrubbing import compile_scrub_rules
-from shared.lib.memory_catalog import BANK_INCIDENT_RCA, BANK_WORKFLOW_LEARNING, load_workflow_banks
+from shared.lib.memory_catalog import load_workflow_banks
 from shared.lib.message_bus import build_message_bus
 from shared.lib.models import (
     Agent,
@@ -62,7 +62,12 @@ from shared.lib.platform_secrets import (
 )
 from shared.lib.task_queue import archive_task, count_tasks, list_task_filter_options, list_tasks
 from shared.lib.trace_tree import SessionTraceResponse, build_trace_tree
-from shared.lib.workflow_paths import discover_workflow_packages, find_workflow_package
+from shared.lib.workflow_paths import (
+    WorkflowPackage,
+    configured_workflow_roots,
+    discover_workflow_packages,
+    find_workflow_package,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -261,6 +266,7 @@ class McpToolResponse(BaseModel):
 
 class McpServerResponse(BaseModel):
     id: str
+    group: Literal["platform", "workflow"]
     name: str
     description: str
     usage_count: int
@@ -613,9 +619,9 @@ def _short_docstring(value: str | None, default: str) -> str:
     return value.strip().splitlines()[0].strip()
 
 
-def _mcp_usage_map() -> dict[str, list[str]]:
+def _mcp_usage_map(packages: list[WorkflowPackage]) -> dict[str, list[str]]:
     usage: defaultdict[str, list[str]] = defaultdict(list)
-    for package in discover_workflow_packages():
+    for package in packages:
         config_path = package.path / ".mcp.json"
         if not config_path.exists():
             continue
@@ -659,14 +665,23 @@ def _enabled_catalog_ids(section_name: str) -> set[str] | None:
 
 
 def _read_mcp_catalog() -> list[McpServerResponse]:
-    usage = _mcp_usage_map()
+    roots = configured_workflow_roots()
+    usage = _mcp_usage_map(discover_workflow_packages(roots))
     enabled_ids = _enabled_catalog_ids("mcps")
+    core_ids = {"message", "memory", "platform", "knowledge"}
+    source_paths = dict.fromkeys(MCP_DIR.glob("*/mcp_*.py"), "platform")
+    for root in roots:
+        if (root / "agent.yaml").exists():
+            root = root.parent
+        if root.name == "workflows":
+            root = root.parent
+        source_paths.update(dict.fromkeys((root / "mcps").glob("*/mcp_*.py"), "workflow"))
     servers: list[McpServerResponse] = []
 
-    for path in sorted(MCP_DIR.glob("*/mcp_*.py")):
+    for path, group in sorted(source_paths.items()):
         module = ast.parse(path.read_text(), filename=str(path))
-        server_id = path.stem.removeprefix("mcp_")
-        if enabled_ids is not None and server_id not in enabled_ids:
+        server_id = path.stem.removeprefix("mcp_").replace("_", "-")
+        if enabled_ids is not None and server_id not in enabled_ids | core_ids:
             continue
         server_name = _humanize_identifier(server_id)
 
@@ -685,7 +700,7 @@ def _read_mcp_catalog() -> list[McpServerResponse]:
 
         tools: list[McpToolResponse] = []
         for node in module.body:
-            if not isinstance(node, ast.FunctionDef):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
 
             read_only = False
@@ -732,6 +747,7 @@ def _read_mcp_catalog() -> list[McpServerResponse]:
         servers.append(
             McpServerResponse(
                 id=server_id,
+                group=group,
                 name=server_name,
                 description=module_description,
                 usage_count=len(used_by),
@@ -879,16 +895,10 @@ async def _list_hindsight_banks_async() -> tuple[set[str], list[str]]:
 
 def _hindsight_banks_catalog(live_bank_ids: set[str] | None = None) -> list[HindsightBankResponse]:
     grouped: dict[tuple[str, str], set[str]] = {}
-    defaults = {
-        (BANK_INCIDENT_RCA, "business"): set(),
-        (BANK_WORKFLOW_LEARNING, "learning"): set(),
-    }
 
     for kind, mapping in load_workflow_banks().items():
         for workflow, bank_id in mapping.items():
             grouped.setdefault((bank_id, kind), set()).add(workflow)
-
-    grouped.update({key: grouped.get(key, set()) | value for key, value in defaults.items()})
 
     banks: list[HindsightBankResponse] = []
     for (bank_id, kind), workflows in sorted(grouped.items(), key=lambda item: (item[0][1], item[0][0])):
@@ -899,18 +909,6 @@ def _hindsight_banks_catalog(live_bank_ids: set[str] | None = None) -> list[Hind
                 kind=kind,
                 workflows=sorted(workflows),
                 listed_in_hindsight=bank_id in (live_bank_ids or set()),
-            )
-        )
-
-    known_ids = {bank.bank_id for bank in banks}
-    for bank_id in sorted((live_bank_ids or set()) - known_ids):
-        banks.append(
-            HindsightBankResponse(
-                bank_id=bank_id,
-                label=_humanize_identifier(bank_id),
-                kind="discovered",
-                workflows=[],
-                listed_in_hindsight=True,
             )
         )
 

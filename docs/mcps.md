@@ -13,6 +13,12 @@ Servers are grouped by whether the platform needs them to operate:
 A deployment turns servers on in `platform-config.yaml`, and a workflow
 references the ones it uses in its `.mcp.json`:
 
+The control-plane MCP catalog separates platform servers from workflow-repository
+servers under `mcps/*/mcp_*.py`. Core servers are always listed; optional platform
+integrations and workflow servers are listed only when enabled in
+`mcps.enabled`. The catalog includes synchronous and asynchronous tools and the
+workflows that reference each server in `.mcp.json`.
+
 ```yaml
 mcps:
   enabled:

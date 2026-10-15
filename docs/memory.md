@@ -21,6 +21,13 @@ remember to call the tools:
 | `hooks/auto_recall_hook.py` | `SessionStart` | Queries long-term memory for entries relevant to the coordinator task prompt and injects them as invisible `additionalContext` (labeled `[Long-term memory — similar past incidents]`), so the main agent starts with that context without an explicit `recall_similar` call. It skips subagents. |
 | `hooks/retain_incident_hook.py` | `Stop` or `SubagentStop` | Writes a business-facing RCA record, a workflow-learning trace, or both according to `RETAIN_MEMORY_SCOPE`. This lets workflows retain a final coordinator synthesis separately from partial specialist traces. Never blocks the session. |
 
+Retention ignores events other than `Stop` and `SubagentStop`. A coordinator
+`Stop` can occur while a background specialist is still running; workflows can
+set `RETAIN_RESULT_PREFIX` on their Stop command to require the final response
+heading. Messages without that prefix are skipped without retention or a
+timeline hook event. Leave it unset on specialist SubagentStop commands when
+their completed findings should still be retained as learning traces.
+
 Explicit tools remain available for targeted retrieval — e.g. a digest
 workflow calls `recall_for_digest` over a recent window, and the weekly
 reflection run calls `reflect_patterns`.
@@ -57,6 +64,12 @@ The `memory` MCP (backed by Hindsight) resolves the right bank server-side
 from the `X-Task-Workflow` request header; a workflow without a mapping falls
 back to the `incident-rca` (business) and `workflow-learning` (learning)
 defaults.
+
+The control-plane memory explorer lists only banks explicitly configured under
+`memory.banks`, with their workflow mappings and live availability. Defaults and
+historical banks that are not configured are not added to the explorer; their
+stored Hindsight data is unchanged. To inspect a default bank, configure an
+explicit mapping to it.
 
 `memory.backend: hindsight` identifies the only supported long-term-memory
 backend today. It does not replace `HINDSIGHT_URL`: gateway health/API calls,

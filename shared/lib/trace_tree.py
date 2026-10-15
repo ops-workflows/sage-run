@@ -711,7 +711,7 @@ def build_trace_tree(events: list[dict[str, Any]], full_prompt: str | None = Non
             )
             continue
 
-        if event_type in {"approval_requested", "permission_callback", "user_question_requested"}:
+        if event_type == "approval_requested":
             current_parent().children.append(
                 TraceNodeResponse(
                     id=event_id,

@@ -3,6 +3,7 @@ import type { McpServer } from '@/lib/api';
 export const MOCK_MCP_SERVERS: McpServer[] = [
   {
     id: 'message',
+    group: 'platform',
     name: 'Message Bus Core',
     description:
       'Two-way operator messaging, clarification dialogs, and cross-workflow task handoff broker',
@@ -38,7 +39,24 @@ export const MOCK_MCP_SERVERS: McpServer[] = [
     ],
   },
   {
+    id: 'service-health',
+    group: 'workflow',
+    name: 'Service Health',
+    description: 'Workflow-specific service health inspection.',
+    usage_count: 1,
+    used_by: ['online-platform-triage'],
+    tools: [
+      {
+        name: 'inspect_service',
+        description: 'Inspect the configured service health.',
+        read_only: true,
+        open_world: false,
+      },
+    ],
+  },
+  {
     id: 'memory',
+    group: 'platform',
     name: 'Hindsight Episodic Memory',
     description:
       'Cross-session incident recall, episodic RCA retention, and weekly behavioral reflection',
@@ -82,6 +100,7 @@ export const MOCK_MCP_SERVERS: McpServer[] = [
   },
   {
     id: 'platform',
+    group: 'platform',
     name: 'Platform Self-Service & Ops',
     description:
       'Direct operational infrastructure controls, database queries, and deployment management',
@@ -127,6 +146,7 @@ export const MOCK_MCP_SERVERS: McpServer[] = [
   },
   {
     id: 'knowledge',
+    group: 'platform',
     name: 'Knowledge Graph & Code Index',
     description:
       'AST-grounded code navigation and architectural service dependency graph',
@@ -158,6 +178,7 @@ export const MOCK_MCP_SERVERS: McpServer[] = [
   },
   {
     id: 'splunk',
+    group: 'platform',
     name: 'Splunk Log Search',
     description:
       'Enterprise search integration for distributed application logs and exception traces',
@@ -182,6 +203,7 @@ export const MOCK_MCP_SERVERS: McpServer[] = [
   },
   {
     id: 'cloudwatch',
+    group: 'platform',
     name: 'AWS CloudWatch Metrics & Logs',
     description:
       'Amazon Web Services log group queries, metric alarms, and Container Insights telemetry',
@@ -213,6 +235,7 @@ export const MOCK_MCP_SERVERS: McpServer[] = [
   },
   {
     id: 'salesforce',
+    group: 'platform',
     name: 'Salesforce & Enterprise CRM',
     description:
       'CRM object querying, Tooling API metadata inspection, and Flow version analysis',
@@ -244,6 +267,7 @@ export const MOCK_MCP_SERVERS: McpServer[] = [
   },
   {
     id: 'jira',
+    group: 'platform',
     name: 'Jira Software Tracking',
     description:
       'Automated engineering issue escalation, bug ticket creation, and incident linkage',
@@ -275,6 +299,7 @@ export const MOCK_MCP_SERVERS: McpServer[] = [
   },
   {
     id: 'github',
+    group: 'platform',
     name: 'GitHub Enterprise & Cloud',
     description:
       'Git repository inspection, blame analysis, and autonomous pull request creation',

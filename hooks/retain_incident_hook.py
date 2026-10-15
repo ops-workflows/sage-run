@@ -280,11 +280,18 @@ def main():
         print(json.dumps({"continue": True}))
         return
 
-    hook_event = str(event.get("hook_event_name") or "SubagentStop")
+    hook_event = str(event.get("hook_event_name") or "")
+    if hook_event not in {"Stop", "SubagentStop"}:
+        print(json.dumps({"continue": True}))
+        return
     agent_type = event.get("agent_type", "")
     result_text = str(event.get("last_assistant_message") or event.get("last_result_text") or "").strip()
+    result_prefix = os.environ.get("RETAIN_RESULT_PREFIX", "").strip()
+    if result_prefix and not result_text.startswith(result_prefix):
+        print(json.dumps({"continue": True}))
+        return
     if not result_text:
-        emit_hook_event(status="skipped", detail="No final assistant message to retain")
+        emit_hook_event(status="skipped", detail="No final assistant message to retain", hook_event=hook_event)
         print(json.dumps({"continue": True}))
         return
 

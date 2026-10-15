@@ -7,6 +7,39 @@ import json
 from shared.lib.trace_tree import SessionTraceResponse, build_trace_tree
 
 
+def test_human_interactions_hide_redundant_callback_hooks():
+    events = [
+        {
+            "id": "question-tool",
+            "event_type": "conversation_batch",
+            "data": {
+                "messages": [
+                    {
+                        "type": "assistant",
+                        "content": [
+                            {
+                                "id": "question-1",
+                                "type": "tool_use",
+                                "name": "AskUserQuestion",
+                                "input_preview": json.dumps({"questions": [{"question": "Which service?"}]}),
+                            }
+                        ],
+                    }
+                ]
+            },
+        },
+        *[
+            {"id": event_type, "event_type": event_type, "data": {"tool_name": "AskUserQuestion"}}
+            for event_type in ("permission_callback", "user_question_requested", "approval_requested")
+        ],
+    ]
+
+    trace = build_trace_tree(events)
+
+    assert [node.label for node in trace.root.children if node.kind == "hook"] == ["approval requested"]
+    assert any(node.kind == "tool_call" and node.label == "AskUserQuestion" for node in trace.root.children)
+
+
 def test_build_trace_tree_basic():
     events = [
         {

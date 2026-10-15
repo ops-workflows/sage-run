@@ -96,7 +96,7 @@ connectors:
 
     assert _enabled_catalog_ids("mcps") == {"platform"}
     assert _enabled_catalog_ids("connectors") == set()
-    assert [server.id for server in _read_mcp_catalog()] == ["platform"]
+    assert {server.id for server in _read_mcp_catalog()} == {"message", "memory", "platform", "knowledge"}
     assert _read_connectors_catalog() == []
 
 

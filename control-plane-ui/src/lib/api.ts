@@ -250,6 +250,7 @@ export interface McpTool {
 
 export interface McpServer {
   id: string;
+  group: 'platform' | 'workflow';
   name: string;
   description: string;
   usage_count: number;
