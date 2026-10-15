@@ -76,11 +76,14 @@ async def create_task(
     message_thread: str | None = None,
     coalesce_key: str | None = None,
     coalesce_window_sec: int = 300,
+    coalesce_include_succeeded: bool = False,
 ) -> Task:
     """Create a new task, with optional alert coalescing.
 
     If coalesce_key is provided, checks for recent queued/running tasks with the
     same key. If found within the window, appends to the existing task instead.
+    With coalesce_include_succeeded, a recently succeeded task also absorbs the
+    repeat so a persistent alert is not reinvestigated on every notification.
     """
     message_channel, metadata = await _normalize_message_route(
         session, workflow, message_channel, message_thread, metadata
@@ -94,11 +97,14 @@ async def create_task(
             signed=True,
         )
         await session.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
+        coalescing_statuses = ["queued", "running", "resume_pending", *WAITING_STATUSES]
+        if coalesce_include_succeeded:
+            coalescing_statuses.append("succeeded")
         existing = await session.execute(
             select(Task)
             .where(
                 Task.coalesce_key == coalesce_key,
-                Task.status.in_(["queued", "running", "resume_pending", *WAITING_STATUSES]),
+                Task.status.in_(coalescing_statuses),
                 Task.created >= cutoff,
             )
             .order_by(Task.created.desc())

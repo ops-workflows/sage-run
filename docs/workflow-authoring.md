@@ -44,6 +44,9 @@ workflows/<name>/
 | `messaging.channels` | list[string] | Message-bus channel names or provider IDs this workflow listens on. Names are resolved to IDs visible to the configured bot at gateway startup. |
 | `messaging.trigger_words` | list[string] | Prefixes that create a task in configured channels (for example, `@agent`). |
 | `messaging.channel_policies` | object | Per-configured-channel human Mattermost invocation policy; omit the map or channel entry to allow all; each entry requires `allowed_usernames`, with an empty list denying all humans. |
+| `messaging.rules[]` | array | Deterministic alert routes: `id`, `match` (`prefix` or a restricted `regex` without groups, alternation, or `+`), `trusted_senders`, `allow_bot`, `root_posts_only`, `preserve_full_body`, `priority`, `constraints`, and `coalesce`. |
+| `messaging.rules[].constraints` | object | `environments`, 12-digit `accounts`, and `labels`. Each `labels` key must appear in the alert as `key=value` or `key: value`, and every occurrence must use an allowed value (case-insensitive), so label order does not matter. |
+| `messaging.rules[].coalesce` | object | `window_sec` (0–21600) overrides `runtime.alert_coalesce_window_sec` for the rule. `include_succeeded: true` also folds a repeat of the same alert identity into a task that succeeded within the window, without a new acknowledgement. |
 | `knowledge.sources` | list[string] | Canonical Knowledge Source aliases this workflow may access; requires the `knowledge` MCP in `.mcp.json`. |
 
 `agent.yaml` is validated against

@@ -8,7 +8,7 @@ Servers are grouped by whether the platform needs them to operate:
 - **`core/`** — required for baseline functionality and enabled for every
   instance: `message`, `memory`, `knowledge`, `platform`.
 - **`integrations/`** — optional, external-system servers a workflow opts into:
-  `salesforce`, `jira`, `splunk`, `cloudwatch`, `github`.
+  `salesforce`, `jira`, `splunk`, `cloudwatch`, `gcp-logging`, `github`.
 
 A deployment turns servers on in `platform-config.yaml`, and a workflow
 references the ones it uses in its `.mcp.json`:
@@ -230,7 +230,11 @@ queries whose provider-reported scan exceeds that ceiling or omits scan
 statistics. `max_evidence_bytes` defaults to 65536. Requests fail closed without
 policy. The MCP constructs an isolated AWS SDK (`boto3`) session from each
 workflow request. Times accept bounded ISO 8601 or relative values such as
-`-1h`.
+`-1h`. Alarm tools accept the exact alarm ARN, an ARN using `alarm/`, an ARN
+with an empty region or account, or a bare alarm name; missing parts are filled
+from `x-aws-region` and `x-aws-account-id`, and an explicit mismatching account
+is rejected. Inputs are validated before a task-scoped call budget is charged,
+so rejected calls never consume it.
 
 | Tool | Purpose |
 | --- | --- |
@@ -240,6 +244,39 @@ workflow request. Times accept bounded ISO 8601 or relative values such as
 | `get_alarm_log_groups` | Resolve a validated alarm ARN through an exact mapping or configured metric-dimension template. |
 | `describe_alarm` | Retrieve projected current state and metric identity for a validated alarm ARN. |
 | `get_alarm_history` | Retrieve bounded state transitions for a validated alarm ARN. |
+
+### `gcp-logging`
+
+Read-only Cloud Logging evidence for GCP Cloud Monitoring alerts. Requires
+`x-gcp-project-id` and `x-gcp-service-account-b64` (a base64-encoded service
+account JSON key) request headers, normally supplied from workflow `env` and
+`secrets` in `.mcp.json`. The MCP signs a short-lived OAuth assertion with the
+`logging.read` scope and always exchanges it at Google's fixed token endpoint;
+the key's `token_uri` is ignored. Grant the service account
+`roles/logging.viewer` on the project (plus `roles/logging.viewAccessor` when
+logs are routed to a non-default bucket view).
+
+Configure `allowed_projects`, `max_results` (default 200), `max_window_hours`
+(default 24), and `max_evidence_bytes` (default 65536) under
+`mcps.config.gcp-logging`. Requests fail closed for unlisted projects. Tools
+read Cloud Run application logs (`stderr`/`stdout`) with structured
+`jsonPayload` fields rather than Cloud Logging `severity` or request logs:
+applications that log JSON to stderr are recorded at `DEFAULT` severity, and
+request logs carry only the status, not the failure reason. Tools build typed
+Logging filters; there is no free-form filter input. Only `caller`, `level`,
+`event`, `method`, `path`, `status`, `attempt`, `retryCount`, `message`, and
+`error` are projected. Identity, client, query, session, and response-body
+fields are dropped, IDs are collapsed, and shared redaction applies. Results
+are grouped by service, caller, event, level, method, path template, status,
+and normalized error. Times accept ISO 8601 with a timezone or relative
+values such as `-1h`; future end times are clamped to now. The
+`online-alerts-investigator` workflow has a five-call task budget, charged
+only after input validation.
+
+| Tool | Purpose |
+| --- | --- |
+| `search_app_errors` | Group application entries with `jsonPayload.error`, optionally for one service, one `jsonPayload.event` marker, error level only, or one exact error substring. |
+| `search_cloud_run_5xx` | Group application entries with `jsonPayload.status` 500 or higher, optionally for one service or path prefix. |
 
 ### `github`
 

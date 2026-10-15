@@ -605,6 +605,41 @@ def test_match_message_route_rejects_untrusted_or_nonproduction_webhook() -> Non
     )
 
 
+def test_match_message_route_label_constraints_ignore_order_and_reject_conflicts() -> None:
+    route = MessageRoute(
+        workflow="alert-triage",
+        channel="alerts",
+        rule_id="production-alarm",
+        match_type="regex",
+        pattern=r"alarm:production-",
+        preserve_full_body=True,
+        required_labels=(("application", ("site-backend",)),),
+    )
+    base = InboundMessage(
+        provider="mattermost",
+        message_id="post-1",
+        thread_id="post-1",
+        channel_id="channel-1",
+        channel_name="alerts",
+        team_id="team-1",
+        team_name="",
+        user_id="user-1",
+        username="alice",
+        text="",
+    )
+
+    def matches(text: str) -> bool:
+        return match_message_route(InboundMessage(**{**base.__dict__, "text": text}), [route]) is not None
+
+    arn = "alertarn=arn:aws:cloudwatch:eu-west-1:123456789012:alarm:production-x"
+    assert matches(f"Labels: application=site-backend, {arn}")
+    assert matches(f"Labels: maintainer=team, {arn}, Application=Site-Backend")
+    assert matches(f"{arn}\napplication: site-backend")
+    assert not matches(f"Labels: applicationGroup=site-backend, {arn}")
+    assert not matches(f"Labels: application=aws-account-setup, {arn}")
+    assert not matches(f"Labels: application=site-backend, application=other, {arn}")
+
+
 def test_match_message_route_rejects_reply_and_equal_priority_ambiguity() -> None:
     message = InboundMessage(
         provider="mattermost",
@@ -787,3 +822,68 @@ async def test_gateway_creates_structured_alert_task_with_envelope_and_coalesce_
     }
     assert str(captured["coalesce_key"]).startswith("alert:v1:")
     assert captured["coalesce_window_sec"] == 90
+    assert captured["coalesce_include_succeeded"] is False
+
+
+async def test_gateway_skips_acknowledgement_when_alert_joins_succeeded_task(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    route = MessageRoute(
+        workflow="alert-triage",
+        channel="alerts",
+        rule_id="gcp-alert",
+        match_type="regex",
+        pattern=r"\[ALERT - ",
+        preserve_full_body=True,
+        trusted_user_ids=("user-1",),
+        trusted_webhook_names=("GCP Alert",),
+        allow_bot=True,
+        coalesce_window_sec=3600,
+        coalesce_include_succeeded=True,
+    )
+    message = InboundMessage(
+        provider="mattermost",
+        message_id="post-2",
+        thread_id="post-2",
+        channel_id="channel-1",
+        channel_name="alerts",
+        team_id="team-1",
+        team_name="",
+        user_id="user-1",
+        username="alice",
+        text="[ALERT - Error] [api][prod] 5xx\nPolicy: 5xx alert\nProject: example-prod-1234\nState: open",
+        is_bot=True,
+        is_webhook=True,
+        webhook_name="GCP Alert",
+    )
+    captured: dict[str, object] = {}
+    acknowledged: list[str] = []
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args) -> None:
+            return None
+
+    async def create_task(_session, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(id="task-1", status="succeeded")
+
+    async def acknowledge(posted) -> None:
+        acknowledged.append(posted.message_id)
+
+    monkeypatch.setattr("gateway.message_ingress.async_session_factory", SessionContext)
+    monkeypatch.setattr("gateway.message_ingress.create_task", create_task)
+    ingress = GatewayMessageIngress()
+    ingress._routes = [route]
+    monkeypatch.setattr(ingress, "_post_acknowledgement", acknowledge)
+    try:
+        await ingress._handle_message(message)
+    finally:
+        await ingress.stop()
+
+    assert captured["coalesce_window_sec"] == 3600
+    assert captured["coalesce_include_succeeded"] is True
+    assert captured["metadata"]["alert_envelope"]["source"] == "gcp"
+    assert acknowledged == []

@@ -306,6 +306,32 @@
                     "type": "array",
                     "uniqueItems": true,
                     "items": {"type": "string", "pattern": "^\\d{12}$"}
+                  },
+                  "labels": {
+                    "type": "object",
+                    "maxProperties": 10,
+                    "description": "Each key must appear as key=value or key: value, and every occurrence must use an allowed value (case-insensitive)",
+                    "propertyNames": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"},
+                    "additionalProperties": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {"type": "string", "pattern": "^[^,\\s]{1,128}$"}
+                    }
+                  }
+                }
+              },
+              "coalesce": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Per-rule alert coalescing; overrides runtime.alert_coalesce_window_sec",
+                "properties": {
+                  "window_sec": {"type": "integer", "minimum": 0, "maximum": 21600},
+                  "include_succeeded": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Also absorb repeats into a succeeded task created within the window"
                   }
                 }
               }

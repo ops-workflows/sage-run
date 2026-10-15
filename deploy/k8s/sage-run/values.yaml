@@ -166,6 +166,10 @@ mcps:
     enabled: false
     module: mcps.integrations.mcp_cloudwatch
     port: 8104
+  gcp-logging:
+    enabled: false
+    module: mcps.integrations.mcp_gcp_logging
+    port: 8109
   jira:
     enabled: false
     module: mcps.integrations.mcp_jira

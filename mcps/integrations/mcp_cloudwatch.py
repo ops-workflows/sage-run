@@ -36,6 +36,11 @@ ALARM_ARN_PATTERN = re.compile(
     r"^arn:(?:aws|aws-us-gov|aws-cn):cloudwatch:(?P<region>[a-z0-9-]+):"
     r"(?P<account>\d{12}):alarm:(?P<name>[^\r\n]{1,255})$"
 )
+_LOOSE_ALARM_ARN_PATTERN = re.compile(
+    r"^arn:(?P<partition>aws|aws-us-gov|aws-cn):cloudwatch:(?P<region>[a-z0-9-]*):"
+    r"(?P<account>\d{12})?:alarm[:/](?P<name>[^\r\n]{1,255})$"
+)
+_ALARM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-/+=@#]{0,254}$")
 _CONFIG_PATH = os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml")
 _POLICY = load_mcp_server_config(_CONFIG_PATH, "cloudwatch")
 _EVIDENCE_POLICY = load_mcp_server_config(_CONFIG_PATH, "evidence")
@@ -134,16 +139,40 @@ def _get_logs_client(headers: dict[str, str]):
 def _validate_alarm_arn(alarm_arn: str, headers: dict[str, str]) -> re.Match[str]:
     match = ALARM_ARN_PATTERN.fullmatch(alarm_arn)
     if match is None:
-        raise ValueError("CloudWatch alarm ARN has invalid syntax")
+        raise ValueError("CloudWatch alarm ARN has invalid syntax; pass the exact alertarn value from the alert")
     if match.group("region") != headers.get("x-aws-region", "").strip():
         raise ValueError("CloudWatch alarm ARN region does not match x-aws-region")
     if match.group("account") != headers.get("x-aws-account-id", "").strip():
-        raise ValueError("CloudWatch alarm ARN account does not match x-aws-account-id")
+        raise ValueError(
+            "CloudWatch alarm ARN account does not match x-aws-account-id; pass the exact alertarn value from the alert"
+        )
     if match.group("region") not in ALLOWED_REGIONS:
         raise ValueError("CloudWatch alarm ARN region is not allowed by platform policy")
     if match.group("account") not in ALLOWED_ACCOUNT_IDS:
         raise ValueError("CloudWatch alarm ARN account is not allowed by platform policy")
     return match
+
+
+def _normalize_alarm_arn(value: str, headers: dict[str, str]) -> str:
+    """Repair common model formatting of an alarm reference using the trusted request headers."""
+    candidate = str(value or "").strip().strip("`'\"").strip()
+    candidate = re.sub(r"(?i)^alertarn\s*=\s*", "", candidate)
+    region = headers.get("x-aws-region", "").strip()
+    account = headers.get("x-aws-account-id", "").strip()
+    loose = _LOOSE_ALARM_ARN_PATTERN.fullmatch(candidate)
+    if loose:
+        return (
+            f"arn:{loose.group('partition')}:cloudwatch:{loose.group('region') or region}:"
+            f"{loose.group('account') or account}:alarm:{loose.group('name')}"
+        )
+    if candidate.lower().startswith("arn:") or not _ALARM_NAME_PATTERN.fullmatch(candidate):
+        return candidate
+    return f"arn:aws:cloudwatch:{region}:{account}:alarm:{candidate}"
+
+
+def _resolve_alarm(alarm_arn: str, headers: dict[str, str]) -> tuple[str, re.Match[str]]:
+    normalized = _normalize_alarm_arn(alarm_arn, headers)
+    return normalized, _validate_alarm_arn(normalized, headers)
 
 
 def _get_alarm_client(alarm_arn: str, headers: dict[str, str]):
@@ -562,9 +591,9 @@ def describe_log_groups(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Use this once to discover candidate log groups before running CloudWatch queries."""
-    _enforce_online_alert_budget(headers)
     if not prefix or _validate_log_groups([prefix]):
         return {"error": "CloudWatch log group prefix must be explicitly allowed", "log_groups": []}
+    _enforce_online_alert_budget(headers)
     try:
         client = _get_logs_client(headers)
     except (ValueError, BotoCoreError, ClientError) as exc:
@@ -593,15 +622,17 @@ def describe_log_groups(
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
 def get_alarm_log_groups(
-    alarm_arn: Annotated[str, "Full validated CloudWatch alarm ARN from the alert."],
+    alarm_arn: Annotated[
+        str, "Exact alertarn value from the alert; a bare alarm name is resolved with the workflow account and region."
+    ],
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Resolve one alarm to configured allowlisted log groups; call this instead of guessing a group name."""
-    _enforce_online_alert_budget(headers)
     try:
-        match = _validate_alarm_arn(alarm_arn, headers)
+        alarm_arn, match = _resolve_alarm(alarm_arn, headers)
     except ValueError as exc:
         return {"error": str(exc), "log_groups": []}
+    _enforce_online_alert_budget(headers)
     alarm_name = match.group("name")
     log_groups = list(ALARM_LOG_GROUP_MAPPINGS.get(alarm_name, ()))
     if not log_groups:
@@ -625,10 +656,16 @@ def get_alarm_log_groups(
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 def describe_alarm(
-    alarm_arn: Annotated[str, "Full CloudWatch alarm ARN."],
+    alarm_arn: Annotated[
+        str, "Exact alertarn value from the alert; a bare alarm name is resolved with the workflow account and region."
+    ],
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Return state, metric identity, period, and evaluation periods needed to scope the alert investigation."""
+    try:
+        alarm_arn, _match = _resolve_alarm(alarm_arn, headers)
+    except ValueError as exc:
+        return {"error": str(exc)}
     _enforce_online_alert_budget(headers)
     try:
         client, alarm_name = _get_alarm_client(alarm_arn, headers)
@@ -670,7 +707,9 @@ def describe_alarm(
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": False})
 def get_alarm_history(
-    alarm_arn: Annotated[str, "Full CloudWatch alarm ARN."],
+    alarm_arn: Annotated[
+        str, "Exact alertarn value from the alert; a bare alarm name is resolved with the workflow account and region."
+    ],
     start_time: Annotated[
         str,
         "Bounded history lookback used to identify the latest ALARM transition and recurrence; this is not automatically the log search window.",
@@ -680,10 +719,14 @@ def get_alarm_history(
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Return state transitions used with alarm period/evaluation periods to derive a narrow log window."""
-    _enforce_online_alert_budget(headers)
     time_range = _normalize_time_range(start_time, end_time)
     if isinstance(time_range, str):
         return {"error": time_range, "history": []}
+    try:
+        alarm_arn, _match = _resolve_alarm(alarm_arn, headers)
+    except ValueError as exc:
+        return {"error": str(exc), "history": []}
+    _enforce_online_alert_budget(headers)
     try:
         client, alarm_name = _get_alarm_client(alarm_arn, headers)
         start_ms, end_ms, effective_end_time = time_range

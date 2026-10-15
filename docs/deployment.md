@@ -290,7 +290,7 @@ and newly built task bundles describe the same revision.
    Mounts `HOST_WORKFLOW_REPO_PATH` and derives its `platform-config.yaml`
    (default `../examples/workflow-repo`),
   and `RUNTIME_BUNDLE_ROOT`. Optional profiles: `model-gateway`, `local-llm`,
-   `salesforce`, `splunk`, `cloudwatch`, `github`, `jira`, `servicenow`,
+   `salesforce`, `splunk`, `cloudwatch`, `gcp-logging`, `github`, `jira`, `servicenow`,
    `gcp-pubsub`.
 - `deploy/k8s/sage-run` — Kubernetes (Helm) chart; instance values select the
    platform-config secret/configmap, ephemeral workflow clone/release caches,

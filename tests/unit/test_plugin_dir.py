@@ -130,7 +130,12 @@ def test_discover_message_routes_adds_structured_rule(tmp_path: Path) -> None:
                     "allow_bot": True,
                     "root_posts_only": True,
                     "preserve_full_body": True,
-                    "constraints": {"environments": ["production"], "accounts": ["123456789012"]},
+                    "constraints": {
+                        "environments": ["production"],
+                        "accounts": ["123456789012"],
+                        "labels": {"Application": ["Site-Backend"]},
+                    },
+                    "coalesce": {"window_sec": 3600, "include_succeeded": True},
                 }
             ]
         },
@@ -156,6 +161,9 @@ def test_discover_message_routes_adds_structured_rule(tmp_path: Path) -> None:
             preserve_full_body=True,
             allowed_accounts=("123456789012",),
             allowed_environments=("production",),
+            required_labels=(("application", ("site-backend",)),),
+            coalesce_window_sec=3600,
+            coalesce_include_succeeded=True,
         ),
     ]
 

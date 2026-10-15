@@ -50,7 +50,9 @@ class MessageRoute:
     preserve_full_body: bool = False
     allowed_accounts: tuple[str, ...] = ()
     allowed_environments: tuple[str, ...] = ()
+    required_labels: tuple[tuple[str, tuple[str, ...]], ...] = ()
     coalesce_window_sec: int = 300
+    coalesce_include_succeeded: bool = False
     allowed_usernames: tuple[str, ...] | None = None
 
 
@@ -164,6 +166,14 @@ def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
             trusted = trusted if isinstance(trusted, dict) else {}
             constraints = raw_rule.get("constraints")
             constraints = constraints if isinstance(constraints, dict) else {}
+            raw_labels = constraints.get("labels")
+            required_labels = tuple(
+                (str(key).strip().lower(), tuple(str(value).strip().lower() for value in values if str(value).strip()))
+                for key, values in (raw_labels.items() if isinstance(raw_labels, dict) else ())
+                if str(key).strip() and isinstance(values, list)
+            )
+            coalesce = raw_rule.get("coalesce")
+            coalesce = coalesce if isinstance(coalesce, dict) else {}
             rule_channels = raw_rule.get("channels") or messaging.get("channels") or []
             for raw_channel in rule_channels:
                 channel = str(raw_channel).strip().lower()
@@ -199,7 +209,9 @@ def _message_routes(workflows: list[tuple[str, dict]]) -> list[MessageRoute]:
                             for value in constraints.get("environments") or []
                             if str(value).strip()
                         ),
-                        coalesce_window_sec=coalesce_window_sec,
+                        required_labels=required_labels,
+                        coalesce_window_sec=int(coalesce.get("window_sec", coalesce_window_sec)),
+                        coalesce_include_succeeded=bool(coalesce.get("include_succeeded", False)),
                     )
                 )
     return routes

@@ -16,6 +16,11 @@ _AWS_ALARM_ARN_PATTERN = re.compile(
 _ENVIRONMENT_PATTERN = re.compile(r"(?im)^Labels:.*?\benvironment=([^,\s]+)")
 _STATUS_PATTERN = re.compile(r"(?im)^Status:\s*([^\r\n]+)")
 _SPLUNK_ALERT_PATTERN = re.compile(r"(?im)^Splunk alert:\s*([^\r\n(]+)")
+_GCP_ALERT_TITLE_PATTERN = re.compile(r"\[ALERT - [^\]\r\n]+\]")
+_GCP_POLICY_PATTERN = re.compile(r"(?im)^Policy:\s*([^\r\n]+)")
+_GCP_PROJECT_PATTERN = re.compile(r"(?im)^Project:\s*([a-z][a-z0-9-]{4,28}[a-z0-9])\s*$")
+_GCP_STATE_PATTERN = re.compile(r"(?im)^State:\s*([^\r\n]+)")
+_GCP_ENVIRONMENT_PATTERN = re.compile(r"(?im)^environment:\s*([^,\s]+)")
 
 
 @dataclass(frozen=True)
@@ -49,9 +54,9 @@ class AlertEnvelope:
 
 def _canonical_state(value: str) -> str:
     normalized = value.strip().lower()
-    if normalized in {"alarm", "alert", "firing", "triggered"}:
+    if normalized in {"alarm", "alert", "firing", "triggered", "open"}:
         return "firing"
-    if normalized in {"ok", "resolved", "recovered", "recovery"}:
+    if normalized in {"ok", "resolved", "recovered", "recovery", "closed"}:
         return "recovery"
     return "unknown"
 
@@ -72,6 +77,23 @@ def parse_alert_envelope(text: str) -> AlertEnvelope | None:
             source="splunk",
             identity=identity,
             state="firing",
+        )
+
+    gcp_policy = _GCP_POLICY_PATTERN.search(body)
+    gcp_project = _GCP_PROJECT_PATTERN.search(body)
+    if gcp_policy and gcp_project and _GCP_ALERT_TITLE_PATTERN.search(body):
+        identity = gcp_policy.group(1).strip()
+        if not identity:
+            return None
+        state_match = _GCP_STATE_PATTERN.search(body)
+        environment_match = _GCP_ENVIRONMENT_PATTERN.search(body)
+        return AlertEnvelope(
+            version=ALERT_ENVELOPE_VERSION,
+            source="gcp",
+            identity=identity,
+            state=_canonical_state(state_match.group(1) if state_match else ""),
+            account=gcp_project.group(1),
+            environment=environment_match.group(1).strip().lower() if environment_match else "",
         )
 
     arn_match = _AWS_ALARM_ARN_PATTERN.search(body)

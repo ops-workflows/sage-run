@@ -260,6 +260,43 @@ async def test_coalesce_merges_into_existing_task(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_coalesce_into_succeeded_task_requires_opt_in(db_session) -> None:
+    first = await create_task(
+        db_session,
+        workflow="platform-test",
+        prompt="alert-a",
+        coalesce_key="persistent-alert",
+        coalesce_window_sec=3600,
+    )
+    await dequeue_task(db_session, workflow="platform-test")
+    await complete_task(db_session, first.id, status="succeeded", tokens_used=1, duration_sec=1.0)
+
+    separate = await create_task(
+        db_session,
+        workflow="platform-test",
+        prompt="alert-b",
+        coalesce_key="persistent-alert",
+        coalesce_window_sec=3600,
+    )
+    assert separate.id != first.id
+
+    await dequeue_task(db_session, workflow="platform-test")
+    await complete_task(db_session, separate.id, status="succeeded", tokens_used=1, duration_sec=1.0)
+    absorbed = await create_task(
+        db_session,
+        workflow="platform-test",
+        prompt="alert-c",
+        coalesce_key="persistent-alert",
+        metadata={"message_id": "message-3"},
+        coalesce_window_sec=3600,
+        coalesce_include_succeeded=True,
+    )
+    assert absorbed.id == separate.id
+    assert absorbed.status == "succeeded"
+    assert absorbed.task_metadata["alert_occurrence_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_concurrent_same_key_alerts_create_one_task(async_engine, db_session) -> None:
     from sqlalchemy import func, select
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

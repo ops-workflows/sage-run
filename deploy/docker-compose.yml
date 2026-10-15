@@ -391,6 +391,23 @@ services:
     networks:
       - sage-run-network
 
+  mcp-gcp-logging:
+    build:
+      context: ..
+      dockerfile: mcps/Dockerfile
+    command: ["python", "-m", "uvicorn", "mcps.integrations.mcp_gcp_logging:app", "--host", "0.0.0.0", "--port", "8109"]
+    profiles: ["gcp-logging", "incident", "mcps"]
+    restart: unless-stopped
+    environment:
+      <<: *platform-bootstrap-env
+      PLATFORM_CONFIG_FILE: /app/platform-config.yaml
+    volumes:
+      - ${HOST_WORKFLOW_REPO_PATH:-../examples/workflow-repo}/platform-config.yaml:/app/platform-config.yaml:ro
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:8109:8109"
+    networks:
+      - sage-run-network
+
   mcp-jira:
     build:
       context: ..

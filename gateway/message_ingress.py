@@ -52,7 +52,7 @@ from shared.lib.slack_api import (
 from shared.lib.slack_api import (
     update_post as update_slack_post,
 )
-from shared.lib.task_queue import create_task
+from shared.lib.task_queue import TERMINAL_STATUSES, create_task
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,12 @@ def _matches_route_constraints(text: str, route: MessageRoute) -> bool:
             _ENVIRONMENT_ALIASES.get(value.lower(), value.lower()) for value in _ENVIRONMENT_PATTERN.findall(text)
         }
         if not environments or not environments.issubset(set(route.allowed_environments)):
+            return False
+    for key, allowed_values in route.required_labels:
+        values = {
+            value.lower() for value in re.findall(rf"(?im)(?:^|[\s,]){re.escape(key)}\s*[=:][ \t]*([^,\s]+)", text)
+        }
+        if not values or not values.issubset(set(allowed_values)):
             return False
     return True
 
@@ -327,7 +333,7 @@ class GatewayMessageIngress:
             metadata["alert_occurrence_count"] = 1
             metadata["alert_state_transitions"] = [{"state": envelope.state, "message_id": message.message_id}]
         async with async_session_factory() as session:
-            await create_task(
+            task = await create_task(
                 session,
                 workflow=route.workflow,
                 prompt=prompt,
@@ -338,7 +344,11 @@ class GatewayMessageIngress:
                 message_thread=message.thread_id,
                 coalesce_key=envelope.coalesce_key(route.workflow) if envelope is not None else None,
                 coalesce_window_sec=route.coalesce_window_sec,
+                coalesce_include_succeeded=route.coalesce_include_succeeded,
             )
+        if getattr(task, "status", None) in TERMINAL_STATUSES:
+            logger.info("Alert %s matched recently completed task %s", message.message_id, task.id)
+            return
         await self._post_acknowledgement(message)
 
     async def _hydrate_thread_prompt(self, message: InboundMessage, prompt: str) -> tuple[str, int] | None:

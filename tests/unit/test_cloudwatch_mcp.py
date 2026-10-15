@@ -451,6 +451,7 @@ def test_search_logs_rejects_missing_or_excessive_scan_statistics(monkeypatch, t
 def test_alarm_tools_validate_arn_and_project_state_history(monkeypatch, tmp_path) -> None:
     cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
     alarm_arn = "arn:aws:cloudwatch:eu-west-1:123456789012:alarm:production-apiAlarm"
+    headers = {"x-aws-region": "eu-west-1", "x-aws-account-id": "123456789012"}
 
     class AlarmClient:
         def describe_alarms(self, **kwargs):
@@ -493,8 +494,8 @@ def test_alarm_tools_validate_arn_and_project_state_history(monkeypatch, tmp_pat
         "_get_alarm_client",
         lambda _arn, _headers: (AlarmClient(), "production-apiAlarm"),
     )
-    alarm = cloudwatch.describe_alarm(alarm_arn, headers={})
-    history = cloudwatch.get_alarm_history(alarm_arn, headers={})
+    alarm = cloudwatch.describe_alarm(alarm_arn, headers=headers)
+    history = cloudwatch.get_alarm_history(alarm_arn, headers=headers)
 
     assert alarm["state"] == "ALARM"
     assert alarm["namespace"] == "AWS/Lambda"
@@ -512,6 +513,54 @@ def test_alarm_arn_must_match_header_region_and_account(monkeypatch, tmp_path) -
         cloudwatch._get_alarm_client("arn:aws:cloudwatch:us-east-1:123456789012:alarm:production-apiAlarm", headers)
     with pytest.raises(ValueError, match="account does not match"):
         cloudwatch._get_alarm_client("arn:aws:cloudwatch:eu-west-1:210987654321:alarm:production-apiAlarm", headers)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "arn:aws:cloudwatch:eu-west-1:123456789012:alarm:production-apiAlarm",
+        "arn:aws:cloudwatch:eu-west-1:123456789012:alarm/production-apiAlarm",
+        "arn:aws:cloudwatch:eu-west-1::alarm:production-apiAlarm",
+        "arn:aws:cloudwatch:::alarm/production-apiAlarm",
+        "alertarn=arn:aws:cloudwatch:eu-west-1:123456789012:alarm:production-apiAlarm",
+        "`production-apiAlarm`",
+        "production-apiAlarm",
+    ],
+)
+def test_alarm_reference_is_normalized_from_trusted_headers(monkeypatch, tmp_path, reference) -> None:
+    cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cloudwatch, "ALARM_LOG_GROUP_MAPPINGS", {"production-apiAlarm": ("/aws/lambda/production-api",)}
+    )
+    headers = {"x-aws-region": "eu-west-1", "x-aws-account-id": "123456789012"}
+
+    result = cloudwatch.get_alarm_log_groups(reference, headers=headers)
+
+    assert result["alarm_arn"] == "arn:aws:cloudwatch:eu-west-1:123456789012:alarm:production-apiAlarm"
+    assert result["log_groups"] == ["/aws/lambda/production-api"]
+
+
+def test_invalid_alarm_reference_does_not_consume_online_alert_budget(monkeypatch, tmp_path) -> None:
+    cloudwatch = _reload_with_policy(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cloudwatch, "ALARM_LOG_GROUP_MAPPINGS", {"production-apiAlarm": ("/aws/lambda/production-api",)}
+    )
+    headers = {
+        "x-task-workflow": "online-alerts-investigator",
+        "x-task-id": "task-invalid-arn",
+        "x-aws-region": "eu-west-1",
+        "x-aws-account-id": "123456789012",
+    }
+    invented_account = "arn:aws:cloudwatch:eu-west-1:436660259755:alarm:production-apiAlarm"
+
+    for _ in range(6):
+        assert "pass the exact alertarn" in cloudwatch.get_alarm_log_groups(invented_account, headers=headers)["error"]
+        assert "pass the exact alertarn" in cloudwatch.describe_alarm(invented_account, headers=headers)["error"]
+        assert "pass the exact alertarn" in cloudwatch.get_alarm_history(invented_account, headers=headers)["error"]
+        assert "explicitly allowed" in cloudwatch.describe_log_groups("/aws/rds/", headers=headers)["error"]
+
+    for _ in range(5):
+        assert cloudwatch.get_alarm_log_groups("production-apiAlarm", headers=headers)["log_groups"]
 
 
 def test_compact_evidence_enforces_total_serialized_budget(monkeypatch, tmp_path) -> None:

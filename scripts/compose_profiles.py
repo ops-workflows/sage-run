@@ -36,6 +36,7 @@ MCP_PROFILES = {
     "salesforce": "salesforce",
     "splunk": "splunk",
     "cloudwatch": "cloudwatch",
+    "gcp-logging": "gcp-logging",
     "jira": "jira",
     "github": "github",
 }

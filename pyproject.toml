@@ -81,6 +81,7 @@ ignore = ["S101", "S104", "B008"]
 "tests/**" = ["S105", "S106", "S108"]
 "mcps/core/mcp_memory.py" = ["E501"]
 "mcps/integrations/mcp_cloudwatch.py" = ["E501"]
+"mcps/integrations/mcp_gcp_logging.py" = ["E501"]
 # Salesforce MCP builds server-capped, field-validated SOQL (never raw user SQL) and
 # carries long tool-guidance docstrings; the query construction is the intended design.
 "mcps/integrations/mcp_salesforce.py" = ["E501", "S608"]
