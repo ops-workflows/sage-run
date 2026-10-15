@@ -60,7 +60,9 @@ set-platform-secret: ## Encrypt a secret in the configured platform-config.yaml
 	@test -f "$(WORKFLOW_PLATFORM_CONFIG_FILE)" || (echo "Platform config not found: $(WORKFLOW_PLATFORM_CONFIG_FILE)" >&2; exit 1)
 	@AGE_IDENTITY="$(AGE_IDENTITY)" $(PYTHON) scripts/set_secret.py \
 		--scope shared \
-		--platform-file "$(WORKFLOW_PLATFORM_CONFIG_FILE)"
+		--platform-file "$(WORKFLOW_PLATFORM_CONFIG_FILE)" \
+		$(if $(SECRET_NAME),--name "$(SECRET_NAME)") \
+		$(if $(SECRET_VALUE_FILE),--value-file "$(SECRET_VALUE_FILE)")
 	@$(MAKE) sync
 
 set-workflow-secret: ## Encrypt a secret in WORKFLOW=<workflow>/agent.yaml
@@ -70,7 +72,9 @@ set-workflow-secret: ## Encrypt a secret in WORKFLOW=<workflow>/agent.yaml
 	@AGE_IDENTITY="$(AGE_IDENTITY)" $(PYTHON) scripts/set_secret.py \
 		--scope plugin \
 		--plugin "$(WORKFLOW)" \
-		--plugins-dir "$(HOST_WORKFLOW_REPO_PATH)/workflows"
+		--plugins-dir "$(HOST_WORKFLOW_REPO_PATH)/workflows" \
+		$(if $(SECRET_NAME),--name "$(SECRET_NAME)") \
+		$(if $(SECRET_VALUE_FILE),--value-file "$(SECRET_VALUE_FILE)")
 	@$(MAKE) sync
 
 help: ## Show available targets

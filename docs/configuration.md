@@ -666,6 +666,24 @@ WORKFLOW=<workflow-name>` for values in a workflow's `agent.yaml`. Both commands
 prompt securely for the secret name and value, then run `make sync` to rebuild
 the active workflow release through the running gateway.
 
+For long values such as base64 credentials, bypass terminal input limits with
+`SECRET_NAME` and `SECRET_VALUE_FILE` (supported by both targets):
+
+```bash
+make set-workflow-secret WORKFLOW=example-workflow \
+  SECRET_NAME=SERVICE_ACCOUNT_B64 SECRET_VALUE_FILE=/secure/path/credential.b64
+```
+
+On macOS, a single-line base64 value copied to the clipboard can be passed
+without a plaintext file or the secret appearing in shell history:
+
+```bash
+pbpaste | tr -d '\r\n' | make set-workflow-secret WORKFLOW=example-workflow \
+  SECRET_NAME=SERVICE_ACCOUNT_B64 SECRET_VALUE_FILE=/dev/stdin
+```
+
+These options bypass the corresponding prompts; file input is encrypted as-is.
+
 Per-workflow secrets follow the same `encrypted: ENC[...]` shape under a
 workflow's own `agent.yaml` `secrets:` block — see
 [Workflow authoring](workflow-authoring.md).
