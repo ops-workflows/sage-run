@@ -673,7 +673,7 @@ def _read_mcp_catalog() -> list[McpServerResponse]:
     for root in roots:
         if (root / "agent.yaml").exists():
             root = root.parent
-        if root.name == "workflows":
+        if root.name == "workflows" and any(root.glob("*/agent.yaml")):
             root = root.parent
         source_paths.update(dict.fromkeys((root / "mcps").glob("*/mcp_*.py"), "workflow"))
     servers: list[McpServerResponse] = []

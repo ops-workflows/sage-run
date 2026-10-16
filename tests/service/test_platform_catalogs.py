@@ -140,12 +140,15 @@ async def test_platform_mcp_endpoint_returns_catalog(async_engine, fixture_workf
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("root_kind", ["repo", "workflows", "package"])
+@pytest.mark.parametrize("root_kind", ["repo", "workflows", "package", "mounted-repo"])
 async def test_mcp_catalog_includes_core_and_enabled_workflow_servers(
     async_engine, monkeypatch, tmp_path, root_kind
 ) -> None:
     from shared.lib.config import settings
 
+    if root_kind == "mounted-repo":
+        tmp_path = tmp_path / "workflows"
+        tmp_path.mkdir()
     config = tmp_path / "platform-config.yaml"
     config.write_text("mcps:\n  enabled: [custom-service, gcp-logging]\n")
     monkeypatch.setattr(settings, "platform_config_file", str(config))
@@ -165,7 +168,12 @@ async def test_mcp_catalog_includes_core_and_enabled_workflow_servers(
     (workflow / "agent.yaml").write_text("name: example-workflow\n")
     (workflow / ".mcp.json").write_text('{"mcpServers": {"custom-service": {}, "knowledge": {}}}')
 
-    catalog_root = {"repo": tmp_path, "workflows": workflow.parent, "package": workflow}[root_kind]
+    catalog_root = {
+        "repo": tmp_path,
+        "workflows": workflow.parent,
+        "package": workflow,
+        "mounted-repo": tmp_path,
+    }[root_kind]
     async with await _make_client(catalog_root) as client:
         response = await client.get("/api/platform/mcp")
     assert response.status_code == 200
