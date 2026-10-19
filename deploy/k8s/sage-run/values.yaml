@@ -46,6 +46,7 @@ infrastructure:
     llmProvider: openai
     llmBaseUrl: ""
     llmModel: ""
+    reflectLlmTimeout: 120
     embeddingsProvider: openai
     embeddingsBaseUrl: ""
     embeddingsModel: ""

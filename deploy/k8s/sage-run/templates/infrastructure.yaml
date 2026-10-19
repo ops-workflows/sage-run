@@ -249,6 +249,8 @@ spec:
               value: {{ required "infrastructure.hindsight.llmBaseUrl is required when Hindsight is enabled" .Values.infrastructure.hindsight.llmBaseUrl | quote }}
             - name: HINDSIGHT_API_LLM_MODEL
               value: {{ required "infrastructure.hindsight.llmModel is required when Hindsight is enabled" .Values.infrastructure.hindsight.llmModel | quote }}
+            - name: HINDSIGHT_API_REFLECT_LLM_TIMEOUT
+              value: {{ .Values.infrastructure.hindsight.reflectLlmTimeout | quote }}
             - name: HINDSIGHT_API_LLM_API_KEY
               valueFrom:
                 secretKeyRef:

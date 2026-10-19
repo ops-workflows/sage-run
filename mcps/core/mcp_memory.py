@@ -160,7 +160,7 @@ def reflect_patterns(
         "POST",
         f"{BANKS_API_PREFIX}/{resolved_bank}/reflect",
         json={"query": _query_with_time_focus(query, time_range)},
-        timeout=60.0,
+        timeout=150.0,
     )
 
 

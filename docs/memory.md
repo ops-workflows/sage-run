@@ -42,6 +42,14 @@ resolution), and — when warranted — proposes durable skill/instruction updat
 as a GitHub PR through the `platform` MCP. It is deliberately about *workflow
 behavior*, not business incident themes.
 
+Hindsight reflection model calls have a 120-second timeout by default, configured
+with `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` in Compose or
+`infrastructure.hindsight.reflectLlmTimeout` in Helm. The `reflect_patterns` MCP
+tool waits up to 150 seconds for the Hindsight HTTP response; other memory tools
+retain their 30-second HTTP timeout. Reflection can make multiple model calls
+and retries, so the 150-second client timeout does not guarantee that every
+reflection will complete.
+
 ### Memory banks
 
 Each workflow routes to its own Hindsight banks so knowledge stays isolated.

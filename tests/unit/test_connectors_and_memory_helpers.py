@@ -236,6 +236,36 @@ def test_query_timestamp_for_range_returns_none_for_unknown_format():
     assert mcp_memory._query_timestamp_for_range("30m") is None
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "expected_timeout", "endpoint"),
+    [("reflect_patterns", 150.0, "reflect"), ("recall_similar", 30.0, "memories/recall")],
+)
+def test_memory_tool_http_timeout_is_scoped(monkeypatch, tool_name, expected_timeout, endpoint):
+    recorded = {}
+
+    class Client:
+        def __init__(self, *, timeout):
+            recorded["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, *, json):
+            recorded["url"] = url
+            recorded["json"] = json
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"result": "ok"})
+
+    monkeypatch.setattr(mcp_memory.httpx, "Client", Client)
+    result = getattr(mcp_memory, tool_name)(query="Synthetic pattern", bank_id="test-learning", headers={})
+
+    assert result == {"result": "ok"}
+    assert recorded["timeout"] == expected_timeout
+    assert recorded["url"].endswith(f"/banks/test-learning/{endpoint}")
+
+
 def test_recall_for_digest_includes_query_timestamp_for_relative_window(monkeypatch: pytest.MonkeyPatch, tmp_path):
     from shared.lib.config import settings
 
