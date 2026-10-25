@@ -1,51 +1,33 @@
-#!/usr/bin/env python3
-"""Guided bootstrap for the operator/infra config layer.
+"""Guided bootstrap for private operator configuration.
 
-SAGE Run config has three layers (see docs/roadmap for the full picture):
-
-1. Bootstrap / infra (this script) — the minimum needed to cold-start and
-    reach the workflow repo: its URL/ref, an optional one-time clone PAT, the
-    age identity used to decrypt its secrets, and the model gateway API key.
-    Operator-owned, generated, never committed; the PAT is never generated.
-2. Instance config — the workflow repo's own `platform-config.yaml` (message
-   bus, mcps, connectors, memory banks, model profiles, workflow secrets).
-   Read only after the repo has been fetched using layer 1.
-3. Workflow packages — `workflows/`, `skills/`, `hooks/`, custom `mcps/`,
-   `connectors/` inside the workflow repo.
-
-This script produces layer 1 and, for Kubernetes, publishes the checkout's
-unchanged `platform-config.yaml` as a startup Secret.
-
-Run through `make bootstrap`. The script always prompts for the operator-owned
-bootstrap values and writes the standard artifact for the selected target.
+Workflow repositories own instance configuration and workflow packages. This
+module writes only the operator-owned secrets and startup repository pointer.
+Kubernetes bootstrap also references the checkout's platform-config.yaml.
 """
 
 from __future__ import annotations
 
 import getpass
+import os
+import shlex
 import shutil
-import stat
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from shared.lib.github_app import github_git_auth_environment
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
 VALID_TARGETS = ("compose", "kubernetes")
 VALID_SOURCES = ("remote", "local")
-VALID_COMPOSE_MODES = ("local", "production")
 
 
 @dataclass(frozen=True)
 class BootstrapConfig:
     target: str
     source: str
-    compose_mode: str = "local"
     gateway_public_base_url: str = ""
+    control_plane_ui_url: str = ""
+    sandbox_mode: str = ""
     repo_url: str = ""
     repo_ref: str = ""
     repo_pat: str = ""
@@ -61,15 +43,15 @@ class BootstrapConfig:
             raise ValueError(f"Deployment target must be one of {VALID_TARGETS}, got {self.target!r}")
         if self.source not in VALID_SOURCES:
             raise ValueError(f"Workflow source must be one of {VALID_SOURCES}, got {self.source!r}")
-        if self.target == "compose" and self.compose_mode not in VALID_COMPOSE_MODES:
-            raise ValueError(f"Compose mode must be one of {VALID_COMPOSE_MODES}, got {self.compose_mode!r}")
-        gateway_url = urlsplit(self.gateway_public_base_url)
-        if (
-            self.target == "compose"
-            and self.compose_mode == "local"
-            and (gateway_url.scheme not in {"http", "https"} or not gateway_url.hostname)
+        for label, value in (
+            ("Gateway URL", self.gateway_public_base_url),
+            ("Control-plane UI URL", self.control_plane_ui_url),
         ):
-            raise ValueError("Local Compose requires a reachable HTTP(S) Gateway URL")
+            parsed = urlsplit(value)
+            if value and (parsed.scheme not in {"http", "https"} or not parsed.hostname):
+                raise ValueError(f"{label} must be an HTTP(S) URL")
+        if self.sandbox_mode not in {"", "macos", "gvisor"}:
+            raise ValueError("Sandbox mode must be macos or gvisor")
         if self.source == "remote" and not self.repo_url:
             raise ValueError("Workflow repo URL is required for a remote source")
         if not self.local_path:
@@ -85,13 +67,7 @@ class BootstrapConfig:
 
 
 def normalize_age_identity(value: str) -> str:
-    """Return the AGE_IDENTITY value in the runtime's expected form.
-
-    Accepts a raw armored key, an existing `file:`-prefixed path, or a bare
-    filesystem path. A path is read into the generated bootstrap artifact:
-    a host filesystem path cannot be resolved inside a Compose or Kubernetes
-    container.
-    """
+    """Read a host key file into the artifact so containers do not need its path."""
     value = value.strip()
     if not value or value.startswith("AGE-SECRET-KEY-"):
         return value
@@ -114,24 +90,23 @@ def build_bootstrap_env(config: BootstrapConfig) -> dict[str, str]:
     if config.source == "remote":
         env["WORKFLOW_REPO_URL"] = config.repo_url
         env["WORKFLOW_REPO_REF"] = config.repo_ref
-    else:
-        if config.repo_url:
-            env["WORKFLOW_REPO_URL"] = config.repo_url
-    local_path = str(Path(config.local_path).expanduser())
+    elif config.repo_url:
+        env["WORKFLOW_REPO_URL"] = config.repo_url
+    local_path = str(Path(config.local_path).expanduser().absolute())
     if config.target == "compose":
         env["HOST_WORKFLOW_REPO_PATH"] = local_path
     elif config.source == "local":
         env["WORKFLOW_REPO_PATHS"] = local_path
     if config.target == "kubernetes":
         env["KUBERNETES_NAMESPACE"] = config.namespace
-    elif config.compose_mode == "local":
-        env.update(
-            {
-                "CONTROL_PLANE_UI_URL": "http://localhost:3000",
-                "GATEWAY_PUBLIC_BASE_URL": config.gateway_public_base_url.rstrip("/"),
-                "SANDBOX_MODE": "macos",
-            }
-        )
+    else:
+        for key, value in (
+            ("CONTROL_PLANE_UI_URL", config.control_plane_ui_url.rstrip("/")),
+            ("GATEWAY_PUBLIC_BASE_URL", config.gateway_public_base_url.rstrip("/")),
+            ("SANDBOX_MODE", config.sandbox_mode),
+        ):
+            if value:
+                env[key] = value
     return env
 
 
@@ -141,7 +116,7 @@ def _shell_quote(value: str) -> str:
 
 def render_compose_env(env: dict[str, str]) -> str:
     lines = [
-        "# Generated by scripts/bootstrap.py -- do not commit.",
+        "# Generated by sage-run bootstrap -- do not commit.",
         "# Operator secrets and local deployment overrides. Application config lives in the workflow",
         "# repo's platform-config.yaml.",
         *(f"{key}={value}" for key, value in env.items()),
@@ -160,7 +135,7 @@ def render_k8s_secret_script(
     literals = " \\\n  ".join(f"--from-literal={key}={_shell_quote(value)}" for key, value in env.items())
     script = (
         "#!/usr/bin/env bash\n"
-        "# Generated by scripts/bootstrap.py -- do not commit. Run once per cluster/namespace.\n"
+        "# Generated by sage-run bootstrap -- do not commit. Run once per cluster/namespace.\n"
         "set -euo pipefail\n\n"
         f"kubectl create secret generic {secret_name} \\\n"
         f"  --namespace {namespace} \\\n"
@@ -180,9 +155,11 @@ def render_k8s_secret_script(
 
 def prepare_workflow_repo(config: BootstrapConfig) -> Path:
     """Clone or refresh the initial checkout without persisting its bootstrap PAT."""
-    checkout = Path(config.local_path).expanduser()
+    checkout = Path(config.local_path).expanduser().absolute()
     if config.source == "local":
         return checkout
+    from shared.lib.github_app import github_git_auth_environment
+
     git_binary = shutil.which("git")
     if not git_binary:
         raise RuntimeError("git is required to clone the workflow repository")
@@ -208,23 +185,24 @@ def prepare_workflow_repo(config: BootstrapConfig) -> Path:
     return checkout
 
 
-def write_artifact(config: BootstrapConfig, *, output_dir: Path = REPO_ROOT) -> Path:
+def write_artifact(config: BootstrapConfig, *, output_dir: Path) -> Path:
     env = build_bootstrap_env(config)
     if config.target == "compose":
         path = output_dir / "compose.env"
-        path.write_text(render_compose_env(env), encoding="utf-8")
-        path.chmod(0o600)
-        return path
-
-    path = output_dir / "dist" / "bootstrap" / "k8s-secret.sh"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    content = render_k8s_secret_script(
-        env,
-        namespace=config.namespace,
-        platform_config_file=str(Path(config.local_path).expanduser() / "platform-config.yaml"),
-    )
-    path.write_text(content, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+        content = render_compose_env(env)
+    else:
+        path = output_dir / "dist" / "bootstrap" / "k8s-secret.sh"
+        content = render_k8s_secret_script(
+            env,
+            namespace=config.namespace,
+            platform_config_file=str(Path(config.local_path).expanduser().absolute() / "platform-config.yaml"),
+        )
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as artifact:
+        artifact.write(content)
+    if config.target == "kubernetes":
+        path.chmod(0o700)
     return path
 
 
@@ -237,7 +215,6 @@ def _prompt(label: str, *, default: str = "", secret: bool = False) -> str:
 
 def gather_config_interactively() -> BootstrapConfig:
     target = _prompt("Deployment target (compose/kubernetes)", default="compose")
-    compose_mode = _prompt("Compose mode (local/production)", default="local") if target == "compose" else "local"
     default_source = "local" if target == "compose" else "remote"
     source = _prompt("Workflow source (remote/local)", default=default_source)
 
@@ -255,11 +232,13 @@ def gather_config_interactively() -> BootstrapConfig:
         repo_url = _prompt("Workflow GitHub URL (for version lookup and reflection PRs; blank to disable)")
 
     namespace = _prompt("Kubernetes namespace", default="default") if target == "kubernetes" else "default"
-    gateway_public_base_url = (
-        _prompt("Internet-reachable Gateway URL for approval callbacks")
-        if target == "compose" and compose_mode == "local"
-        else ""
-    )
+    gateway_public_base_url = ""
+    control_plane_ui_url = ""
+    sandbox_mode = ""
+    if target == "compose":
+        gateway_public_base_url = _prompt("Gateway URL override (blank to use workflow deployment settings)")
+        control_plane_ui_url = _prompt("Control-plane UI URL override (blank to use workflow deployment settings)")
+        sandbox_mode = _prompt("Sandbox override (macos/gvisor; blank to use workflow deployment settings)")
 
     age_identity = _prompt("AGE identity (inline key or path to key.txt)", secret=True)
     llm_api_key = _prompt("LLM API key", secret=True)
@@ -269,8 +248,9 @@ def gather_config_interactively() -> BootstrapConfig:
     return BootstrapConfig(
         target=target,
         source=source,
-        compose_mode=compose_mode,
         gateway_public_base_url=gateway_public_base_url,
+        control_plane_ui_url=control_plane_ui_url,
+        sandbox_mode=sandbox_mode,
         repo_url=repo_url,
         repo_ref=repo_ref,
         repo_pat=repo_pat,
@@ -283,32 +263,31 @@ def gather_config_interactively() -> BootstrapConfig:
     )
 
 
-def main() -> int:
+def main(*, output_dir: Path) -> int:
+    artifacts = (output_dir / "compose.env", output_dir / "dist" / "bootstrap" / "k8s-secret.sh")
+    if any(artifact.exists() or artifact.is_symlink() for artifact in artifacts):
+        print("error: Bootstrap artifact already exists; choose a new output directory.", file=sys.stderr)
+        return 1
     config = gather_config_interactively()
 
     try:
         config.validate()
         prepare_workflow_repo(config)
+        path = write_artifact(config, output_dir=output_dir)
     except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    path = write_artifact(config)
     print(f"Wrote bootstrap artifact: {path}")
     if config.target == "compose":
-        if config.compose_mode == "local":
-            print(
-                "Local intake remains disabled by default. Review workflow channels, schedules, connector targets, "
-                "and subscriptions before resuming them; otherwise results may be written to production channels."
-            )
-        print("Run: make up")
+        print(
+            "Review workflow intake, channels, schedules, connector targets and subscriptions before serving; "
+            "bootstrap does not disable integrations or replace workflow deployment settings."
+        )
+        print(f"From the sage-run checkout, run: make up BOOTSTRAP_OUTPUT_DIR={shlex.quote(str(output_dir))}")
     else:
         print(
             f"Run {path} to create the bootstrap and platform-config secrets, then set "
             "platformConfig.existingSecret=sage-run-config and deploy."
         )
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

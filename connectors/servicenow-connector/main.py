@@ -222,6 +222,14 @@ async def run_polling_consumer(config: dict) -> None:
                 data = resp.json()
 
                 records = data.get("result", [])
+                logger.info(
+                    "ServiceNow poll: connector=%s table=%s query=%r fetched=%d limit=%s",
+                    config.get("_instance_id", "unknown"),
+                    table,
+                    query,
+                    len(records),
+                    params["sysparm_limit"],
+                )
                 new_count = 0
                 for record in records:
                     sys_id = record.get("sys_id", "")

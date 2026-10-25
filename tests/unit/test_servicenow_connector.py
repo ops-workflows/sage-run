@@ -113,3 +113,67 @@ def test_load_instance_config_uses_single_enabled_servicenow_instance(monkeypatc
     config = connector._load_instance_config()
 
     assert config["_instance_id"] == "records"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("record_count", [0, 2])
+async def test_poll_logs_fetched_count_on_every_pass(monkeypatch, caplog, record_count) -> None:
+    connector = _load_connector_module()
+    records = [{"sys_id": f"record-{index}"} for index in range(record_count)]
+    submitted = []
+    passes = 0
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url, *, params):
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"result": records})
+
+    async def is_paused(connector_id):
+        return False
+
+    async def submit(parsed, config):
+        submitted.append(parsed)
+
+    async def next_pass(interval):
+        nonlocal passes
+        passes += 1
+        if passes == 2:
+            connector._shutdown = True
+
+    monkeypatch.setattr(
+        connector,
+        "_load_target_workflow_env",
+        lambda config: {
+            "SERVICENOW_INSTANCE_URL": "https://example.service-now.com",
+            "SERVICENOW_USERNAME": "test-user",
+            "SERVICENOW_PASSWORD": "test-password",
+        },
+    )
+    monkeypatch.setattr(connector.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(connector, "_connector_is_paused", is_paused)
+    monkeypatch.setattr(connector, "_create_task_from_record", submit)
+    monkeypatch.setattr(connector.asyncio, "sleep", next_pass)
+    caplog.set_level("INFO", logger=connector.logger.name)
+
+    await connector.run_polling_consumer(
+        {"_instance_id": "test-intake", "source": {"table": "incident", "query": "active=true"}}
+    )
+
+    poll_logs = [record.getMessage() for record in caplog.records if "ServiceNow poll:" in record.getMessage()]
+    assert (
+        poll_logs
+        == [
+            f"ServiceNow poll: connector=test-intake table=incident query='active=true' fetched={record_count} limit=50"
+        ]
+        * 2
+    )
+    assert len(submitted) == record_count
+    assert "test-password" not in caplog.text

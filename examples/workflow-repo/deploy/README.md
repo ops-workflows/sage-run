@@ -15,7 +15,8 @@ unless you're adding a *custom* MCP server or connector (see
 [docker-compose.override.yml](docker-compose.override.yml) for that case).
 
 Run `make bootstrap` in `sage-run/` first (see its
-`docs/deployment.md`) to generate `compose.env` with the operator bootstrap
+`docs/deployment.md`) to generate a private `compose.env` (default
+`~/.local/state/sage-run/local/`) with the operator bootstrap
 layer (`AGE_IDENTITY`, `LLM_API_KEY`, workflow-repo pointer, pointed
 at your repo's local path). Copy [compose.env.example](compose.env.example) to
 your workflow repo as `deploy/compose.env` and set its non-secret values. Then
@@ -25,7 +26,7 @@ from `sage-run/`, run:
 make up
 ```
 
-The Makefile loads `deploy/compose.env` first, then the generated root
+The Makefile loads `deploy/compose.env` first, then the generated private
 `compose.env`, and derives the required profiles from `platform-config.yaml`.
 
 ### Adding your own custom MCP server or connector

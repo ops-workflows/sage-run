@@ -14,7 +14,8 @@ RUNTIME_BUILD ?= docker build
 SANDBOX_MODE ?= macos
 COMPOSE_PROJECT_NAME ?= sage-run-test
 TEST_DOCKER_NETWORK ?= $(COMPOSE_PROJECT_NAME)-network
-COMPOSE_BOOTSTRAP_ENV_FILE ?= compose.env
+BOOTSTRAP_OUTPUT_DIR ?= $(HOME)/.local/state/sage-run/local
+COMPOSE_BOOTSTRAP_ENV_FILE ?= $(BOOTSTRAP_OUTPUT_DIR)/compose.env
 HOST_WORKFLOW_REPO_PATH ?= $(shell sed -n 's/^HOST_WORKFLOW_REPO_PATH=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
 HOST_WORKFLOW_REPO_PATH := $(or $(HOST_WORKFLOW_REPO_PATH),$(CURDIR)/examples/workflow-repo)
 WORKFLOW_PLATFORM_CONFIG_FILE := $(HOST_WORKFLOW_REPO_PATH)/platform-config.yaml
@@ -27,7 +28,7 @@ COMPOSE_ENV_FILES := $(if $(wildcard $(WORKFLOW_COMPOSE_ENV_FILE)),--env-file "$
 COMPOSE_FILES := -f deploy/docker-compose.yml $(if $(wildcard $(WORKFLOW_COMPOSE_OVERRIDE_FILE)),-f "$(WORKFLOW_COMPOSE_OVERRIDE_FILE)")
 COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) $(COMPOSE_FILES)
 K8S_CHART ?= deploy/k8s/sage-run
-K8S_BOOTSTRAP_SCRIPT ?= dist/bootstrap/k8s-secret.sh
+K8S_BOOTSTRAP_SCRIPT ?= $(BOOTSTRAP_OUTPUT_DIR)/dist/bootstrap/k8s-secret.sh
 K8S_RELEASE ?=
 K8S_NAMESPACE ?=
 K8S_VALUES_FILE ?=
@@ -44,10 +45,10 @@ TEST_COMPOSE ?= AGE_IDENTITY=test-only-not-a-real-age-key LLM_API_KEY=test-only-
 	k8s-deploy k8s-update
 
 init: ## Install Python dependencies
-	uv sync --extra dev
+	uv sync --extra dev --extra server
 
 bootstrap: ## Guided operator bootstrap (workflow-repo pointer, AGE identity, model key)
-	$(PYTHON) scripts/bootstrap.py
+	$(PYTHON) -m sage_run bootstrap --output-dir "$(BOOTSTRAP_OUTPUT_DIR)"
 
 create-github-app: ## Register an organization GitHub App and save its credentials privately
 	$(PYTHON) scripts/create_github_app.py $(GITHUB_APP_ARGS)
@@ -81,7 +82,7 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "%-28s %s\n", $$1, $$2}'
 
 compose-build: ## Build all docker compose services
-	@profiles="$$(PLATFORM_CONFIG_FILE="$(WORKFLOW_PLATFORM_CONFIG_FILE)" $(PYTHON) scripts/compose_profiles.py)"; \
+	@profiles="$$($(PYTHON) -m sage_run profiles "$(HOST_WORKFLOW_REPO_PATH)")"; \
 	echo "Computed COMPOSE_PROFILES=$$profiles"; \
 	COMPOSE_PROFILES="$$profiles" $(COMPOSE) build
 
@@ -94,7 +95,7 @@ mcp-build: ## Build the shared MCP server container image used by runtime smoke 
 build: runtime-build compose-build ## Build all docker images
 
 up: ## Start the local Compose stack with profiles derived from platform-config.yaml
-	@profiles="$$(PLATFORM_CONFIG_FILE="$(WORKFLOW_PLATFORM_CONFIG_FILE)" $(PYTHON) scripts/compose_profiles.py)"; \
+	@profiles="$$($(PYTHON) -m sage_run profiles "$(HOST_WORKFLOW_REPO_PATH)")"; \
 	echo "Computed COMPOSE_PROFILES=$$profiles"; \
 	COMPOSE_PROFILES="$$profiles" $(COMPOSE) up -d
 

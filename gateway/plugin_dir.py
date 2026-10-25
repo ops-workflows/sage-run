@@ -15,19 +15,14 @@ expected by Claude Code from this flat layout at session start.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
-import jsonschema
 import yaml
 
+from shared.lib.plugin_validation import validate_plugin_dir as validate_plugin_dir
 from shared.lib.workflow_paths import discover_workflow_packages
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-AGENT_YAML_SCHEMA_PATH = REPO_ROOT / "schemas" / "agent-yaml-schema.json"
 
 
 @dataclass(frozen=True)
@@ -67,11 +62,6 @@ class MessageRoute:
     required_labels: tuple[tuple[str, tuple[str, ...]], ...] = ()
     dedupe: tuple[DedupePolicy, ...] = ()
     allowed_usernames: tuple[str, ...] | None = None
-
-
-@lru_cache(maxsize=1)
-def _agent_yaml_schema() -> dict:
-    return json.loads(AGENT_YAML_SCHEMA_PATH.read_text())
 
 
 def read_platform_config(plugin_dir: Path) -> dict:
@@ -259,56 +249,6 @@ def discover_message_routes(plugins_dir: Path) -> list[MessageRoute]:
 
 def discover_all_message_routes() -> list[MessageRoute]:
     return _message_routes([(package.name, package.config) for package in discover_workflow_packages()])
-
-
-def validate_plugin_dir(plugin_dir: Path) -> list[str]:
-    """Validate that a plugin directory has required files in flat layout."""
-    errors: list[str] = []
-
-    agent_yaml_path = plugin_dir / "agent.yaml"
-    if not agent_yaml_path.exists():
-        errors.append("Missing agent.yaml (platform config)")
-    else:
-        try:
-            agent_config = yaml.safe_load(agent_yaml_path.read_text()) or {}
-            jsonschema.validate(agent_config, _agent_yaml_schema())
-        except yaml.YAMLError as exc:
-            errors.append(f"agent.yaml is not valid YAML: {exc}")
-        except jsonschema.ValidationError as exc:
-            location = ".".join(str(part) for part in exc.absolute_path) or "<root>"
-            errors.append(f"agent.yaml schema violation at {location}: {exc.message}")
-
-    if not (plugin_dir / ".mcp.json").exists():
-        errors.append("Missing .mcp.json (MCP server config)")
-
-    # CLAUDE.md is injected from shared/ at runtime — not required per-plugin
-
-    # settings.json at root (not .claude/settings.json)
-    if not (plugin_dir / "settings.json").exists():
-        errors.append("Missing settings.json (Claude project settings)")
-
-    # agents/ at root (flat layout)
-    agents_dir = plugin_dir / "agents"
-    if not (agents_dir.exists() and list(agents_dir.glob("*.md"))):
-        errors.append("Missing agents/*.md — no agent definitions found")
-
-    mcp_json_path = plugin_dir / ".mcp.json"
-    if mcp_json_path.exists():
-        try:
-            config = json.loads(mcp_json_path.read_text())
-            if "mcpServers" not in config:
-                errors.append(".mcp.json missing 'mcpServers' key")
-        except json.JSONDecodeError as exc:
-            errors.append(f".mcp.json is not valid JSON: {exc}")
-
-    hooks_json_path = plugin_dir / "hooks" / "hooks.json"
-    if hooks_json_path.exists():
-        try:
-            json.loads(hooks_json_path.read_text())
-        except json.JSONDecodeError as exc:
-            errors.append(f"hooks/hooks.json is not valid JSON: {exc}")
-
-    return errors
 
 
 def read_plugin_files(plugin_dir: Path) -> dict[str, str]:

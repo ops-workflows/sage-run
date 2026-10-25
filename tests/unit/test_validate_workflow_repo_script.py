@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.validate_workflow_repo import validate_workflow_repo
+from sage_run.validation import validate_workflow_repo
 
 pytestmark = pytest.mark.unit
 
@@ -55,4 +55,35 @@ def test_example_workflow_repo_makefile_has_lint_and_format_targets(repo_root: P
 
     assert "lint: check-venv" in makefile
     assert "format: check-venv" in makefile
-    assert "scripts/validate_workflow_repo.py" in makefile
+    assert "-m sage_run validate ." in makefile
+
+
+@pytest.mark.parametrize("directory", [".git", ".venv", "node_modules"])
+def test_validation_ignores_dependency_and_git_metadata(tmp_path: Path, test_plugin_dir: Path, directory: str):
+    _copy_valid_workflow(tmp_path, test_plugin_dir)
+    ignored = tmp_path / directory
+    ignored.mkdir()
+    (ignored / "broken.json").write_text("{", encoding="utf-8")
+    assert validate_workflow_repo(tmp_path) == []
+
+
+def test_validate_cli_returns_failure_for_invalid_repo(tmp_path: Path, capsys):
+    from sage_run.cli import main
+
+    assert main(["validate", str(tmp_path)]) == 1
+    assert "Missing workflows directory" in capsys.readouterr().out
+
+
+def test_validate_cli_defaults_to_current_directory(monkeypatch, tmp_path: Path, test_plugin_dir: Path):
+    from sage_run.cli import main
+
+    _copy_valid_workflow(tmp_path, test_plugin_dir)
+    monkeypatch.chdir(tmp_path)
+    assert main(["validate"]) == 0
+
+
+def test_gateway_and_operator_share_package_validation():
+    from gateway.plugin_dir import validate_plugin_dir as gateway_validate
+    from shared.lib.plugin_validation import validate_plugin_dir
+
+    assert gateway_validate is validate_plugin_dir

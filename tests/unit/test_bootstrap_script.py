@@ -1,13 +1,14 @@
-"""Unit tests for the guided operator bootstrap script (scripts/bootstrap.py)."""
+"""Unit tests for the packaged operator bootstrap."""
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
 
-from scripts.bootstrap import (
+from sage_run.bootstrap import (
     BootstrapConfig,
     build_bootstrap_env,
     main,
@@ -77,8 +78,9 @@ def _local_config(**overrides) -> BootstrapConfig:
     base = {
         "target": "compose",
         "source": "local",
-        "compose_mode": "local",
         "gateway_public_base_url": "https://gateway.example.test",
+        "control_plane_ui_url": "http://localhost:3000",
+        "sandbox_mode": "macos",
         "local_path": "/home/op/corp-workflows",
         "age_identity": "AGE-SECRET-KEY-1EXAMPLE",
         "llm_api_key": "sk-model-key",
@@ -93,7 +95,7 @@ def _local_config(**overrides) -> BootstrapConfig:
 
 
 def test_validate_accepts_remote_source_for_compose_target():
-    _remote_config(target="compose", compose_mode="production").validate()
+    _remote_config(target="compose").validate()
 
 
 def test_validate_requires_repo_url_for_remote_source():
@@ -127,16 +129,20 @@ def test_validate_accepts_valid_local_compose_config():
     _local_config().validate()  # does not raise
 
 
-def test_validate_accepts_production_compose_without_local_auth_secrets():
-    _local_config(compose_mode="production", gateway_public_base_url="").validate()
+def test_validate_accepts_compose_using_workflow_deployment_settings():
+    _local_config(gateway_public_base_url="", control_plane_ui_url="", sandbox_mode="").validate()
 
 
-def test_validate_requires_reachable_gateway_url_for_local_compose():
-    with pytest.raises(ValueError, match=r"reachable HTTP\(S\) Gateway URL"):
-        _local_config(gateway_public_base_url="").validate()
+@pytest.mark.parametrize("field", ["gateway_public_base_url", "control_plane_ui_url"])
+@pytest.mark.parametrize("value", ["https://", "file:///tmp/config", "localhost:3000"])
+def test_validate_rejects_invalid_url_override(field: str, value: str):
+    with pytest.raises(ValueError, match=r"must be an HTTP\(S\) URL"):
+        _local_config(**{field: value}).validate()
 
-    with pytest.raises(ValueError, match=r"reachable HTTP\(S\) Gateway URL"):
-        _local_config(gateway_public_base_url="https://").validate()
+
+def test_validate_rejects_unknown_sandbox_override():
+    with pytest.raises(ValueError, match="Sandbox mode"):
+        _local_config(sandbox_mode="unknown").validate()
 
 
 # ── normalize_age_identity ──────────────────────────────────────────
@@ -175,7 +181,7 @@ def test_build_bootstrap_env_remote_source_includes_repo_pointer():
 
 
 def test_build_bootstrap_env_remote_compose_retains_repository_metadata():
-    env = build_bootstrap_env(_remote_config(target="compose", compose_mode="production"))
+    env = build_bootstrap_env(_remote_config(target="compose"))
 
     assert env["WORKFLOW_REPO_SOURCE"] == "remote"
     assert env["WORKFLOW_REPO_URL"] == "https://github.com/acme/workflows.git"
@@ -208,13 +214,36 @@ def test_build_bootstrap_env_local_compose_sets_host_bind_mount_vars():
     assert "WORKFLOW_REPO_PATHS" not in env
 
 
-def test_build_bootstrap_env_production_compose_uses_committed_defaults():
-    env = build_bootstrap_env(_local_config(compose_mode="production", gateway_public_base_url=""))
+@pytest.mark.parametrize("source", ["local", "remote"])
+def test_build_bootstrap_env_compose_uses_committed_defaults(source: str):
+    env = build_bootstrap_env(
+        _local_config(
+            source=source,
+            repo_url="https://github.com/acme/workflows.git",
+            gateway_public_base_url="",
+            control_plane_ui_url="",
+            sandbox_mode="",
+        )
+    )
     assert "CONTROL_PLANE_UI_URL" not in env
     assert "GATEWAY_PUBLIC_BASE_URL" not in env
     assert "SANDBOX_MODE" not in env
     assert "OIDC_CLIENT_SECRET" not in env
     assert "OAUTH2_PROXY_COOKIE_SECRET" not in env
+
+
+def test_build_bootstrap_env_remote_compose_accepts_explicit_host_overrides():
+    env = build_bootstrap_env(
+        _remote_config(
+            target="compose",
+            gateway_public_base_url="https://gateway.example.com/",
+            control_plane_ui_url="https://console.example.com/",
+            sandbox_mode="gvisor",
+        )
+    )
+    assert env["GATEWAY_PUBLIC_BASE_URL"] == "https://gateway.example.com"
+    assert env["CONTROL_PLANE_UI_URL"] == "https://console.example.com"
+    assert env["SANDBOX_MODE"] == "gvisor"
 
 
 def test_build_bootstrap_env_local_kubernetes_sets_workflow_repo_paths():
@@ -234,14 +263,14 @@ def test_prepare_remote_repo_uses_pat_only_in_clone_environment(monkeypatch, tmp
     config = _remote_config(local_path=str(checkout))
     calls = []
 
-    monkeypatch.setattr("scripts.bootstrap.shutil.which", lambda name: "/usr/bin/git")
+    monkeypatch.setattr("sage_run.bootstrap.shutil.which", lambda name: "/usr/bin/git")
 
     def run(command, *, check, env):
         calls.append((command, env))
         if command[1] == "clone":
             (checkout / ".git").mkdir(parents=True)
 
-    monkeypatch.setattr("scripts.bootstrap.subprocess.run", run)
+    monkeypatch.setattr("sage_run.bootstrap.subprocess.run", run)
 
     assert prepare_workflow_repo(config) == checkout
     clone_command, clone_environment = calls[0]
@@ -262,7 +291,7 @@ def test_render_compose_env_shape():
     content = render_compose_env({"AGE_IDENTITY": "abc", "LLM_API_KEY": "xyz"})
     assert "AGE_IDENTITY=abc" in content
     assert "LLM_API_KEY=xyz" in content
-    assert content.startswith("# Generated by scripts/bootstrap.py")
+    assert content.startswith("# Generated by sage-run bootstrap")
 
 
 def test_render_k8s_secret_script_contains_kubectl_apply():
@@ -294,6 +323,7 @@ def test_write_artifact_kubernetes_target_writes_executable_script(tmp_path: Pat
     assert path == tmp_path / "dist" / "bootstrap" / "k8s-secret.sh"
     assert path.exists()
     assert path.stat().st_mode & 0o111  # executable bit set
+    assert path.stat().st_mode & 0o777 == 0o700
     assert "sage-run-config" in path.read_text(encoding="utf-8")
 
 
@@ -309,19 +339,137 @@ def test_write_artifact_kubernetes_target_uses_configured_namespace(tmp_path: Pa
 
 def test_main_writes_compose_artifact(monkeypatch, tmp_path: Path, capsys):
     artifact = tmp_path / "compose.env"
-    monkeypatch.setattr("scripts.bootstrap.gather_config_interactively", _local_config)
-    monkeypatch.setattr("scripts.bootstrap.write_artifact", lambda config: artifact)
+    monkeypatch.setattr("sage_run.bootstrap.gather_config_interactively", _local_config)
+    monkeypatch.setattr("sage_run.bootstrap.write_artifact", lambda config, *, output_dir: artifact)
 
-    exit_code = main()
+    exit_code = main(output_dir=tmp_path)
     assert exit_code == 0
     output = capsys.readouterr().out
     assert str(artifact) in output
-    assert "make up" in output
+    assert "make up BOOTSTRAP_OUTPUT_DIR=" in output
 
 
-def test_main_reports_invalid_prompted_configuration(monkeypatch, capsys):
-    monkeypatch.setattr("scripts.bootstrap.gather_config_interactively", lambda: _remote_config(local_path=""))
+def test_main_reports_invalid_prompted_configuration(monkeypatch, tmp_path: Path, capsys):
+    monkeypatch.setattr("sage_run.bootstrap.gather_config_interactively", lambda: _remote_config(local_path=""))
 
-    exit_code = main()
+    exit_code = main(output_dir=tmp_path)
     assert exit_code == 1
     assert "Local workflow-repo checkout path is required" in capsys.readouterr().err
+
+
+def test_write_artifact_creates_private_external_directory(tmp_path: Path):
+    output_dir = tmp_path / "private-instance"
+    artifact = write_artifact(_local_config(), output_dir=output_dir)
+    assert artifact.parent == output_dir
+    assert output_dir.stat().st_mode & 0o777 == 0o700
+    assert artifact.stat().st_mode & 0o777 == 0o600
+
+
+def test_write_artifact_preserves_existing_configuration(tmp_path: Path):
+    artifact = write_artifact(_local_config(), output_dir=tmp_path)
+    original = artifact.read_bytes()
+    with pytest.raises(FileExistsError):
+        write_artifact(_local_config(llm_api_key="different-value"), output_dir=tmp_path)
+    assert artifact.read_bytes() == original
+
+
+def test_write_artifact_does_not_follow_existing_symlink(tmp_path: Path):
+    original = tmp_path / "original.env"
+    original.write_text("keep-original\n", encoding="utf-8")
+    (tmp_path / "compose.env").symlink_to(original)
+    with pytest.raises(FileExistsError):
+        write_artifact(_local_config(), output_dir=tmp_path)
+    assert original.read_text(encoding="utf-8") == "keep-original\n"
+
+
+def test_main_refuses_existing_artifact_before_prompting(monkeypatch, tmp_path: Path, capsys):
+    (tmp_path / "compose.env").write_text("keep-original\n", encoding="utf-8")
+    monkeypatch.setattr("sage_run.bootstrap.gather_config_interactively", lambda: pytest.fail("Unexpected prompt"))
+    assert main(output_dir=tmp_path) == 1
+    assert "already exists" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("artifact_name", ["compose.env", "dist/bootstrap/k8s-secret.sh"])
+def test_main_refuses_dangling_symlink_before_prompting(monkeypatch, tmp_path: Path, capsys, artifact_name: str):
+    artifact = tmp_path / artifact_name
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.symlink_to(tmp_path / "missing-target")
+    monkeypatch.setattr("sage_run.bootstrap.gather_config_interactively", lambda: pytest.fail("Unexpected prompt"))
+    assert main(output_dir=tmp_path) == 1
+    assert artifact.is_symlink()
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_bootstrap_cli_uses_explicit_output_directory(monkeypatch, tmp_path: Path):
+    from sage_run.cli import main as cli_main
+
+    calls = []
+    monkeypatch.setattr("sage_run.bootstrap.main", lambda *, output_dir: calls.append(output_dir) or 0)
+    assert cli_main(["bootstrap", "--output-dir", str(tmp_path)]) == 0
+    assert calls == [tmp_path.resolve()]
+
+
+def test_bootstrap_cli_requires_output_directory():
+    from sage_run.cli import main as cli_main
+
+    with pytest.raises(SystemExit) as error:
+        cli_main(["bootstrap"])
+    assert error.value.code == 2
+
+
+def test_make_bootstrap_uses_private_state_directory():
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "BOOTSTRAP_OUTPUT_DIR ?= $(HOME)/.local/state/sage-run/local" in makefile
+    assert "COMPOSE_BOOTSTRAP_ENV_FILE ?= $(BOOTSTRAP_OUTPUT_DIR)/compose.env" in makefile
+    assert 'bootstrap --output-dir "$(BOOTSTRAP_OUTPUT_DIR)"' in makefile
+
+
+def test_operator_dependencies_exclude_service_stack():
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert set(project["dependencies"]) == {
+        "httpx>=0.27.0",
+        "pyyaml>=6.0.1",
+        "pydantic>=2.9.0",
+        "jsonschema>=4.23.0",
+        "pyrage>=1.1.0",
+        "PyJWT[crypto]>=2.9.0",
+    }
+    assert "claude-agent-sdk==0.2.110" in project["optional-dependencies"]["server"]
+    assert "graphifyy==0.9.56" in project["optional-dependencies"]["server"]
+
+
+@pytest.mark.parametrize(
+    "dockerfile",
+    [
+        "gateway/Dockerfile",
+        "session-manager/Dockerfile",
+        "knowledge-indexer/Dockerfile",
+        "connectors/gcp-pubsub-connector/Dockerfile",
+        "connectors/servicenow-connector/Dockerfile",
+    ],
+)
+def test_service_images_install_server_dependencies(dockerfile: str):
+    content = (REPO_ROOT / dockerfile).read_text(encoding="utf-8")
+    assert 'pip install --no-cache-dir ".[server,' in content
+    for resource in ("COPY sage_run/", "COPY shared/", "COPY schemas/", "COPY README.md LICENSE"):
+        assert content.index(resource) < content.index("RUN pip install")
+
+
+def test_source_development_and_ci_install_server_dependencies():
+    for file_path in (REPO_ROOT / "Makefile", REPO_ROOT / ".github/workflows/ci.yml"):
+        content = file_path.read_text(encoding="utf-8")
+        assert "--extra dev --extra server" in content
+
+
+def test_operator_wheel_includes_schemas_without_service_modules():
+    config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert set(config["tool"]["hatch"]["build"]["targets"]["wheel"]["only-include"]) == {
+        "sage_run",
+        "shared",
+        "schemas",
+    }
+
+
+def test_docker_context_excludes_local_secrets_and_caches():
+    ignored = set((REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines())
+    assert {".git", ".venv", "**/compose.env", "**/key.txt", "**/node_modules", "backups"} <= ignored

@@ -64,7 +64,7 @@ docker compose -f deploy/docker-compose.yml up --build
 ```
 
 For a guided setup that also handles secrets, remote workflow repos, and
-Kubernetes targets, use `make bootstrap` — see
+Kubernetes targets, use `make bootstrap` (it writes private state outside Git) — see
 [docs/deployment.md](docs/deployment.md).
 
 ## Documentation
@@ -105,4 +105,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Copyright 2026 Vishal Goel and SAGE Run contributors. SAGE Run's original code
+and documentation are licensed under Apache License 2.0, unless otherwise
+indicated. See [LICENSE](LICENSE) for the complete terms.
+
+Third-party dependencies, bundled software, container base images, and service
+images retain their own licenses and applicable terms. This includes the Claude
+Agent SDK and Claude Code CLI; SAGE Run's Apache-2.0 license does not relicense
+these components or waive their requirements.

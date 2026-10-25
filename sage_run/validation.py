@@ -1,20 +1,13 @@
-#!/usr/bin/env python3
-"""Validate syntax and workflow packages in an external SAGE Run workflow repository."""
+"""Validate an existing workflow repository without contacting platform services."""
 
 from __future__ import annotations
 
-import argparse
 import json
-import sys
 from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from gateway.plugin_dir import validate_plugin_dir  # noqa: E402
+from shared.lib.plugin_validation import validate_plugin_dir
 
 
 def validate_workflow_repo(workflow_repo: Path) -> list[str]:
@@ -25,7 +18,7 @@ def validate_workflow_repo(workflow_repo: Path) -> list[str]:
         (*workflow_repo.rglob("*.json"), *workflow_repo.rglob("*.yaml"), *workflow_repo.rglob("*.yml"))
     )
     for path in config_paths:
-        if ".git" in path.parts:
+        if {".git", ".venv", "node_modules"}.intersection(path.relative_to(workflow_repo).parts):
             continue
         try:
             with path.open(encoding="utf-8") as handle:
@@ -44,18 +37,3 @@ def validate_workflow_repo(workflow_repo: Path) -> list[str]:
         if workflow.is_dir():
             errors.extend(f"{workflow.name}: {error}" for error in validate_plugin_dir(workflow))
     return errors
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("workflow_repo", nargs="?", type=Path, default=Path.cwd())
-    args = parser.parse_args()
-
-    errors = validate_workflow_repo(args.workflow_repo)
-    for error in errors:
-        print(error)
-    return bool(errors)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

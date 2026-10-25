@@ -19,9 +19,15 @@ command; it does not change Git configuration for later commands. If cloning a
 private repository instead, enter your username and PAT at Git's prompts rather
 than putting the PAT in the URL or command line.
 
+Run `make init` for source development. It installs the `dev` and `server`
+extras; service Dockerfiles also request `server` explicitly. A plain operator
+package install does not install the Claude Agent SDK, database drivers, web
+server or indexing libraries. This dependency split does not change model
+configuration or runtime capabilities.
+
 ## Bootstrap (`make bootstrap`)
 
-`make bootstrap` runs `scripts/bootstrap.py`, a guided prompt that produces
+`make bootstrap` runs the packaged `sage-run bootstrap` command, a guided prompt that produces
 the **layer 1** bootstrap artifact described in
 [Configuration](configuration.md). For a remote source it clones or refreshes
 the initial local checkout, but never modifies its `platform-config.yaml`.
@@ -29,15 +35,11 @@ the initial local checkout, but never modifies its `platform-config.yaml`.
 Prompts:
 
 1. **Deployment target** — `compose` or `kubernetes`.
-2. **Compose mode** — `local` or `production`. Local mode asks for the
-   internet-reachable Gateway URL used by signed approval callbacks, binds the
-   browser UI to `127.0.0.1:3000`, selects the local sandbox mode, and disables
-   private auth ingress.
-3. **Workflow source** — `remote` (git URL + ref + initial checkout path) or
+2. **Workflow source** — `remote` (git URL + ref + initial checkout path) or
    `local` (an existing filesystem checkout path). Compose bind-mounts the
    checkout; Kubernetes uses the checkout's config for cold start and then
    performs remote syncs with the configured GitHub App.
-4. **One-time clone PAT** (remote only, optional for public repositories). It
+3. **One-time clone PAT** (remote only, optional for public repositories). It
    is supplied to Git only through a temporary `GIT_ASKPASS` process and is
    never written to `compose.env`, a Kubernetes Secret, the Git remote URL, or
    platform config. All subsequent workflow sync, Knowledge Source sync,
@@ -45,6 +47,9 @@ Prompts:
    GitHub App connections in `platform-config.yaml`.
    Kubernetes bootstrap also prompts for the target namespace; use the same
    namespace with `helm upgrade`.
+4. **Compose host overrides** — optional Gateway URL, UI URL and sandbox
+   (`macos` or `gvisor`). Blank entries retain workflow deployment settings.
+   No host policy is inferred from package source or workflow source.
 5. **AGE identity** — an armored
    `AGE-SECRET-KEY-...` string or a path to a key file. A path is read into
    the generated secret artifact so it works inside containers.
@@ -53,14 +58,48 @@ Prompts:
 7. **Postgres password** and **object-store secret key** —
    direct-container secrets required by Compose infrastructure.
 
-Generated artifact per target (none of these are committed):
+Generated artifacts live under `~/.local/state/sage-run/local` by default,
+outside the platform and workflow checkouts. Set `BOOTSTRAP_OUTPUT_DIR` to a
+different private directory for another instance. Bootstrap refuses to overwrite
+an existing artifact; back it up and move it aside before regenerating it.
+
+Generated artifact per target, relative to that private directory:
 
 | Target | Artifact | Apply |
 | --- | --- | --- |
 | `compose` | `compose.env` | `make up` |
 | `kubernetes` | `dist/bootstrap/k8s-secret.sh` | run the script to create/update bootstrap and `platform-config.yaml` Secrets |
 
-### Authentication and Ingress
+The installed CLI can generate the same artifacts from any working directory:
+
+```sh
+sage-run bootstrap --output-dir "$HOME/.local/state/sage-run/local"
+```
+
+This command generates configuration only. It does not start Compose or apply
+Kubernetes resources. Compose files are created with mode `0600`; Kubernetes
+scripts are private executables with mode `0700`. Existing files and symlinks
+are not overwritten.
+
+To preserve an existing checkout-root `compose.env`, copy it to the private
+directory with mode `0600` rather than regenerating credentials. The original
+file is no longer loaded by default. An explicit
+`COMPOSE_BOOTSTRAP_ENV_FILE=/absolute/path/to/compose.env` selects another
+existing file without copying it. Source builds and the platform Makefile still require the platform checkout.
+
+## Validate a Workflow Repository
+
+```sh
+sage-run validate /path/to/workflow-repo
+```
+
+Omitting the path validates the current directory. The command checks JSON/YAML
+syntax and workflow package structure against the schema included in the
+installed package. It ignores Git metadata and installed dependency directories,
+returns a nonzero status on errors, and does not fetch repositories, decrypt
+secrets or contact a running platform. Gateway uses the same package checks.
+
+## Authentication and Ingress
 
 SAGE Run does not currently provide browser authentication or public ingress.
 Workflow repositories and production deployment configurations own those
@@ -169,7 +208,7 @@ make k8s-deploy \
 changes, use the same arguments with `make k8s-update`. It upserts the
 platform-config Secret and runs the same Helm upgrade without changing bootstrap
 credentials. `K8S_NAMESPACE` must match the namespace embedded by
-`make bootstrap` in `dist/bootstrap/k8s-secret.sh`.
+`make bootstrap` in `$(BOOTSTRAP_OUTPUT_DIR)/dist/bootstrap/k8s-secret.sh`.
 
 For platform code changes, first build and push new **immutable** image tags,
 update the corresponding `images.*.tag` values, then run `make k8s-update`.
@@ -179,11 +218,9 @@ therefore does not provide a reliable rollout.
 ## Which services actually start
 
 Compose gates every optional MCP server and connector behind a profile (see
-`deploy/docker-compose.yml`'s `profiles:` entries); nothing reads
-`platform-config.yaml` to decide this automatically for you. `make up` derives
-the right profile set with `scripts/compose_profiles.py`, which reads the
-instance's `platform-config.yaml`
-(`$PLATFORM_CONFIG_FILE`, or the bundled starter config)
+`deploy/docker-compose.yml`'s `profiles:` entries). `make up` derives the
+profile set with `sage-run profiles`, which reads the instance's
+`platform-config.yaml`
 and maps its `mcps.enabled`, `connectors.enabled` (by connector `type`), and
 `model_profiles` (by `ANTHROPIC_BASE_URL`) to the matching profile names:
 
@@ -193,9 +230,9 @@ make up
 ```
 
 The workflow repo owns a committed `deploy/compose.env` with non-secret
-production coordinates. `make bootstrap` writes the separate, gitignored root
-`compose.env` with bootstrap secrets, paths to the workflow deployment files,
-and local-mode overrides when selected. The Makefile loads committed defaults
+production coordinates. `make bootstrap` writes a separate private
+`compose.env` under `BOOTSTRAP_OUTPUT_DIR` with bootstrap secrets and the workflow checkout path,
+and explicit host overrides when supplied. The Makefile loads committed defaults
 first and the generated file second.
 
 Workflow Repo **Sync** is the release boundary for workflow packages and
@@ -262,8 +299,8 @@ and newly built task bundles describe the same revision.
 
 | Target | Does |
 | --- | --- |
-| `init` | `uv sync --extra dev`. |
-| `bootstrap` | Run `scripts/bootstrap.py` interactively. |
+| `init` | `uv sync --extra dev --extra server`. |
+| `bootstrap` | Run `sage-run bootstrap` interactively, writing to `BOOTSTRAP_OUTPUT_DIR` outside Git. |
 | `sync` | Rebuild the active platform/workflow release through `GATEWAY_URL` (default `http://localhost:8080`). |
 | `set-platform-secret` | Interactively encrypt a secret in the configured `platform-config.yaml`, then sync. |
 | `set-workflow-secret WORKFLOW=<name>` | Interactively encrypt a secret in the selected workflow's `agent.yaml`, then sync. |
@@ -367,3 +404,74 @@ component is newer than the running platform's, that bundle is blocked
 The control-plane UI's workflow-repo page only lets an operator change the
 pinned version and trigger a sync; the repo URL and PAT are bootstrap-owned
 and are never editable from the UI.
+
+## Publishing Releases
+
+No packaged release has been published yet. Tags `v0.1.0` through `v0.6.0` are
+source snapshots without packages or images.
+
+The [release workflow](../.github/workflows/release.yml) runs when a GitHub
+release is published. Draft creation and ordinary tag
+pushes do not publish artifacts. It checks out the release tag, runs the full
+CI suite, and requires the tag to equal `v` plus the package version in
+`pyproject.toml`. Only plain `MAJOR.MINOR.PATCH` versions are accepted; there
+are no pre-releases, and development or local versions are rejected.
+Update the package version and `uv.lock` before creating the release tag.
+
+Each release produces:
+
+- A pure-Python `sage_run-VERSION-py3-none-any.whl` and matching
+   `sage_run-VERSION.tar.gz` source distribution, published to PyPI and attached
+   to the GitHub release. The wheel is built from the sdist and checked with
+   Twine. It works on both CPU architectures; dependencies supply their own
+   platform-specific wheels where necessary.
+- Eight GHCR images under `ghcr.io/ops-workflows/sage-run-<component>:VERSION`:
+   `gateway`, `session-manager`, `knowledge-indexer`, `control-plane-ui`,
+   `mcp`, `gcp-pubsub-connector`, `servicenow-connector` and `agent-runtime`.
+   Each tag contains `linux/amd64` and `linux/arm64` variants, plus build
+   provenance and an SBOM. No floating `latest` or major/minor tags are published.
+
+PyPI publishing waits for every image job to succeed. Publication across the
+two registries is not atomic: a failed image job can leave some images uploaded,
+and a PyPI failure can leave all images uploaded. Rerun failed jobs after fixing
+registry access; do not move a released tag or overwrite an existing PyPI
+version. A source change requires a new release version.
+
+### Registry Setup
+
+GitHub Packages does not provide a native Python/pip registry. Use PyPI for the
+public operator package. GitHub release assets are an additional direct-download
+option, not a Python package index.
+
+Use [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) instead
+of a long-lived API token or a shared CI account. A maintainer's PyPI account
+still owns and manages the project; automation authenticates using GitHub OIDC.
+Configure the project's trusted publisher with:
+
+| Setting | Value |
+| --- | --- |
+| PyPI project | `sage-run` |
+| GitHub owner | `ops-workflows` |
+| GitHub repository | `sage-run` |
+| Workflow filename | `release.yml` |
+| GitHub environment | `pypi` |
+
+If the PyPI project does not yet exist and the name is available, configure a
+[pending publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
+It does not reserve the name. For an existing project, its owner must add this
+publisher. Create the GitHub `pypi` environment with appropriate release-tag
+restrictions and, when required, maintainer approval. No `PYPI_API_TOKEN`
+secret is needed; only the PyPI job receives `id-token: write`.
+
+GHCR uses the job's `GITHUB_TOKEN` with `packages: write`, not a personal access
+token. Permit package creation in the organization and ensure any existing
+packages grant this repository Actions access. Images include a source label
+linking them to this repository. GHCR packages initially default to private;
+make all eight packages public in their package settings for anonymous pulls.
+The workflow does not change package visibility.
+
+Only SAGE Run-owned images are published. Third-party infrastructure images
+remain upstream dependencies. Publishing `agent-runtime` does not change
+workflow `runtime.container_image` settings; pin those explicitly to the
+matching version. Bundled third-party software retains its own licensing
+and applicable terms.

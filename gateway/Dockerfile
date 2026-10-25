@@ -7,15 +7,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 
 # Install dependencies
 COPY pyproject.toml .
-RUN pip install --no-cache-dir ".[dev,connectors]"
+COPY README.md LICENSE ./
+COPY sage_run/ ./sage_run/
+COPY shared/ ./shared/
+COPY schemas/ ./schemas/
+RUN pip install --no-cache-dir ".[server,connectors]"
 
 # Copy shared library and gateway
-COPY shared/ ./shared/
 COPY CLAUDE.md ./CLAUDE.md
 COPY skills/ ./skills/
 COPY hooks/ ./hooks/
 COPY mcps/ ./mcps/
-COPY schemas/ ./schemas/
 COPY gateway/ ./gateway/
 COPY session-manager/ ./session_manager/
 COPY connectors/ ./connectors/

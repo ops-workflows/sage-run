@@ -22,4 +22,4 @@ check-venv:
 	}
 
 validate:
-	$(PYTHON) $(SAGE_RUN_DIR)/scripts/validate_workflow_repo.py .
+	$(PYTHON) -m sage_run validate .

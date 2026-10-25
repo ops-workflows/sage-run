@@ -7,10 +7,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends tar && rm -rf /
 
 # Install Python dependencies
 COPY pyproject.toml .
-RUN pip install --no-cache-dir ".[dev,connectors]"
+COPY README.md LICENSE ./
+COPY sage_run/ ./sage_run/
+COPY shared/ ./shared/
+COPY schemas/ ./schemas/
+RUN pip install --no-cache-dir ".[server,connectors]"
 
 # Copy shared library and session manager
-COPY shared/ ./shared/
 COPY CLAUDE.md ./CLAUDE.md
 COPY skills/ ./skills/
 COPY hooks/ ./hooks/
