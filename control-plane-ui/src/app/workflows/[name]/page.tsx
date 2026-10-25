@@ -1,11 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import {
-  type Agent,
-  type AgentFilesResult,
-  apiFetch,
-} from '@/lib/api';
+import { type Agent, type AgentFilesResult, apiFetch } from '@/lib/api';
 import {
   getAgentModelBadgeClasses,
   getAgentModelInfo,
