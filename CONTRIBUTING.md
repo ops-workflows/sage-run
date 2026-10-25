@@ -40,7 +40,7 @@ For deployment changes, render templates where possible:
 
 ```sh
 docker compose config >/tmp/sage-run-compose.yaml
-helm template sage-run deploy/k8s/sage-run \
+helm template sage-run sage_run/chart \
   --set workflowRepo.hostPath=/tmp/workflows \
   >/tmp/sage-run-helm.yaml
 ```

@@ -330,9 +330,8 @@ def apply_bootstrap_secret(instance: Instance, identity: str, config: dict) -> N
 
 
 def _chart_path(source: Path | None) -> Path:
-    candidates = [source / "deploy/k8s/sage-run"] if source else []
-    candidates.append(Path(__file__).resolve().parent / "resources/chart")
-    candidates.append(Path(__file__).resolve().parents[1] / "deploy/k8s/sage-run")
+    candidates = [source / "sage_run/chart"] if source else []
+    candidates.append(Path(__file__).resolve().parent / "chart")
     for candidate in candidates:
         if (candidate / "Chart.yaml").is_file():
             return candidate

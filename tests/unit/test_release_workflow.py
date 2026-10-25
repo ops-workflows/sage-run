@@ -62,7 +62,7 @@ def test_release_images_cover_compose_and_runtime(release_workflow):
 
 def _release_tree(path, version, *, chart_version=None):
     (path / "pyproject.toml").write_text(f'[project]\nname = "sage-run"\nversion = "{version}"\n')
-    chart = path / "deploy/k8s/sage-run/Chart.yaml"
+    chart = path / "sage_run/chart/Chart.yaml"
     chart.parent.mkdir(parents=True)
     chart_version = chart_version or version
     chart.write_text(f'apiVersion: v2\nname: sage-run\nversion: {chart_version}\nappVersion: "{chart_version}"\n')

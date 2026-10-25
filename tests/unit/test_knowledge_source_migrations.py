@@ -76,7 +76,7 @@ async def migrated_registry(request, require_database):
         bootstrap = {
             "legacy": LEGACY_SQL,
             "bootstrap": (REPO_ROOT / "shared/lib/init_db.sql").read_text(),
-            "kubernetes": (REPO_ROOT / "deploy/k8s/sage-run/files/init_db.sql").read_text(),
+            "kubernetes": (REPO_ROOT / "sage_run/chart/files/init_db.sql").read_text(),
         }[request.param]
         with psycopg.connect(test_url.set(drivername="postgresql").render_as_string(hide_password=False)) as initial:
             initial.execute(bootstrap, prepare=False)

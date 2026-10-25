@@ -44,7 +44,7 @@ jobs:
             printf 'Release tag %s must match package version v%s\n' "$RELEASE_TAG" "$version" >&2
             exit 1
           fi
-          chart_matches="$(grep -Ec "^(version|appVersion): \"?$version\"?$" deploy/k8s/sage-run/Chart.yaml || true)"
+          chart_matches="$(grep -Ec "^(version|appVersion): \"?$version\"?$" sage_run/chart/Chart.yaml || true)"
           if [[ "$chart_matches" != 2 ]]; then
             printf 'Chart.yaml version and appVersion must both be %s\n' "$version" >&2
             exit 1
@@ -212,8 +212,8 @@ jobs:
           import sage_run
           from sage_run.local import _chart_path, release_images
           assert find_spec('claude_agent_sdk') is None and find_spec('gateway') is None
-          root = Path(sage_run.__file__).parent / 'resources'
-          assert (root / 'chart/Chart.yaml').is_file() and _chart_path(None) == root / 'chart'
+          assert (Path(sage_run.__file__).parent / 'chart/Chart.yaml').is_file()
+          assert _chart_path(None) == Path(sage_run.__file__).parent / 'chart'
           images = release_images(os.environ['VERSION'])
           assert len(images['overrides']) == 8 and all('@sha256:' in ref for ref in images['overrides'].values())
           "

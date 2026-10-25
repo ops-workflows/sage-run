@@ -21,7 +21,7 @@ from sage_run.local import (
 )
 
 pytestmark = pytest.mark.unit
-CHART = Path(__file__).resolve().parents[2] / "deploy/k8s/sage-run"
+CHART = Path(__file__).resolve().parents[2] / "sage_run/chart"
 CONFIG = {
     "mcps": {"enabled": ["message", "memory", "splunk", "github"]},
     "connectors": {

@@ -185,7 +185,7 @@ already-registered App; inspect its settings before retrying after an error.
 
 ## Kubernetes deployment
 
-`deploy/k8s/sage-run` is a namespace-scoped chart: one release per namespace,
+`sage_run/chart` is a namespace-scoped chart: one release per namespace,
 with Services named as in Compose (`gateway`, `postgres`, `minio`,
 `hindsight`, `control-plane-ui`, `mcp-<id>`), so workflow `.mcp.json` URLs and
 platform defaults work unchanged. It mounts the instance's single workflow
@@ -368,7 +368,7 @@ and newly built task bundles describe the same revision.
   and `RUNTIME_BUNDLE_ROOT`. Optional profiles: `model-gateway`, `local-llm`,
    `salesforce`, `splunk`, `cloudwatch`, `gcp-logging`, `github`, `jira`, `servicenow`,
    `gcp-pubsub`.
-- `deploy/k8s/sage-run` — Kubernetes (Helm) chart for one instance per
+- `sage_run/chart` — Kubernetes (Helm) chart for one instance per
    namespace; `sage-run up` renders its values from the workflow repository
    (see [Kubernetes deployment](#kubernetes-deployment)).
 

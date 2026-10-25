@@ -69,9 +69,6 @@ only-include = [
     "schemas",
 ]
 
-[tool.hatch.build.targets.wheel.force-include]
-"deploy/k8s/sage-run" = "sage_run/resources/chart"
-
 [tool.ruff]
 target-version = "py311"
 line-length = 120

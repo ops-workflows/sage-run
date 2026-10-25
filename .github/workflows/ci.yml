@@ -76,10 +76,13 @@ jobs:
       - name: Lint
         run: make lint
 
+      - name: Build a service image
+        run: docker buildx build --load -t sage-run-gateway:ci -f gateway/Dockerfile .
+
       - name: Lint and render Helm chart
         run: |
-          helm lint deploy/k8s/sage-run --set workflowRepo.hostPath=/workflows
-          helm template sage-run deploy/k8s/sage-run --set workflowRepo.hostPath=/workflows >/dev/null
+          helm lint sage_run/chart --set workflowRepo.hostPath=/workflows
+          helm template sage-run sage_run/chart --set workflowRepo.hostPath=/workflows >/dev/null
 
       - name: Run full test suite
         run: >-
