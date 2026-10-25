@@ -40,6 +40,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             local.add_argument("--env", default="", help="Config overlay to use, e.g. prod (default: base config)")
         if action == "down":
             local.add_argument("--purge", action="store_true", help="Also delete the namespace and its volumes")
+    deploy = commands.add_parser("deploy", help="Deploy a pushed commit to a k3s host over SSH")
+    deploy.add_argument("workflow_repo", type=Path, nargs="?", default=Path.cwd())
+    deploy.add_argument("--host", required=True, help="SSH host (e.g. a ~/.ssh/config alias)")
+    deploy.add_argument("--env", default="prod", help="Config overlay (default: prod)")
+    deploy.add_argument("--ref", default="main", help="Branch or tag on origin (default: main)")
+    deploy.add_argument("--instance", help="Namespace (default: repository folder name)")
+    deploy.add_argument("--image-tag", help="Use images already loaded on the host with this tag")
+    deploy.add_argument("--plan", action="store_true", help="Show what would be deployed and stop")
     keygen = commands.add_parser("keygen", help="Generate an environment age key (private file, public key printed)")
     keygen.add_argument("--out", type=Path, required=True, help="New private key file (mode 0600)")
     secret = commands.add_parser("secret", help="Manage encrypted config values")
@@ -76,6 +84,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         return 0
+    if args.command == "deploy":
+        from sage_run.remote import deploy as remote_deploy
+
+        try:
+            return remote_deploy(
+                args.workflow_repo,
+                host=args.host,
+                environment=args.env.strip().lower(),
+                ref=args.ref,
+                name=args.instance,
+                image_tag=args.image_tag,
+                version=version("sage-run"),
+                plan_only=args.plan,
+            )
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
     if args.command == "keygen":
         from sage_run.keys import generate_key
 

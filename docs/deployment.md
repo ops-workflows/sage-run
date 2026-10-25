@@ -223,6 +223,39 @@ make down    # keep volumes; `sage-run down --purge` deletes the namespace
 Run `make up` again after edits. Several workflow repositories run side by side
 as separate namespaces.
 
+### Production instance (k3s host over SSH)
+
+A production host runs single-node k3s with the patched gVisor runtime
+(RuntimeClass `gvisor`, see [Security](security.md)) and holds the instance's
+age key at `/etc/sage-run/<instance>/age.key` (root, 0600). Generate the key on
+the host (`sudo age-keygen -o /etc/sage-run/<instance>/age.key`) and put its
+public key in `platform-config-prod.yaml`; the private key never leaves the host.
+
+From the workflow repository on a workstation:
+
+```sh
+sage-run deploy --host <ssh-host> --env prod --ref main --plan   # review
+sage-run deploy --host <ssh-host> --env prod --ref main
+```
+
+Deploy requires `--ref` to be pushed to `origin` at the same commit. It:
+
+1. streams that commit as a git bundle into `/var/lib/sage-run/<instance>/workflow-repo`
+   and sets `origin` (no clone credentials on the host);
+2. builds the `sage-run-bootstrap` Secret on the host: the host key decrypts the
+   `LLM_API_KEY`, `PG_PASSWORD` and `OBJECT_STORE_SECRET_KEY` platform secrets
+   (only ciphertexts leave the workstation);
+3. installs Helm on the host if needed (pinned, checksum-verified) and upgrades
+   the release with the chart and the release's digest-pinned images;
+4. applies `deploy/k8s/*.yaml` from the commit (`${WORKFLOW_REPO_PATH}` is the
+   host checkout), restarts platform services and syncs workflows.
+
+Afterwards, workflow-only changes merged to the deployed ref can be applied
+with the control plane's **Sync now**, which fetches through the instance's
+GitHub App connection; platform, configuration and MCP changes use
+`sage-run deploy` again. `deployment.ui` (`host_ip`, `host_port`) publishes the
+UI on a node address when there is no ingress controller.
+
 ## Which services actually start
 
 Compose gates every optional MCP server and connector behind a profile (see
@@ -421,7 +454,10 @@ CI suite, and requires the tag to equal `v` plus the package version in
 are no pre-releases, and development or local versions are rejected.
 Update the package version and `uv.lock` before creating the release tag.
 
-Each release produces:
+Each release builds the images first, records their digests in `release.json`,
+embeds that manifest and the Helm chart in the wheel, and publishes to PyPI
+last. An installed `sage-run` therefore deploys exactly the images built for
+its version. Each release produces:
 
 - A pure-Python `sage_run-VERSION-py3-none-any.whl` and matching
    `sage_run-VERSION.tar.gz` source distribution, published to PyPI and attached

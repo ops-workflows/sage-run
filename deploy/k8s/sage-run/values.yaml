@@ -64,6 +64,9 @@ sessionManager:
 
 controlPlaneUi:
   port: 3000
+  # Publish the UI on a node address without an ingress controller (e.g. 80).
+  hostPort: 0
+  hostIP: ""
 
 knowledgeSources:
   objectStoreBucket: sage-run-knowledge-sources
@@ -84,13 +87,13 @@ infrastructure:
   storageClass: ""
   postgres:
     enabled: true
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
     database: sage_run
     user: sage_run
     storageSize: 20Gi
   objectStore:
     enabled: true
-    image: cgr.dev/chainguard/minio:latest
+    image: cgr.dev/chainguard/minio:latest@sha256:2136d593beacf4461187035eca949fe49abd589d5079735025c711ca58fee0c8
     accessKey: sage_run
     buckets:
       - agent-memory
@@ -99,7 +102,7 @@ infrastructure:
     storageSize: 20Gi
   hindsight:
     enabled: true
-    image: ghcr.io/vectorize-io/hindsight:latest
+    image: ghcr.io/vectorize-io/hindsight:latest@sha256:84ab276b8f501546deb6ea9c64a57291718b4e16a59dd9e02a02fdd5adfe9028
     storageSize: 10Gi
     # HINDSIGHT_API_* settings (LLM and embeddings endpoints and models).
     env: {}

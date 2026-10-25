@@ -12,27 +12,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify:
-    name: Verify release
-    uses: ./.github/workflows/ci.yml
-
-  package:
-    name: Build Python distributions
+  version:
+    name: Resolve and check release version
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
     steps:
       - name: Check out release tag
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
@@ -52,33 +44,28 @@ jobs:
             printf 'Release tag %s must match package version v%s\n' "$RELEASE_TAG" "$version" >&2
             exit 1
           fi
+          chart_matches="$(grep -Ec "^(version|appVersion): \"?$version\"?$" deploy/k8s/sage-run/Chart.yaml || true)"
+          if [[ "$chart_matches" != 2 ]]; then
+            printf 'Chart.yaml version and appVersion must both be %s\n' "$version" >&2
+            exit 1
+          fi
+          if ! grep -Eq "^  \"version\": \"$version\",$" control-plane-ui/package.json; then
+            printf 'control-plane-ui/package.json version must be %s\n' "$version" >&2
+            exit 1
+          fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Build wheel and source distribution
-        run: uv build --no-sources
-
-      - name: Check distribution metadata
-        run: uvx --from twine twine check --strict dist/*
-
-      - name: Verify installed operator wheel
-        run: |
-          uv venv "$RUNNER_TEMP/sage-run-operator" --python 3.11
-          uv pip install --python "$RUNNER_TEMP/sage-run-operator/bin/python" dist/*.whl
-          "$RUNNER_TEMP/sage-run-operator/bin/python" -I -m sage_run --version
-          "$RUNNER_TEMP/sage-run-operator/bin/python" -I -c "from importlib.util import find_spec; assert find_spec('claude_agent_sdk') is None; assert find_spec('gateway') is None"
-
-      - name: Store Python distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-distributions
-          path: dist/*
-          if-no-files-found: error
+  verify:
+    name: Verify release
+    needs: version
+    uses: ./.github/workflows/ci.yml
 
   images:
     name: Publish ${{ matrix.component }} image
-    needs: [verify, package]
+    needs: [version, verify]
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     permissions:
       contents: read
       packages: write
@@ -104,10 +91,10 @@ jobs:
           - component: agent-runtime
             dockerfile: runtime/Dockerfile
     steps:
-      - name: Check out release tag
+      - name: Check out release commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ needs.version.outputs.sha }}
           persist-credentials: false
 
       - name: Set up QEMU
@@ -126,25 +113,123 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push multi-platform image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context || '.' }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/${{ github.repository }}-${{ matrix.component }}:${{ needs.package.outputs.version }}
+          tags: ghcr.io/${{ github.repository }}-${{ matrix.component }}:${{ needs.version.outputs.version }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ needs.package.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.version.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
           provenance: mode=max
           sbom: true
           cache-from: type=gha,scope=release-${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=release-${{ matrix.component }}
 
+      - name: Record image digest
+        env:
+          COMPONENT: ${{ matrix.component }}
+          REFERENCE: ghcr.io/${{ github.repository }}-${{ matrix.component }}:${{ needs.version.outputs.version }}@${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p digests
+          printf '%s' "$REFERENCE" > "digests/$COMPONENT"
+
+      - name: Store image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.component }}
+          path: digests/*
+          if-no-files-found: error
+
+  package:
+    name: Build Python distributions
+    needs: [version, images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Download image digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: digests
+
+      - name: Write release manifest
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ needs.version.outputs.sha }}
+        run: |
+          python - <<'EOF'
+          import json, os
+          from pathlib import Path
+          images = {path.name: path.read_text().strip() for path in sorted(Path("digests").iterdir())}
+          assert len(images) == 8, sorted(images)
+          manifest = {"version": os.environ["VERSION"], "git_commit": os.environ["SHA"], "images": images}
+          target = Path("sage_run/resources/release.json")
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_text(json.dumps(manifest, indent=2) + "\n")
+          Path("release.json").write_text(target.read_text())
+          print(target.read_text())
+          EOF
+
+      - name: Build wheel and source distribution
+        run: uv build --no-sources
+
+      - name: Check distribution metadata
+        run: uvx --from twine twine check --strict dist/*
+
+      - name: Verify installed operator wheel
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          uv venv "$RUNNER_TEMP/sage-run-operator" --python 3.11
+          uv pip install --python "$RUNNER_TEMP/sage-run-operator/bin/python" dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/sage-run-operator/bin/python" -I -m sage_run --version
+          "$RUNNER_TEMP/sage-run-operator/bin/python" -I -c "
+          import os
+          from importlib.util import find_spec
+          from pathlib import Path
+          import sage_run
+          from sage_run.local import _chart_path, release_images
+          assert find_spec('claude_agent_sdk') is None and find_spec('gateway') is None
+          root = Path(sage_run.__file__).parent / 'resources'
+          assert (root / 'chart/Chart.yaml').is_file() and _chart_path(None) == root / 'chart'
+          images = release_images(os.environ['VERSION'])
+          assert len(images['overrides']) == 8 and all('@sha256:' in ref for ref in images['overrides'].values())
+          "
+
+      - name: Store Python distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: |
+            dist/*
+            release.json
+          if-no-files-found: error
+
   pypi:
     name: Publish to PyPI
-    needs: [package, images]
+    needs: [package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -157,14 +242,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-distributions
-          path: dist
+          path: artifacts
+
+      - name: Select distributions
+        run: mkdir dist && mv artifacts/dist/* dist/
 
       - name: Publish with Trusted Publishing
         uses: pypa/gh-action-pypi-publish@release/v1
 
   release-assets:
-    name: Attach Python distributions
-    needs: [package, pypi]
+    name: Attach release assets
+    needs: [version, pypi]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -174,11 +262,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-distributions
-          path: dist
+          path: artifacts
 
-      - name: Attach wheel and source distribution to release
+      - name: Attach wheel, source distribution and release manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/*
+        run: gh release upload "$RELEASE_TAG" artifacts/dist/* artifacts/release.json

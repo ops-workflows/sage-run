@@ -34,7 +34,16 @@ DEFAULT_DEV_IDENTITY = "~/.config/sage-run/dev.agekey"
 IDENTITY_ENV = "SAGE_RUN_AGE_IDENTITY_FILE"
 INFRASTRUCTURE_SECRETS = ("LLM_API_KEY", "PG_PASSWORD", "OBJECT_STORE_SECRET_KEY")
 SANDBOX_PROFILES = ("local", "ci", "gvisor")
-DEPLOYMENT_KEYS = {"public_url", "sandbox_profile", "env", "hindsight", "extra_hosts", "service_env"}
+DEPLOYMENT_KEYS = {
+    "public_url",
+    "sandbox_profile",
+    "env",
+    "hindsight",
+    "extra_hosts",
+    "service_env",
+    "ui",
+    "infrastructure_images",
+}
 RELEASE_NAME = "sage-run"
 BOOTSTRAP_SECRET = "sage-run-bootstrap"  # noqa: S105 - Secret resource name, not a credential
 CORE_MCPS = ("message", "memory", "knowledge", "platform")
@@ -105,12 +114,17 @@ def deployment_settings(config: dict) -> dict:
     unknown = set(section) - DEPLOYMENT_KEYS
     if unknown:
         raise ValueError(f"deployment has unknown keys: {', '.join(sorted(unknown))}")
-    for key in ("env", "extra_hosts", "service_env", "hindsight"):
+    for key in ("env", "extra_hosts", "service_env", "hindsight", "ui", "infrastructure_images"):
         if section.get(key) is not None and not isinstance(section[key], dict):
             raise ValueError(f"deployment.{key} must be a mapping")
     hindsight_env = (section.get("hindsight") or {}).get("env")
     if hindsight_env is not None and not isinstance(hindsight_env, dict):
         raise ValueError("deployment.hindsight.env must be a mapping")
+    if set(section.get("infrastructure_images") or {}) - {"postgres", "objectStore", "hindsight"}:
+        raise ValueError("deployment.infrastructure_images accepts postgres, objectStore and hindsight")
+    ui = section.get("ui") or {}
+    if set(ui) - {"host_ip", "host_port"} or ("host_port" in ui and not isinstance(ui["host_port"], int)):
+        raise ValueError("deployment.ui accepts host_ip and an integer host_port")
     profile = section.get("sandbox_profile")
     if profile is not None and profile not in SANDBOX_PROFILES:
         raise ValueError(f"deployment.sandbox_profile must be one of {', '.join(SANDBOX_PROFILES)}")
@@ -152,6 +166,27 @@ def workflow_mcps(workflow_repo: Path, config: dict) -> dict[str, dict]:
     return servers
 
 
+def _infrastructure_values(deployment: dict) -> dict:
+    values: dict = {"hindsight": {"env": _string_map((deployment.get("hindsight") or {}).get("env"))}}
+    for component, image in (deployment.get("infrastructure_images") or {}).items():
+        values.setdefault(component, {})["image"] = str(image)
+    return values
+
+
+def release_manifest() -> dict:
+    """Image references published with this package version (empty in source checkouts)."""
+    manifest = Path(__file__).with_name("resources") / "release.json"
+    return json.loads(manifest.read_text(encoding="utf-8")) if manifest.is_file() else {}
+
+
+def release_images(version_tag: str) -> dict:
+    """Helm image values for a published release, pinned by digest when the manifest matches."""
+    manifest = release_manifest()
+    if manifest.get("version") == version_tag and manifest.get("images"):
+        return {"tag": version_tag, "overrides": manifest["images"]}
+    return {"tag": version_tag}
+
+
 def render_values(instance: Instance, config: dict) -> dict:
     """Helm values for an instance from its merged platform config. Contains no secrets."""
     mcps, connectors = enabled_components(config)
@@ -175,7 +210,7 @@ def render_values(instance: Instance, config: dict) -> dict:
         "serviceEnv": {
             str(name): _string_map(values) for name, values in (deployment.get("service_env") or {}).items()
         },
-        "infrastructure": {"hindsight": {"env": _string_map((deployment.get("hindsight") or {}).get("env"))}},
+        "infrastructure": _infrastructure_values(deployment),
         "workflowMcps": workflow_mcps(instance.workflow_repo, config),
         "mcps": {name: {"enabled": name in mcps} for name in MCP_PROFILES.keys() | set(CORE_MCPS)},
         "connectors": {name: {"enabled": name in connectors} for name in CONNECTOR_COMPONENTS},
@@ -296,6 +331,7 @@ def apply_bootstrap_secret(instance: Instance, identity: str, config: dict) -> N
 
 def _chart_path(source: Path | None) -> Path:
     candidates = [source / "deploy/k8s/sage-run"] if source else []
+    candidates.append(Path(__file__).resolve().parent / "resources/chart")
     candidates.append(Path(__file__).resolve().parents[1] / "deploy/k8s/sage-run")
     for candidate in candidates:
         if (candidate / "Chart.yaml").is_file():
@@ -353,7 +389,7 @@ def up(
     elif image_tag:
         instance.images = {"registry": "", "tag": image_tag, "pullPolicy": "Never"}
     else:
-        instance.images = {"tag": version("sage-run")}
+        instance.images = release_images(version("sage-run"))
 
     identity = read_identity(identity_file or Path(os.environ.get(IDENTITY_ENV, DEFAULT_DEV_IDENTITY)))
     values = render_values(instance, config)

@@ -22,6 +22,12 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.controlPlaneUi.port }}
+              {{- with .Values.controlPlaneUi.hostPort }}
+              hostPort: {{ . }}
+              {{- end }}
+              {{- with .Values.controlPlaneUi.hostIP }}
+              hostIP: {{ . | quote }}
+              {{- end }}
           env:
             - name: INTERNAL_GATEWAY_URL
               value: http://gateway:{{ .Values.gateway.port }}

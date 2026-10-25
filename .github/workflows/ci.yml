@@ -76,6 +76,11 @@ jobs:
       - name: Lint
         run: make lint
 
+      - name: Lint and render Helm chart
+        run: |
+          helm lint deploy/k8s/sage-run --set workflowRepo.hostPath=/workflows
+          helm template sage-run deploy/k8s/sage-run --set workflowRepo.hostPath=/workflows >/dev/null
+
       - name: Run full test suite
         run: >-
           make tests
