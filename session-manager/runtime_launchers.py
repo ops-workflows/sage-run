@@ -386,6 +386,7 @@ class KubernetesRuntimeLauncher:
             init_containers=init_containers,
             volumes=volumes,
             automount_service_account_token=False,
+            enable_service_links=False,
             security_context=self._runtime_pod_security_context(sandbox_profile),
             runtime_class_name=settings.kubernetes_runtime_class if sandbox_profile == "gvisor" else None,
         )

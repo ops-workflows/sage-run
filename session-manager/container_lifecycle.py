@@ -292,7 +292,7 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
         reminder_config = runtime.get("ask_user_question_reminder", {})
         if not isinstance(reminder_config, dict):
             reminder_config = {}
-        container_image = runtime.get("container_image", "sage-run-agent-runtime:latest")
+        container_image = runtime.get("container_image") or settings.runtime_image
         release = _load_active_release()
         platform_file = _active_platform_config_file(release)
         platform_config_env = _get_platform_config_env(platform_file=platform_file)

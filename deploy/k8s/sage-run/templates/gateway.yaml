@@ -1,11 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sage-run.fullname" . }}-gateway
+  name: gateway
   labels:
     app.kubernetes.io/component: gateway
 spec:
-  replicas: {{ .Values.gateway.replicas }}
+  # Gateway runs the scheduler in-process and must never run twice.
+  replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/component: gateway
@@ -14,34 +17,41 @@ spec:
       labels:
         app.kubernetes.io/component: gateway
     spec:
-      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
-      serviceAccountName: {{ include "sage-run.serviceAccountName" . }}
+      {{- include "sage-run.podDefaults" . | nindent 6 }}
       containers:
         - name: gateway
-          image: {{ .Values.images.gateway.repository }}:{{ .Values.images.gateway.tag }}
-          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          image: {{ include "sage-run.image" (dict "root" . "component" "gateway") }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.gateway.port }}
           env:
             {{- include "sage-run.commonEnv" . | nindent 12 }}
+            - name: WORKFLOW_REPO_DISPLAY_PATH
+              value: {{ .Values.workflowRepo.hostPath | quote }}
             - name: RUNTIME_BUNDLE_ROOT
               value: {{ .Values.runtimeBundles.root | quote }}
             - name: RUNTIME_BUNDLE_OBJECT_STORE_BUCKET
               value: {{ .Values.runtimeBundles.objectStoreBucket | quote }}
-          {{- if .Values.bootstrap.existingSecret }}
           envFrom:
             {{- include "sage-run.bootstrapEnvFrom" . | nindent 12 }}
-          {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
           volumeMounts:
-            {{- include "sage-run.commonVolumeMounts" . | nindent 12 }}
+            {{- include "sage-run.workflowRepoMount" (dict "writable" true) | nindent 12 }}
+            - name: release-cache
+              mountPath: {{ .Values.runtimeBundles.root }}
       volumes:
-        {{- include "sage-run.commonVolumes" . | nindent 8 }}
+        {{- include "sage-run.workflowRepoVolume" . | nindent 8 }}
+        - name: release-cache
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "sage-run.fullname" . }}-gateway
+  name: gateway
 spec:
   selector:
     app.kubernetes.io/component: gateway

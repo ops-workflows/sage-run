@@ -3,7 +3,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sage-run.fullname" $ }}-mcp-{{ $name }}
+  name: mcp-{{ $name }}
   labels:
     app.kubernetes.io/component: mcp
     app.kubernetes.io/name: {{ $name }}
@@ -19,11 +19,11 @@ spec:
         app.kubernetes.io/component: mcp
         app.kubernetes.io/name: {{ $name }}
     spec:
-      {{- include "sage-run.imagePullSecrets" $ | nindent 6 }}
+      {{- include "sage-run.podDefaults" $ | nindent 6 }}
       containers:
-        - name: mcp-{{ $name }}
-          image: {{ $.Values.images.mcp.repository }}:{{ $.Values.images.mcp.tag }}
-          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+        - name: mcp
+          image: {{ include "sage-run.image" (dict "root" $ "component" "mcp") }}
+          imagePullPolicy: {{ $.Values.images.pullPolicy }}
           command: ["python", "-m", "uvicorn", "{{ $mcp.module }}:app", "--host", "0.0.0.0", "--port", "{{ $mcp.port }}"]
           ports:
             - name: http
@@ -31,59 +31,29 @@ spec:
           env:
             {{- include "sage-run.commonEnv" $ | nindent 12 }}
             {{- if eq $name "knowledge" }}
-            {{- $knowledgeEnv := dict
-              "KNOWLEDGE_EMBEDDINGS_OPENAI_BASE_URL" $.Values.knowledge.embeddings.openaiBaseUrl
-              "KNOWLEDGE_EMBEDDINGS_OPENAI_MODEL" $.Values.knowledge.embeddings.openaiModel
-              "KNOWLEDGE_EMBEDDINGS_DIMENSIONS" $.Values.knowledge.embeddings.dimensions
-              "KNOWLEDGE_EMBEDDINGS_BATCH_SIZE" $.Values.knowledge.embeddings.batchSize
-              "KNOWLEDGE_EMBEDDINGS_TIMEOUT_SEC" $.Values.knowledge.embeddings.timeoutSec
-              "KNOWLEDGE_RERANK_ENABLED" $.Values.knowledge.rerank.enabled
-              "KNOWLEDGE_RERANK_BASE_URL" $.Values.knowledge.rerank.baseUrl
-              "KNOWLEDGE_RERANK_MODEL" $.Values.knowledge.rerank.model
-              "KNOWLEDGE_RERANK_TIMEOUT_SEC" $.Values.knowledge.rerank.timeoutSec
-              "KNOWLEDGE_RERANK_CANDIDATES" $.Values.knowledge.rerank.candidates
-              "KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS" $.Values.knowledge.requireExplicitSourceGrants }}
-            {{- range $key, $value := $knowledgeEnv }}
-            {{- if and (ne $value nil) (not (hasKey $.Values.platformEnv $key)) }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
-            {{- end }}
-            - name: KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET
-              value: {{ required "knowledgeSources.objectStoreBucket is required" $.Values.knowledgeSources.objectStoreBucket | quote }}
             - name: KNOWLEDGE_SOURCE_SERVING_CACHE_ROOT
               value: {{ $.Values.knowledgeMcp.cacheRoot | quote }}
-            - name: KNOWLEDGE_SOURCE_REFRESH_INTERVAL_SEC
-              value: {{ $.Values.knowledgeMcp.refreshIntervalSec | quote }}
-            - name: KNOWLEDGE_SOURCE_CACHE_VERSIONS_TO_KEEP
-              value: {{ $.Values.knowledgeMcp.versionsToKeep | quote }}
             {{- end }}
-          {{- if $.Values.bootstrap.existingSecret }}
           envFrom:
             {{- include "sage-run.bootstrapEnvFrom" $ | nindent 12 }}
-          {{- end }}
           volumeMounts:
-            {{- include "sage-run.commonVolumeMounts" $ | nindent 12 }}
+            {{- include "sage-run.workflowRepoMount" (dict "writable" false) | nindent 12 }}
             {{- if eq $name "knowledge" }}
-            - name: knowledge-serving-cache
+            - name: knowledge-cache
               mountPath: {{ $.Values.knowledgeMcp.cacheRoot }}
             {{- end }}
       volumes:
-        {{- include "sage-run.commonVolumes" $ | nindent 8 }}
+        {{- include "sage-run.workflowRepoVolume" $ | nindent 8 }}
         {{- if eq $name "knowledge" }}
-        - name: knowledge-serving-cache
-          {{- if $.Values.knowledgeMcp.persistence.enabled }}
+        - name: knowledge-cache
           persistentVolumeClaim:
-            claimName: {{ default (printf "%s-knowledge-cache" (include "sage-run.fullname" $)) $.Values.knowledgeMcp.persistence.existingClaim }}
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
+            claimName: knowledge-cache
         {{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "sage-run.fullname" $ }}-mcp-{{ $name }}
+  name: mcp-{{ $name }}
 spec:
   selector:
     app.kubernetes.io/component: mcp

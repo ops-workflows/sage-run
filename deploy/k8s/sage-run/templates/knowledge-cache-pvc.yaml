@@ -1,18 +1,14 @@
-{{- if and .Values.mcps.knowledge.enabled .Values.knowledgeMcp.persistence.enabled (not .Values.knowledgeMcp.persistence.existingClaim) }}
+{{- if .Values.mcps.knowledge.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "sage-run.fullname" . }}-knowledge-cache
-  labels:
-    app.kubernetes.io/component: mcp
-    app.kubernetes.io/name: knowledge
+  name: knowledge-cache
+  annotations:
+    helm.sh/resource-policy: keep
 spec:
-  accessModes:
-    - ReadWriteOnce
-  {{- if .Values.knowledgeMcp.persistence.storageClass }}
-  storageClassName: {{ .Values.knowledgeMcp.persistence.storageClass | quote }}
-  {{- end }}
+  accessModes: ["ReadWriteOnce"]
+  {{- include "sage-run.storageClass" . | nindent 2 }}
   resources:
     requests:
-      storage: {{ .Values.knowledgeMcp.persistence.size }}
+      storage: {{ .Values.knowledgeMcp.storageSize }}
 {{- end }}

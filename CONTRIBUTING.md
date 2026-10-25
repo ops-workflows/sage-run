@@ -41,7 +41,7 @@ For deployment changes, render templates where possible:
 ```sh
 docker compose config >/tmp/sage-run-compose.yaml
 helm template sage-run deploy/k8s/sage-run \
-  --values examples/workflow-repo/deploy/k8s-values.yaml \
+  --set workflowRepo.hostPath=/tmp/workflows \
   >/tmp/sage-run-helm.yaml
 ```
 

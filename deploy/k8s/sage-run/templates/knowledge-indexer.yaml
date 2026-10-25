@@ -1,11 +1,12 @@
+{{- if .Values.knowledgeIndexer.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sage-run.fullname" . }}-knowledge-indexer
+  name: knowledge-indexer
   labels:
     app.kubernetes.io/component: knowledge-indexer
 spec:
-  replicas: {{ .Values.knowledgeIndexer.replicas }}
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/component: knowledge-indexer
@@ -14,49 +15,23 @@ spec:
       labels:
         app.kubernetes.io/component: knowledge-indexer
     spec:
-      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
-      serviceAccountName: {{ include "sage-run.serviceAccountName" . }}
+      {{- include "sage-run.podDefaults" . | nindent 6 }}
       containers:
         - name: knowledge-indexer
-          image: {{ .Values.images.knowledgeIndexer.repository }}:{{ .Values.images.knowledgeIndexer.tag }}
-          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          image: {{ include "sage-run.image" (dict "root" . "component" "knowledge-indexer") }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
           env:
             {{- include "sage-run.commonEnv" . | nindent 12 }}
-            {{- $knowledgeEnv := dict
-              "KNOWLEDGE_EMBEDDINGS_OPENAI_BASE_URL" .Values.knowledge.embeddings.openaiBaseUrl
-              "KNOWLEDGE_EMBEDDINGS_OPENAI_MODEL" .Values.knowledge.embeddings.openaiModel
-              "KNOWLEDGE_EMBEDDINGS_DIMENSIONS" .Values.knowledge.embeddings.dimensions
-              "KNOWLEDGE_EMBEDDINGS_BATCH_SIZE" .Values.knowledge.embeddings.batchSize
-              "KNOWLEDGE_EMBEDDINGS_TIMEOUT_SEC" .Values.knowledge.embeddings.timeoutSec
-              "KNOWLEDGE_RERANK_ENABLED" .Values.knowledge.rerank.enabled
-              "KNOWLEDGE_RERANK_BASE_URL" .Values.knowledge.rerank.baseUrl
-              "KNOWLEDGE_RERANK_MODEL" .Values.knowledge.rerank.model
-              "KNOWLEDGE_RERANK_TIMEOUT_SEC" .Values.knowledge.rerank.timeoutSec
-              "KNOWLEDGE_RERANK_CANDIDATES" .Values.knowledge.rerank.candidates
-              "KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS" .Values.knowledge.requireExplicitSourceGrants }}
-            {{- range $key, $value := $knowledgeEnv }}
-            {{- if and (ne $value nil) (not (hasKey $.Values.platformEnv $key)) }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
-            {{- end }}
-            - name: KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET
-              value: {{ required "knowledgeSources.objectStoreBucket is required" .Values.knowledgeSources.objectStoreBucket | quote }}
             - name: KNOWLEDGE_SOURCE_INDEXER_CACHE_ROOT
               value: {{ .Values.knowledgeIndexer.cacheRoot | quote }}
-            - name: KNOWLEDGE_SOURCE_INDEXER_POLL_INTERVAL_SEC
-              value: {{ .Values.knowledgeIndexer.pollIntervalSec | quote }}
-            - name: KNOWLEDGE_SOURCE_STALE_RUN_SEC
-              value: {{ .Values.knowledgeIndexer.staleRunSec | quote }}
-          {{- if .Values.bootstrap.existingSecret }}
           envFrom:
             {{- include "sage-run.bootstrapEnvFrom" . | nindent 12 }}
-          {{- end }}
           volumeMounts:
-            {{- include "sage-run.commonVolumeMounts" . | nindent 12 }}
-            - name: knowledge-indexer-cache
+            {{- include "sage-run.workflowRepoMount" (dict "writable" false) | nindent 12 }}
+            - name: cache
               mountPath: {{ .Values.knowledgeIndexer.cacheRoot }}
       volumes:
-        {{- include "sage-run.commonVolumes" . | nindent 8 }}
-        - name: knowledge-indexer-cache
+        {{- include "sage-run.workflowRepoVolume" . | nindent 8 }}
+        - name: cache
           emptyDir: {}
+{{- end }}

@@ -1,10 +1,9 @@
-{{- if .Values.infrastructure.postgres.enabled }}
+{{- $infra := .Values.infrastructure }}
+{{- if $infra.postgres.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "sage-run.postgresName" . }}-init
-  labels:
-    app.kubernetes.io/component: postgres
+  name: postgres-init
 data:
   init_db.sql: |-
 {{ .Files.Get "files/init_db.sql" | indent 4 }}
@@ -12,7 +11,7 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "sage-run.postgresName" . }}
+  name: postgres
 spec:
   selector:
     app.kubernetes.io/component: postgres
@@ -24,9 +23,9 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "sage-run.postgresName" . }}
+  name: postgres
 spec:
-  serviceName: {{ include "sage-run.postgresName" . }}
+  serviceName: postgres
   replicas: 1
   selector:
     matchLabels:
@@ -36,23 +35,25 @@ spec:
       labels:
         app.kubernetes.io/component: postgres
     spec:
-      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.podDefaults" . | nindent 6 }}
       containers:
         - name: postgres
-          image: {{ .Values.infrastructure.postgres.image }}
+          image: {{ $infra.postgres.image }}
           ports:
             - name: postgres
               containerPort: 5432
           env:
             - name: POSTGRES_DB
-              value: {{ .Values.infrastructure.postgres.database | quote }}
+              value: {{ $infra.postgres.database | quote }}
             - name: POSTGRES_USER
-              value: {{ .Values.infrastructure.postgres.user | quote }}
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "bootstrap.existingSecret is required for managed infrastructure" .Values.bootstrap.existingSecret }}
-                  key: PG_PASSWORD
+              value: {{ $infra.postgres.user | quote }}
+            {{- include "sage-run.secretEnv" (dict "root" . "name" "POSTGRES_PASSWORD" "key" "PG_PASSWORD") | nindent 12 }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
@@ -63,28 +64,26 @@ spec:
       volumes:
         - name: init-db
           configMap:
-            name: {{ include "sage-run.postgresName" . }}-init
+            name: postgres-init
   volumeClaimTemplates:
     - metadata:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
-        {{- with .Values.infrastructure.postgres.storageClass }}
-        storageClassName: {{ . | quote }}
-        {{- end }}
+        {{- include "sage-run.storageClass" . | nindent 8 }}
         resources:
           requests:
-            storage: {{ .Values.infrastructure.postgres.storageSize }}
+            storage: {{ $infra.postgres.storageSize }}
 ---
 {{- end }}
-{{- if .Values.infrastructure.objectStore.enabled }}
+{{- if $infra.objectStore.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "sage-run.objectStoreName" . }}
+  name: minio
 spec:
   selector:
-    app.kubernetes.io/component: object-store
+    app.kubernetes.io/component: minio
   ports:
     - name: api
       port: 9000
@@ -96,25 +95,25 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "sage-run.objectStoreName" . }}
+  name: minio
 spec:
-  serviceName: {{ include "sage-run.objectStoreName" . }}
+  serviceName: minio
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/component: object-store
+      app.kubernetes.io/component: minio
   template:
     metadata:
       labels:
-        app.kubernetes.io/component: object-store
+        app.kubernetes.io/component: minio
     spec:
-      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.podDefaults" . | nindent 6 }}
       securityContext:
         # The image runs as non-root 65532; this keeps the data volume writable.
         fsGroup: 65532
       containers:
         - name: minio
-          image: {{ .Values.infrastructure.objectStore.image }}
+          image: {{ $infra.objectStore.image }}
           args: ["server", "/data", "--console-address", ":9001"]
           ports:
             - name: api
@@ -123,12 +122,13 @@ spec:
               containerPort: 9001
           env:
             - name: MINIO_ROOT_USER
-              value: {{ .Values.infrastructure.objectStore.accessKey | quote }}
-            - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "bootstrap.existingSecret is required for managed infrastructure" .Values.bootstrap.existingSecret }}
-                  key: OBJECT_STORE_SECRET_KEY
+              value: {{ $infra.objectStore.accessKey | quote }}
+            {{- include "sage-run.secretEnv" (dict "root" . "name" "MINIO_ROOT_PASSWORD" "key" "OBJECT_STORE_SECRET_KEY") | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            periodSeconds: 5
           volumeMounts:
             - name: data
               mountPath: /data
@@ -137,49 +137,48 @@ spec:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
-        {{- with .Values.infrastructure.objectStore.storageClass }}
-        storageClassName: {{ . | quote }}
-        {{- end }}
+        {{- include "sage-run.storageClass" . | nindent 8 }}
         resources:
           requests:
-            storage: {{ .Values.infrastructure.objectStore.storageSize }}
+            storage: {{ $infra.objectStore.storageSize }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "sage-run.objectStoreName" . }}-buckets
+  name: minio-buckets
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
-  backoffLimit: 12
+  backoffLimit: 30
   template:
     spec:
       restartPolicy: OnFailure
-      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.podDefaults" . | nindent 6 }}
       containers:
         - name: create-buckets
-          image: {{ .Values.infrastructure.objectStore.clientImage }}
+          image: {{ $infra.objectStore.image }}
           command:
             - /bin/sh
             - -ec
             - |
-              until mc alias set local http://{{ include "sage-run.objectStoreName" . }}:9000 "$OBJECT_STORE_ACCESS_KEY" "$OBJECT_STORE_SECRET_KEY"; do sleep 2; done
-              {{- range .Values.infrastructure.objectStore.buckets }}
+              until mc alias set local http://minio:9000 "$OBJECT_STORE_ACCESS_KEY" "$OBJECT_STORE_SECRET_KEY"; do sleep 2; done
+              {{- range $infra.objectStore.buckets }}
               mc mb --ignore-existing local/{{ . }}
               {{- end }}
           env:
+            - name: HOME
+              value: /tmp
             - name: OBJECT_STORE_ACCESS_KEY
-              value: {{ .Values.infrastructure.objectStore.accessKey | quote }}
-            - name: OBJECT_STORE_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "bootstrap.existingSecret is required for managed infrastructure" .Values.bootstrap.existingSecret }}
-                  key: OBJECT_STORE_SECRET_KEY
+              value: {{ $infra.objectStore.accessKey | quote }}
+            {{- include "sage-run.secretEnv" (dict "root" . "name" "OBJECT_STORE_SECRET_KEY" "key" "OBJECT_STORE_SECRET_KEY") | nindent 12 }}
 ---
 {{- end }}
-{{- if .Values.infrastructure.hindsight.enabled }}
+{{- if $infra.hindsight.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "sage-run.hindsightName" . }}
+  name: hindsight
 spec:
   selector:
     app.kubernetes.io/component: hindsight
@@ -191,9 +190,11 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sage-run.hindsightName" . }}
+  name: hindsight
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/component: hindsight
@@ -202,91 +203,55 @@ spec:
       labels:
         app.kubernetes.io/component: hindsight
     spec:
-      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.podDefaults" . | nindent 6 }}
       containers:
         - name: hindsight
-          image: {{ .Values.infrastructure.hindsight.image }}
+          image: {{ $infra.hindsight.image }}
           ports:
             - name: http
               containerPort: 8888
           env:
-            - name: PG_HOST
-              {{- if .Values.infrastructure.postgres.enabled }}
-              value: {{ include "sage-run.postgresName" . | quote }}
-              {{- else }}
-              value: {{ required "platformEnv.PG_HOST is required when managed Postgres is disabled" .Values.platformEnv.PG_HOST | quote }}
-              {{- end }}
-            - name: PG_PORT
-              value: {{ default "5432" .Values.platformEnv.PG_PORT | quote }}
-            - name: PG_DB
-              {{- if .Values.infrastructure.postgres.enabled }}
-              value: {{ .Values.infrastructure.postgres.database | quote }}
-              {{- else }}
-              value: {{ required "platformEnv.PG_DB is required when managed Postgres is disabled" .Values.platformEnv.PG_DB | quote }}
-              {{- end }}
-            - name: PG_USER
-              {{- if .Values.infrastructure.postgres.enabled }}
-              value: {{ .Values.infrastructure.postgres.user | quote }}
-              {{- else }}
-              value: {{ required "platformEnv.PG_USER is required when managed Postgres is disabled" .Values.platformEnv.PG_USER | quote }}
-              {{- end }}
-            - name: PG_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "bootstrap.existingSecret is required for managed infrastructure" .Values.bootstrap.existingSecret }}
-                  key: PG_PASSWORD
+            {{- include "sage-run.secretEnv" (dict "root" . "name" "PG_PASSWORD" "key" "PG_PASSWORD") | nindent 12 }}
+            {{- include "sage-run.secretEnv" (dict "root" . "name" "HINDSIGHT_API_LLM_API_KEY" "key" "LLM_API_KEY") | nindent 12 }}
+            {{- include "sage-run.secretEnv" (dict "root" . "name" "HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY" "key" "LLM_API_KEY") | nindent 12 }}
             - name: HINDSIGHT_API_DATABASE_URL
-              value: postgresql://$(PG_USER):$(PG_PASSWORD)@$(PG_HOST):$(PG_PORT)/$(PG_DB)
-            - name: HINDSIGHT_API_DATABASE_SCHEMA
-              value: hindsight
-            - name: HINDSIGHT_API_VECTOR_EXTENSION
-              value: pgvector
-            - name: HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP
-              value: "true"
-            - name: HINDSIGHT_API_LLM_PROVIDER
-              value: {{ .Values.infrastructure.hindsight.llmProvider | quote }}
-            - name: HINDSIGHT_API_LLM_BASE_URL
-              value: {{ required "infrastructure.hindsight.llmBaseUrl is required when Hindsight is enabled" .Values.infrastructure.hindsight.llmBaseUrl | quote }}
-            - name: HINDSIGHT_API_LLM_MODEL
-              value: {{ required "infrastructure.hindsight.llmModel is required when Hindsight is enabled" .Values.infrastructure.hindsight.llmModel | quote }}
-            - name: HINDSIGHT_API_REFLECT_LLM_TIMEOUT
-              value: {{ .Values.infrastructure.hindsight.reflectLlmTimeout | quote }}
-            - name: HINDSIGHT_API_LLM_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "bootstrap.existingSecret is required for managed infrastructure" .Values.bootstrap.existingSecret }}
-                  key: LLM_API_KEY
-            - name: HINDSIGHT_API_EMBEDDINGS_PROVIDER
-              value: {{ .Values.infrastructure.hindsight.embeddingsProvider | quote }}
-            - name: HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL
-              value: {{ required "infrastructure.hindsight.embeddingsBaseUrl is required when Hindsight is enabled" .Values.infrastructure.hindsight.embeddingsBaseUrl | quote }}
-            - name: HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL
-              value: {{ required "infrastructure.hindsight.embeddingsModel is required when Hindsight is enabled" .Values.infrastructure.hindsight.embeddingsModel | quote }}
-            - name: HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "bootstrap.existingSecret is required for managed infrastructure" .Values.bootstrap.existingSecret }}
-                  key: LLM_API_KEY
-            - name: HINDSIGHT_API_FILE_STORAGE_TYPE
-              value: native
+              value: "postgresql://{{ $infra.postgres.user }}:$(PG_PASSWORD)@postgres:5432/{{ $infra.postgres.database }}"
+            {{- $defaults := dict
+              "HINDSIGHT_API_LLM_PROVIDER" "openai"
+              "HINDSIGHT_API_REFLECT_LLM_TIMEOUT" "120"
+              "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS" "4096"
+              "HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS" "48000"
+              "HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE" "1"
+              "HINDSIGHT_API_DATABASE_SCHEMA" "hindsight"
+              "HINDSIGHT_API_WORKER_ID" "sage-run-hindsight"
+              "HINDSIGHT_API_VECTOR_EXTENSION" "pgvector"
+              "HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP" "true"
+              "HINDSIGHT_API_RERANKER_LOCAL_MODEL" "cross-encoder/ms-marco-MiniLM-L-6-v2"
+              "HINDSIGHT_API_LAZY_RERANKER" "true"
+              "HINDSIGHT_API_EMBEDDINGS_PROVIDER" "openai"
+              "HINDSIGHT_API_FILE_STORAGE_TYPE" "native" }}
+            {{- range $key, $value := merge (deepCopy ($infra.hindsight.env | default dict)) $defaults }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
           volumeMounts:
             - name: data
               mountPath: /home/hindsight/.hindsight
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "sage-run.hindsightName" . }}
+            claimName: hindsight-data
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "sage-run.hindsightName" . }}
+  name: hindsight-data
+  annotations:
+    helm.sh/resource-policy: keep
 spec:
   accessModes: ["ReadWriteOnce"]
-  {{- with .Values.infrastructure.hindsight.storageClass }}
-  storageClassName: {{ . | quote }}
-  {{- end }}
+  {{- include "sage-run.storageClass" . | nindent 2 }}
   resources:
     requests:
-      storage: {{ .Values.infrastructure.hindsight.storageSize }}
+      storage: {{ $infra.hindsight.storageSize }}
 {{- end }}

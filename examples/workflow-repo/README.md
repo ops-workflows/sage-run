@@ -36,8 +36,7 @@ examples/workflow-repo/
 │   └── custom-skill-example/      # minimal skeleton to copy and adapt
 ├── deploy/
 │   ├── README.md                  # the "convenience" sibling-checkout deploy mode
-│   ├── docker-compose.override.yml
-│   └── k8s-values.yaml
+│   └── docker-compose.override.yml
 └── workflows/
     └── example-workflow/          # copy-and-fill workflow package template
         ├── agent.yaml             # platform-only config: secrets, runtime, schedules
@@ -79,8 +78,8 @@ replace the `team-wiki` URL/email and age-encrypted token in
 Before indexing, configure a real embedding model and its verified positive
 output dimension on both the indexer and Knowledge MCP. The examples deliberately
 leave dimensions at `0` and reranking disabled. Compose reuses Hindsight's
-embedding endpoint/model from `deploy/compose.env.example`; Helm uses the matching
-`knowledge.embeddings` overrides in `deploy/k8s-values.yaml`. Both use the existing
+embedding endpoint/model from `deploy/compose.env.example`; `sage-run up` passes the
+same `KNOWLEDGE_*` values to Kubernetes. Both use the existing
 bootstrap `LLM_API_KEY` unless a dedicated encrypted key is configured.
 
 Register this example through the Knowledge Sources view or

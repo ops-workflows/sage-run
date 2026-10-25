@@ -145,7 +145,14 @@ def _extract_archive_to_directory(archive_bytes: bytes, path: Path) -> None:
                 shutil.copyfileobj(source, target)
 
 
+def _session_pods_own_memory() -> bool:
+    """Kubernetes session Jobs restore and upload /memory in their own helper containers."""
+    return settings.runtime_launcher.strip().lower() in {"kubernetes", "k8s"}
+
+
 async def backup_memory(agent_name: str) -> bool:
+    if _session_pods_own_memory():
+        return False
     if settings.memory_sync_mode.strip().lower() == "filesystem":
         return await _backup_filesystem_memory(agent_name)
     return await _backup_docker_volume_memory(agent_name)
@@ -211,6 +218,8 @@ async def _backup_docker_volume_memory(agent_name: str) -> bool:
 
 
 async def restore_memory(agent_name: str) -> bool:
+    if _session_pods_own_memory():
+        return False
     if settings.memory_sync_mode.strip().lower() == "filesystem":
         return await _restore_filesystem_memory(agent_name)
     return await _restore_docker_volume_memory(agent_name)

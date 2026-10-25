@@ -50,35 +50,8 @@ export HOST_WORKFLOW_REPO_PATH=/path/to/my-workflow-repo
 
 ## Kubernetes (Helm)
 
-Use the public chart with your own values file:
-
-```sh
-helm upgrade --install my-workflow-repo \
-  ../sage-run/deploy/k8s/sage-run \
-  -f deploy/k8s-values.yaml \
-  --namespace my-workflow-namespace --create-namespace
-```
-
-A values file is needed even without any custom service — it's how you set the
-per-instance namespace-level specifics (`platformConfig.existingSecret`,
-`workflowRepo.existingClaim`, image repositories, `runtimeBundles.uriTemplate`)
-and which shipped `mcps:`/`connectors:` entries are `enabled: true`, mirroring
-your `platform-config.yaml`'s `mcps.enabled`/`connectors.enabled` (the chart
-doesn't read `platform-config.yaml` itself, so keep the two in sync).
-
-Unlike the compose override, the chart has **no per-service build context** —
-every `mcps:`/`connectors:` entry (including `custom-example` here) runs from
-one shared image per component (`images.mcp.repository` /
-`images.connector.repository`). To add your own MCP server or connector,
-build a combined image containing both the public code and your own modules,
-publish it as that image, and reference your module's import path the same
-way `custom-example` does.
-
-`k8s-values.yaml` has two infrastructure modes. Keep all
-`infrastructure.*.enabled` values `false` and set `platformEnv` to use
-operator-provided Postgres, S3-compatible storage, and Hindsight. Or set all
-three to `true` to provision pgvector Postgres, MinIO, and Hindsight in this
-namespace; their credentials still come only from the bootstrap Secret. The
-public example shows both modes. Run `make bootstrap`, select `kubernetes`, and
-enter the same namespace used by Helm so its generated Secret lands in the
-right scope.
+Run the repository as a local Kubernetes instance with `sage-run up` (see
+[docs/deployment.md](../../../docs/deployment.md#kubernetes-deployment)). The
+chart takes its values from this repository: MCP servers and connectors from
+`platform-config.yaml`, knowledge and Hindsight settings from
+`deploy/compose.env`. No separate values file is needed.

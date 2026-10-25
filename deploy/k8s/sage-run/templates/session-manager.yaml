@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sage-run.fullname" . }}-session-manager
+  name: session-manager
   labels:
     app.kubernetes.io/component: session-manager
 spec:
@@ -14,33 +14,38 @@ spec:
       labels:
         app.kubernetes.io/component: session-manager
     spec:
-      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
-      serviceAccountName: {{ include "sage-run.serviceAccountName" . }}
+      {{- include "sage-run.podDefaults" . | nindent 6 }}
       containers:
         - name: session-manager
-          image: {{ .Values.images.sessionManager.repository }}:{{ .Values.images.sessionManager.tag }}
-          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          image: {{ include "sage-run.image" (dict "root" . "component" "session-manager") }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
           env:
             {{- include "sage-run.commonEnv" . | nindent 12 }}
-            - name: RUNTIME_LAUNCHER
-              value: {{ .Values.sessionManager.env.RUNTIME_LAUNCHER | quote }}
-            - name: RUNTIME_BUNDLE_URI_TEMPLATE
-              value: {{ .Values.runtimeBundles.uriTemplate | quote }}
             - name: RUNTIME_BUNDLE_ROOT
               value: {{ .Values.runtimeBundles.root | quote }}
             - name: RUNTIME_BUNDLE_OBJECT_STORE_BUCKET
               value: {{ .Values.runtimeBundles.objectStoreBucket | quote }}
-            - name: KNOWLEDGE_SOURCE_OBJECT_STORE_BUCKET
-              value: {{ .Values.knowledgeSources.objectStoreBucket | quote }}
+            - name: RUNTIME_IMAGE
+              value: {{ include "sage-run.image" (dict "root" . "component" "agent-runtime") | quote }}
+            - name: SANDBOX_MODE
+              value: {{ .Values.runtime.sandboxProfile | quote }}
+            - name: KUBERNETES_RUNTIME_CLASS
+              value: {{ .Values.runtime.runtimeClass | quote }}
+            - name: KUBERNETES_RUNTIME_UID
+              value: {{ .Values.runtime.uid | quote }}
+            - name: KUBERNETES_RUNTIME_TTL_SEC
+              value: {{ .Values.runtime.ttlSecondsAfterFinished | quote }}
             - name: KUBERNETES_MEMORY_HELPER_IMAGE
-              value: {{ default (printf "%s:%s" .Values.images.sessionManager.repository .Values.images.sessionManager.tag) .Values.sessionManager.env.KUBERNETES_MEMORY_HELPER_IMAGE | quote }}
+              value: {{ include "sage-run.image" (dict "root" . "component" "session-manager") | quote }}
             - name: KUBERNETES_BOOTSTRAP_SECRET
               value: {{ .Values.bootstrap.existingSecret | quote }}
-          {{- if .Values.bootstrap.existingSecret }}
           envFrom:
             {{- include "sage-run.bootstrapEnvFrom" . | nindent 12 }}
-          {{- end }}
           volumeMounts:
-            {{- include "sage-run.commonVolumeMounts" . | nindent 12 }}
+            {{- include "sage-run.workflowRepoMount" (dict "writable" false) | nindent 12 }}
+            - name: release-cache
+              mountPath: {{ .Values.runtimeBundles.root }}
       volumes:
-        {{- include "sage-run.commonVolumes" . | nindent 8 }}
+        {{- include "sage-run.workflowRepoVolume" . | nindent 8 }}
+        - name: release-cache
+          emptyDir: {}

@@ -1,192 +1,112 @@
-nameOverride: ""
-fullnameOverride: ""
-
-imagePullPolicy: IfNotPresent
-imagePullSecrets: []
-
-platformConfig:
-  # One of existingSecret or existingConfigMap should provide platform-config.yaml.
-  existingSecret: ""
-  existingConfigMap: ""
-
-bootstrap:
-  # Secret holding deployment-only values such as AGE_IDENTITY,
-  # LLM_API_KEY, PG_PASSWORD, and OBJECT_STORE_SECRET_KEY.
-  # Its contents are injected into platform workloads via envFrom.
-  existingSecret: ""
-
-# Non-secret deployment overrides. These win over platform-config.yaml values,
-# and are used when connecting to externally managed infrastructure.
-platformEnv: {}
-
-# Optional in-cluster stateful dependencies. All are disabled by default; set
-# them to true in the workflow repo's k8s-values.yaml to run the local-stack
-# equivalents in Kubernetes.
-infrastructure:
-  postgres:
-    enabled: false
-    image: pgvector/pgvector:pg16
-    database: sage_run
-    user: sage_run
-    storageClass: ""
-    storageSize: 20Gi
-  objectStore:
-    enabled: false
-    image: cgr.dev/chainguard/minio:latest
-    clientImage: cgr.dev/chainguard/minio:latest
-    accessKey: sage_run
-    buckets:
-      - agent-memory
-      - sage-run-bundles
-    storageClass: ""
-    storageSize: 20Gi
-  hindsight:
-    enabled: false
-    image: ghcr.io/vectorize-io/hindsight:latest
-    llmProvider: openai
-    llmBaseUrl: ""
-    llmModel: ""
-    reflectLlmTimeout: 120
-    embeddingsProvider: openai
-    embeddingsBaseUrl: ""
-    embeddingsModel: ""
-    storageClass: ""
-    storageSize: 10Gi
-
-workflowRepo:
-  syncPath: /var/lib/sage-run/workflow-repo
-  mountPath: /app/workflow-repos/default
-  workflowRoot: ""
-  workflowRepoPaths: ""
-  existingClaim: ""
-
-runtimeBundles:
-  root: /var/lib/sage-run/releases
-  uriTemplate: ""
-  objectStoreBucket: ""
+# SAGE Run instance chart. One release per namespace; Services use the same
+# names as the Compose stack (gateway, postgres, minio, hindsight, mcp-<id>),
+# so workflow .mcp.json URLs and platform defaults work unchanged.
 
 images:
-  gateway:
-    repository: sage-run-gateway
-    tag: latest
-  sessionManager:
-    repository: sage-run-session-manager
-    tag: latest
-  knowledgeIndexer:
-    repository: sage-run-knowledge-indexer
-    tag: latest
-  controlPlaneUi:
-    repository: sage-run-control-plane-ui
-    tag: latest
-  mcp:
-    repository: sage-run-mcps
-    tag: latest
-  connector:
-    repository: sage-run-gateway
-    tag: latest
+  # Image reference: <registry>/<prefix><component>:<tag>. Local builds use an
+  # empty registry, e.g. sage-run-gateway:dev-<sha>.
+  registry: ghcr.io/ops-workflows
+  prefix: sage-run-
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+  # Full image references per component, overriding the pattern above.
+  overrides: {}
+
+# Secret with AGE_IDENTITY, LLM_API_KEY, PG_PASSWORD and OBJECT_STORE_SECRET_KEY,
+# injected into platform workloads.
+bootstrap:
+  existingSecret: sage-run-bootstrap
+
+# The single workflow-repository checkout for this instance, mounted at
+# /app/workflows. Its platform-config.yaml configures the platform.
+workflowRepo:
+  # Local development: absolute path of the working tree on the node.
+  hostPath: ""
+  # Production: PVC written by the deployer.
+  existingClaim: ""
+  source: local
+  url: ""
+  ref: ""
+
+# Extra non-secret environment for every platform workload.
+env: {}
+
+runtime:
+  # Session sandbox profile: local, ci or gvisor.
+  sandboxProfile: gvisor
+  runtimeClass: gvisor
+  uid: 1000
+  ttlSecondsAfterFinished: 86400
+
+# Optional Ingress for the control plane (UI) and Gateway webhooks.
+ingress:
+  enabled: false
+  host: ""
+  className: ""
 
 gateway:
-  replicas: 1
   port: 8080
 
 sessionManager:
   replicas: 1
-  env:
-    RUNTIME_LAUNCHER: kubernetes
-    KUBERNETES_MEMORY_HELPER_IMAGE: ""
+
+controlPlaneUi:
+  port: 3000
 
 knowledgeSources:
-  objectStoreBucket: ""
-
-knowledge:
-  # Null values leave typed platform-config.yaml settings in control.
-  # Non-null values become env overrides on the indexer and Knowledge MCP.
-  embeddings:
-    openaiBaseUrl: null
-    openaiModel: null
-    # Required for hybrid_vector sources; 0 is unconfigured, not auto-detection.
-    dimensions: null
-    batchSize: null
-    timeoutSec: null
-  # Credentials come from bootstrap.existingSecret (LLM_API_KEY), or a typed
-  # knowledge.embeddings.api_key_secret; never put a key in Helm values.
-  rerank:
-    enabled: null
-    baseUrl: null
-    model: null
-    timeoutSec: null
-    candidates: null
-  requireExplicitSourceGrants: null
+  objectStoreBucket: sage-run-knowledge-sources
 
 knowledgeIndexer:
-  replicas: 1
+  enabled: true
   cacheRoot: /var/lib/sage-run/knowledge-indexer
-  pollIntervalSec: 30
-  staleRunSec: 3600
 
 knowledgeMcp:
   cacheRoot: /var/lib/sage-run/knowledge
-  refreshIntervalSec: 30
-  versionsToKeep: 2
-  persistence:
+  storageSize: 20Gi
+
+runtimeBundles:
+  root: /var/lib/sage-run/releases
+  objectStoreBucket: sage-run-bundles
+
+infrastructure:
+  storageClass: ""
+  postgres:
     enabled: true
-    existingClaim: ""
-    storageClass: ""
-    size: 20Gi
+    image: pgvector/pgvector:pg16
+    database: sage_run
+    user: sage_run
+    storageSize: 20Gi
+  objectStore:
+    enabled: true
+    image: cgr.dev/chainguard/minio:latest
+    accessKey: sage_run
+    buckets:
+      - agent-memory
+      - sage-run-bundles
+      - sage-run-knowledge-sources
+    storageSize: 20Gi
+  hindsight:
+    enabled: true
+    image: ghcr.io/vectorize-io/hindsight:latest
+    storageSize: 10Gi
+    # HINDSIGHT_API_* settings (LLM and embeddings endpoints and models).
+    env: {}
 
-controlPlaneUi:
-  replicas: 1
-  port: 3000
-
+# Platform MCP servers. The CLI enables them from platform-config.yaml.
 mcps:
-  message:
-    enabled: true
-    module: mcps.core.mcp_message
-    port: 8100
-  memory:
-    enabled: true
-    module: mcps.core.mcp_memory
-    port: 8103
-  knowledge:
-    enabled: true
-    module: mcps.core.mcp_knowledge
-    port: 8108
-  platform:
-    enabled: true
-    module: mcps.core.mcp_platform
-    port: 8105
-  salesforce:
-    enabled: false
-    module: mcps.integrations.mcp_salesforce
-    port: 8102
-  splunk:
-    enabled: false
-    module: mcps.integrations.mcp_splunk
-    port: 8101
-  cloudwatch:
-    enabled: false
-    module: mcps.integrations.mcp_cloudwatch
-    port: 8104
-  gcp-logging:
-    enabled: false
-    module: mcps.integrations.mcp_gcp_logging
-    port: 8109
-  jira:
-    enabled: false
-    module: mcps.integrations.mcp_jira
-    port: 8106
-  github:
-    enabled: false
-    module: mcps.integrations.mcp_github
-    port: 8107
+  message: {enabled: true, module: mcps.core.mcp_message, port: 8100}
+  memory: {enabled: true, module: mcps.core.mcp_memory, port: 8103}
+  knowledge: {enabled: true, module: mcps.core.mcp_knowledge, port: 8108}
+  platform: {enabled: true, module: mcps.core.mcp_platform, port: 8105}
+  salesforce: {enabled: false, module: mcps.integrations.mcp_salesforce, port: 8102}
+  splunk: {enabled: false, module: mcps.integrations.mcp_splunk, port: 8101}
+  cloudwatch: {enabled: false, module: mcps.integrations.mcp_cloudwatch, port: 8104}
+  gcp-logging: {enabled: false, module: mcps.integrations.mcp_gcp_logging, port: 8109}
+  jira: {enabled: false, module: mcps.integrations.mcp_jira, port: 8106}
+  github: {enabled: false, module: mcps.integrations.mcp_github, port: 8107}
 
 connectors:
-  servicenow:
-    enabled: false
-    command:
-      - python
-      - /app/connectors/servicenow-connector/main.py
-
-serviceAccount:
-  create: true
-  name: ""
+  servicenow: {enabled: false, component: servicenow-connector}
+  gcp-pubsub: {enabled: false, component: gcp-pubsub-connector}

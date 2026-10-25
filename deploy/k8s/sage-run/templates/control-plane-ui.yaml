@@ -1,11 +1,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sage-run.fullname" . }}-control-plane-ui
+  name: control-plane-ui
   labels:
     app.kubernetes.io/component: control-plane-ui
 spec:
-  replicas: {{ .Values.controlPlaneUi.replicas }}
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/component: control-plane-ui
@@ -14,22 +14,22 @@ spec:
       labels:
         app.kubernetes.io/component: control-plane-ui
     spec:
-      {{- include "sage-run.imagePullSecrets" . | nindent 6 }}
+      {{- include "sage-run.podDefaults" . | nindent 6 }}
       containers:
         - name: control-plane-ui
-          image: {{ .Values.images.controlPlaneUi.repository }}:{{ .Values.images.controlPlaneUi.tag }}
-          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          image: {{ include "sage-run.image" (dict "root" . "component" "control-plane-ui") }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.controlPlaneUi.port }}
           env:
             - name: INTERNAL_GATEWAY_URL
-              value: http://{{ include "sage-run.fullname" . }}-gateway:{{ .Values.gateway.port }}
+              value: http://gateway:{{ .Values.gateway.port }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "sage-run.fullname" . }}-control-plane-ui
+  name: control-plane-ui
 spec:
   selector:
     app.kubernetes.io/component: control-plane-ui
@@ -37,3 +37,25 @@ spec:
     - name: http
       port: {{ .Values.controlPlaneUi.port }}
       targetPort: http
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: control-plane-ui
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.host is required when ingress is enabled" .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: control-plane-ui
+                port:
+                  name: http
+{{- end }}

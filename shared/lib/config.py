@@ -75,6 +75,8 @@ class Settings(
 
     # ── Runtime launcher and memory sync ─────────────────────────
     runtime_launcher: str = "docker"
+    # Default agent-runtime image; a workflow's runtime.container_image overrides it.
+    runtime_image: str = "sage-run-agent-runtime:latest"
     memory_sync_mode: str = "docker_volume"
     memory_filesystem_root: str = "/memory"
     runtime_bundle_root: str = ""

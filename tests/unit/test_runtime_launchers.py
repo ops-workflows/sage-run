@@ -252,6 +252,7 @@ def test_kubernetes_launcher_gvisor_profile_runs_non_root_in_runtime_class(monke
     pod = job.spec.template.spec
     assert pod.runtime_class_name == "gvisor"
     assert pod.automount_service_account_token is False
+    assert pod.enable_service_links is False
     assert pod.security_context.run_as_non_root is True
     assert pod.security_context.run_as_user == 1000
     assert pod.security_context.run_as_group == 0

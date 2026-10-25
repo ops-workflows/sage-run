@@ -185,36 +185,43 @@ already-registered App; inspect its settings before retrying after an error.
 
 ## Kubernetes deployment
 
-Bootstrap creates the operator-owned `sage-run-bootstrap` Secret and an
-`sage-run-config` Secret from the initial checkout. It does not
-create container images, object-store buckets, or the Helm release. Configure
-the chart with `platformConfig.existingSecret=sage-run-config`.
+`deploy/k8s/sage-run` is a namespace-scoped chart: one release per namespace,
+with Services named as in Compose (`gateway`, `postgres`, `minio`,
+`hindsight`, `control-plane-ui`, `mcp-<id>`), so workflow `.mcp.json` URLs and
+platform defaults work unchanged. It mounts the instance's single workflow
+checkout at `/app/workflows` (a host path for local development, or a PVC) and
+reads `platform-config.yaml` from it. Postgres, MinIO (with its buckets) and
+Hindsight run in the namespace by default. Session Jobs run as the non-root
+runtime user with the selected sandbox profile (`runtime.sandboxProfile`).
 
-Use the following command after creating/pushing the image tags referenced by
-your workflow repo's `deploy/k8s-values.yaml` and provisioning the configured
-object-store bucket for workflow releases and agent memory:
+### Local instance (Rancher Desktop)
+
+Enable Kubernetes in Rancher Desktop with the `moby` engine, so locally built
+images are visible to the cluster. From a workflow repository:
 
 ```sh
-make k8s-deploy \
-   K8S_RELEASE=sage-run \
-   K8S_NAMESPACE=sage-run \
-   K8S_VALUES_FILE=/path/to/workflow-repo/deploy/k8s-values.yaml \
-   K8S_PLATFORM_CONFIG_FILE=/path/to/workflow-repo/platform-config.yaml \
-   K8S_PLATFORM_CONFIG_SECRET=sage-run-config
+make up      # build platform images from ../sage-run and install the instance
+make status
+make down    # keep volumes; `sage-run down --purge` deletes the namespace
 ```
 
-`k8s-deploy` applies the generated bootstrap Secret, upserts the
-`platform-config.yaml` Secret, then runs `helm upgrade --install --wait
---atomic`. To apply later platform-config, MCP/connector, replica, or image-tag
-changes, use the same arguments with `make k8s-update`. It upserts the
-platform-config Secret and runs the same Helm upgrade without changing bootstrap
-credentials. `K8S_NAMESPACE` must match the namespace embedded by
-`make bootstrap` in `$(BOOTSTRAP_OUTPUT_DIR)/dist/bootstrap/k8s-secret.sh`.
+`make up` runs `sage-run up . --source ../sage-run`, which:
 
-For platform code changes, first build and push new **immutable** image tags,
-update the corresponding `images.*.tag` values, then run `make k8s-update`.
-Reapplying `latest` does not necessarily change a Deployment pod template and
-therefore does not provide a reliable rollout.
+- builds platform images tagged `dev-<commit>` (plus a timestamp when the tree
+  is dirty) from the platform checkout;
+- creates namespace `<repo folder>-dev` and its `sage-run-bootstrap` Secret,
+  taking `AGE_IDENTITY` and `LLM_API_KEY` from the private bootstrap file
+  (`~/.local/state/sage-run/local/compose.env`, or `--bootstrap-env`) and
+  generating instance database and object-store passwords once;
+- enables the MCP servers and connectors listed in `platform-config.yaml`,
+  passes `KNOWLEDGE_*` and `HINDSIGHT_API_*` values from `deploy/compose.env`,
+  mounts the working tree, and exposes `http://<instance>.localhost` through
+  the cluster's Traefik;
+- restarts platform services so working-tree configuration applies, and syncs
+  workflows. A fresh instance starts with workflows and connectors paused.
+
+Run `make up` again after edits. Several workflow repositories run side by side
+as separate namespaces.
 
 ## Which services actually start
 
@@ -309,8 +316,6 @@ and newly built task bundles describe the same revision.
 | `runtime-build` | Build the `sage-run-agent-runtime` image. |
 | `build` | `runtime-build` + `compose-build`. |
 | `up` / `down` | Start/stop the local Compose stack. |
-| `k8s-deploy` | Apply the bootstrap/config Secrets and install the Helm release. |
-| `k8s-update` | Upsert the config Secret and upgrade the Helm release. |
 | `restart` | `down` + `build` + `up`. |
 | `restart-<service>` | Rebuild and recreate one service, e.g. `make restart-postgres`. |
 | `ensure-test-db` | Create the dedicated Postgres test database if missing. |
@@ -330,15 +335,12 @@ and newly built task bundles describe the same revision.
   and `RUNTIME_BUNDLE_ROOT`. Optional profiles: `model-gateway`, `local-llm`,
    `salesforce`, `splunk`, `cloudwatch`, `gcp-logging`, `github`, `jira`, `servicenow`,
    `gcp-pubsub`.
-- `deploy/k8s/sage-run` — Kubernetes (Helm) chart; instance values select the
-   platform-config secret/configmap, ephemeral workflow clone/release caches,
-   object-store release bucket, bootstrap Secret, and which MCPs/connectors
-   run. Postgres, S3-compatible storage, and Hindsight are external by default;
-   a workflow repo can opt into chart-managed pgvector Postgres, MinIO, and
-   Hindsight through `infrastructure.*.enabled` in its values file.
+- `deploy/k8s/sage-run` — Kubernetes (Helm) chart for one instance per
+   namespace; `sage-run up` renders its values from the workflow repository
+   (see [Kubernetes deployment](#kubernetes-deployment)).
 
 Private/customer deployments should commit non-secret Compose/Kubernetes values
-in the workflow repo (`deploy/compose.env`, `deploy/k8s-values.yaml`) and use
+in the workflow repo (`deploy/compose.env`) and use
 the generated bootstrap artifact for secrets, rather than editing the public
 base stack or adding a Compose override for shipped services.
 
