@@ -11,7 +11,9 @@ from typing import Any
 
 import httpx
 
+from shared.lib.connections import connection_environment, resolve_workflow_connections
 from shared.lib.crypto import decrypt_agent_secrets
+from shared.lib.platform_config import load_platform_config
 from shared.lib.platform_secrets import (
     apply_platform_env_defaults,
     load_connector_instance,
@@ -95,14 +97,17 @@ def _load_target_workflow_env(config: dict) -> dict[str, str]:
             }
         )
 
+    identity = os.environ.get("AGE_IDENTITY", "")
     secrets = package.config.get("secrets")
     if isinstance(secrets, dict) and secrets:
-        workflow_env.update(
-            decrypt_agent_secrets(
-                package.config,
-                identity=os.environ.get("AGE_IDENTITY", ""),
-            )
-        )
+        workflow_env.update(decrypt_agent_secrets(package.config, identity=identity))
+
+    # Connections the target workflow lists supply its integration settings.
+    platform_config = load_platform_config(os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml"))
+    connections = resolve_workflow_connections(platform_config, workflow, package.config)
+    connection_env, connection_secrets = connection_environment(connections, identity=identity)
+    workflow_env.update(connection_env)
+    workflow_env.update(connection_secrets)
     return workflow_env
 
 

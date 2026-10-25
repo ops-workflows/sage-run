@@ -52,6 +52,34 @@ def test_load_target_workflow_env_uses_target_agent_config(monkeypatch) -> None:
     }
 
 
+def test_load_target_workflow_env_includes_target_workflow_connections(monkeypatch) -> None:
+    connector = _load_connector_module()
+    package = SimpleNamespace(config={"env": {"TRIAGE_MODE": "shadow"}, "connections": ["servicenow-dev"]})
+    platform_config = {
+        "connections": {
+            "servicenow-dev": {
+                "workflows": ["phs-ticket-triage"],
+                "env": {"SERVICENOW_INSTANCE_URL": "https://dev.service-now.invalid"},
+                "secrets": {
+                    "SERVICENOW_USERNAME": {"encrypted": "ENC[plain,connection-user]"},
+                    "SERVICENOW_PASSWORD": {"encrypted": "ENC[plain,connection-password]"},
+                },
+            }
+        }
+    }
+    monkeypatch.setattr(connector, "find_workflow_package", lambda workflow: package)
+    monkeypatch.setattr(connector, "load_platform_config", lambda path: platform_config)
+
+    resolved = connector._load_target_workflow_env({"target": {"workflow": "phs-ticket-triage"}})
+
+    assert resolved == {
+        "TRIAGE_MODE": "shadow",
+        "SERVICENOW_INSTANCE_URL": "https://dev.service-now.invalid",
+        "SERVICENOW_USERNAME": "connection-user",
+        "SERVICENOW_PASSWORD": "connection-password",
+    }
+
+
 def test_load_target_workflow_env_requires_existing_target(monkeypatch) -> None:
     connector = _load_connector_module()
     monkeypatch.setattr(connector, "find_workflow_package", lambda workflow: None)
