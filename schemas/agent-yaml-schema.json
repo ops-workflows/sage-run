@@ -62,6 +62,12 @@
         }
       }
     },
+    "connections": {
+      "type": "array",
+      "description": "Named connections from platform-config.yaml whose env and secrets this workflow's tasks receive (for .mcp.json ${VAR} header expansion).",
+      "items": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"},
+      "uniqueItems": true
+    },
     "runtime": {
       "type": "object",
       "description": "Platform-level runtime config (not passed to Claude Code)",

@@ -28,6 +28,8 @@ imagePullSecrets:
 {{- define "sage-run.commonEnv" -}}
 - name: PLATFORM_CONFIG_FILE
   value: /app/workflows/platform-config.yaml
+- name: SAGE_RUN_ENV
+  value: {{ .Values.environment | quote }}
 - name: WORKFLOW_REPO_SOURCE
   value: {{ .Values.workflowRepo.source | quote }}
 - name: WORKFLOW_REPO_URL

@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-import yaml
-
 from shared.lib.config import settings
+from shared.lib.platform_config import load_platform_config
 
 BANK_INCIDENT_RCA = "incident-rca"
 BANK_WORKFLOW_LEARNING = "workflow-learning"
@@ -27,8 +26,8 @@ def load_workflow_banks(platform_file: str | None = None) -> dict[str, dict[str,
         return banks
 
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
+        data = load_platform_config(path)
+    except ValueError:
         return banks
 
     memory = data.get("memory") or {}

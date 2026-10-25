@@ -30,6 +30,10 @@ workflowRepo:
   url: ""
   ref: ""
 
+# Config environment: "" uses platform-config.yaml; e.g. prod merges
+# platform-config-prod.yaml and needs that environment's key.
+environment: ""
+
 # Extra non-secret environment for every platform workload.
 env: {}
 

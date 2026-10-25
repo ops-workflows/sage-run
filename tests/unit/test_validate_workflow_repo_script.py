@@ -22,7 +22,10 @@ def _copy_valid_workflow(repo: Path, test_plugin_dir: Path) -> Path:
 
 def test_validate_workflow_repo_accepts_valid_package(tmp_path: Path, test_plugin_dir: Path) -> None:
     _copy_valid_workflow(tmp_path, test_plugin_dir)
-    (tmp_path / "platform-config.yaml").write_text("memory: {}\n", encoding="utf-8")
+    (tmp_path / "platform-config.yaml").write_text(
+        "memory: {}\nconnections:\n  test-connection:\n    env: {TEST_CONNECTION_URL: https://x.invalid}\n",
+        encoding="utf-8",
+    )
 
     assert validate_workflow_repo(tmp_path) == []
 

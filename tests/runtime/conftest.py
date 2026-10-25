@@ -407,6 +407,14 @@ def _write_test_platform_config(
                 "CLAUDE_CODE_SUBAGENT_MODEL": "test-model",
             },
         },
+        "connections": {
+            "test-connection": {
+                "description": "Synthetic connection proving header expansion and Bash isolation",
+                "workflows": ["platform-test"],
+                "env": {"TEST_CONNECTION_URL": "https://connection.test.invalid"},
+                "secrets": {"TEST_CONNECTION_SECRET": {"encrypted": "ENC[plain,conn-value-7f3a91]"}},
+            }
+        },
         "secrets": {},
     }
     target_path.parent.mkdir(parents=True, exist_ok=True)

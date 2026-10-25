@@ -438,6 +438,7 @@ def test_operator_dependencies_exclude_service_stack():
         "jsonschema>=4.23.0",
         "pyrage>=1.1.0",
         "PyJWT[crypto]>=2.9.0",
+        "ruamel-yaml>=0.18",
     }
     assert "claude-agent-sdk==0.2.110" in project["optional-dependencies"]["server"]
     assert "graphifyy==0.9.56" in project["optional-dependencies"]["server"]

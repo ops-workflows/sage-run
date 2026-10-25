@@ -397,6 +397,11 @@ def _prepare_workspace() -> None:
 # ─── Secret Loading ──────────────────────────────────────────────────────────
 
 
+def _injected_secret_names() -> set[str]:
+    """Secret names the session manager injected (agent and connection secrets)."""
+    return {name.strip() for name in os.environ.get("SAGE_RUN_SECRET_ENV_NAMES", "").split(",") if name.strip()}
+
+
 def _load_secret_env() -> dict[str, str]:
     """Collect injected secret env vars for harness use.
 
@@ -414,6 +419,8 @@ def _load_secret_env() -> dict[str, str]:
                 _SECRET_ENV_KEYS.add(key)
         except Exception:
             logger.warning("Failed to parse agent.yaml for secret keys")
+
+    _SECRET_ENV_KEYS.update(_injected_secret_names())
 
     # Copy secret values from os.environ → returned dict
     for key in _SECRET_ENV_KEYS:
@@ -697,7 +704,11 @@ def _apply_runtime_claude_settings_overrides() -> None:
 
 def _collect_secret_env_keys() -> set[str]:
     """Return all declared secret env var names from plugin and platform config."""
-    names = {name for name in _SECRET_ENV_KEYS if name and not name.startswith(_CREDENTIAL_PLACEHOLDER_PREFIX)}
+    names = {
+        name
+        for name in (*_SECRET_ENV_KEYS, *_injected_secret_names())
+        if name and not name.startswith(_CREDENTIAL_PLACEHOLDER_PREFIX)
+    }
 
     for path in (PLUGIN_DIR / "agent.yaml", PLATFORM_CONFIG_PATH):
         if not path.exists():

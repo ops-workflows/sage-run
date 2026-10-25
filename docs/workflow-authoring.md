@@ -30,6 +30,7 @@ workflows/<name>/
 | `session.max_turns` | int, default `50` | Turn ceiling before a forced stop (1–200). |
 | `session.model` | string | A `model_profiles` name from `platform-config.yaml`, or a raw model name. |
 | `env` | object | Non-secret `${VAR}` values available for expansion in `.mcp.json`. |
+| `connections` | list[string] | Named [connections](configuration.md#connections) from `platform-config.yaml`; their `env` and decrypted `secrets` become task variables for `.mcp.json` expansion. |
 | `secrets.<NAME>.encrypted` | string, required | `ENC[age,<base64>]` — age-encrypted, decrypted at container launch. |
 | `secrets.<NAME>.description` | string | Optional label. |
 | `runtime.parallel_workers` | int, default `3` | Concurrent sessions for this workflow (1–10). |
@@ -56,8 +57,12 @@ instance. Malformed `agent.yaml` files are logged as validation warnings; a
 workflow repo doesn't need to ship or wire up the schema itself.
 
 Platform-wide secrets (message bus tokens, etc.) belong in
-`platform-config.yaml`'s `secrets:`, not here — `agent.yaml` secrets are for
-this workflow's own external-system credentials.
+`platform-config.yaml`'s `secrets:`. Integration credentials belong in
+`platform-config.yaml` `connections:`, referenced from `agent.yaml`
+`connections:`, so each environment's file defines them once with its own key.
+Keep workflow behaviour settings (for example `TRIAGE_MODE`) in `env`;
+`agent.yaml` `secrets:` remains supported for credentials that are truly local
+to one workflow.
 
 ### Mattermost human invocation
 

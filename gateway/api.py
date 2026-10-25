@@ -25,7 +25,6 @@ from typing import Annotated, Any, Literal
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
-import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 from session_manager.runtime_launchers import get_runtime_launcher
@@ -54,6 +53,7 @@ from shared.lib.models import (
     Task,
 )
 from shared.lib.object_store import BUCKET_AGENT_MEMORY, download_bytes, list_objects
+from shared.lib.platform_config import load_platform_config
 from shared.lib.platform_secrets import (
     load_confluence_connections,
     load_connector_instances,
@@ -648,8 +648,8 @@ def _enabled_catalog_ids(section_name: str) -> set[str] | None:
     if not path.exists():
         return None
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
+        data = load_platform_config(path)
+    except ValueError:
         logger.warning("Failed to parse platform config catalog section from %s", path)
         return None
     section = data.get(section_name) or {}
@@ -1392,6 +1392,15 @@ async def get_agent(name: str):
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
     return _agent_response(agent)
+
+
+def _load_agent_yaml(agent_name: str) -> tuple[dict, str]:
+    """Load agent.yaml from configured workflow roots. Returns (config, file_path)."""
+    package = find_workflow_package(agent_name)
+    if package is not None:
+        return package.config, str(package.agent_yaml_path)
+
+    raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
 
 @router.get("/agents/{name}/files", response_model=AgentFilesResponse)
@@ -2479,88 +2488,3 @@ async def get_agent_memory_detail(
         archive_key=target.latest_key,
         files=files,
     )
-
-
-# ─── Agent Secrets Management ────────────────────────────────────────
-# Pulumi-style inline encrypted secrets in agent.yaml.
-# Gateway encrypts (has age public key), session manager decrypts (has identity).
-
-
-class SecretItem(BaseModel):
-    name: str
-    description: str | None = None
-    has_value: bool
-
-
-class SecretUpdate(BaseModel):
-    """Plaintext value — gateway encrypts it before writing to agent.yaml."""
-
-    value: str
-    description: str | None = None
-
-
-def _load_agent_yaml(agent_name: str) -> tuple[dict, str]:
-    """Load agent.yaml from configured workflow roots. Returns (config, file_path)."""
-    package = find_workflow_package(agent_name)
-    if package is not None:
-        return package.config, str(package.agent_yaml_path)
-
-    raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
-
-
-def _save_agent_yaml(config: dict, path: str) -> None:
-    """Write agent.yaml back to disk preserving order."""
-    import yaml
-
-    with open(path, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
-
-@router.get("/agents/{name}/secrets", response_model=list[SecretItem])
-async def list_secrets(name: str):
-    """List secrets for an agent (names + descriptions, never values)."""
-    from shared.lib.crypto import list_agent_secrets
-
-    config, _ = _load_agent_yaml(name)
-    return [
-        SecretItem(name=s["name"], description=s.get("description"), has_value=s["has_value"])
-        for s in list_agent_secrets(config)
-    ]
-
-
-@router.put("/agents/{name}/secrets/{key}")
-async def upsert_secret(name: str, key: str, body: SecretUpdate):
-    """Encrypt a plaintext secret and save to agent.yaml."""
-    from shared.lib.config import settings
-    from shared.lib.crypto import encrypt_secret
-
-    if not settings.age_public_key:
-        raise HTTPException(status_code=500, detail="AGE_PUBLIC_KEY not configured")
-
-    config, path = _load_agent_yaml(name)
-    encrypted = encrypt_secret(body.value, public_key=settings.age_public_key)
-
-    secrets = config.setdefault("secrets", {})
-    entry: dict[str, str] = {"encrypted": encrypted}
-    if body.description:
-        entry["description"] = body.description
-    elif key in secrets and "description" in secrets[key]:
-        entry["description"] = secrets[key]["description"]
-    secrets[key] = entry
-
-    _save_agent_yaml(config, path)
-    return {"status": "ok", "key": key}
-
-
-@router.delete("/agents/{name}/secrets/{key}")
-async def delete_secret(name: str, key: str):
-    """Remove a secret from agent.yaml."""
-    config, path = _load_agent_yaml(name)
-    secrets = config.get("secrets", {})
-    if key not in secrets:
-        raise HTTPException(status_code=404, detail=f"Secret '{key}' not found")
-    del secrets[key]
-    if not secrets:
-        config.pop("secrets", None)
-    _save_agent_yaml(config, path)
-    return {"status": "ok", "key": key}

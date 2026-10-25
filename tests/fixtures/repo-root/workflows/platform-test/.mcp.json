@@ -9,7 +9,9 @@
         "X-Message-Channel": "${MESSAGE_CHANNEL}",
         "X-Message-Thread-Id": "${MESSAGE_THREAD_ID}",
         "X-Test-Fixed": "${TEST_FIXED_VAR}",
-        "X-Test-Secret": "${TEST_SECRET_VAR}"
+        "X-Test-Secret": "${TEST_SECRET_VAR}",
+        "X-Test-Connection-Url": "${TEST_CONNECTION_URL}",
+        "X-Test-Connection-Secret": "${TEST_CONNECTION_SECRET}"
       }
     },
     "message": {

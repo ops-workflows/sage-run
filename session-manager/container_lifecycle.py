@@ -28,16 +28,20 @@ from session_manager.runtime_launchers import (
 from session_manager.workflow_config import load_agent_yaml, workflow_package_path
 
 from shared.lib.config import settings
+from shared.lib.connections import connection_environment, connection_secret_names, resolve_workflow_connections
 from shared.lib.crypto import decrypt_agent_secrets
 from shared.lib.db import async_session_factory
 from shared.lib.message_bus import post_channel_message
 from shared.lib.models import Session, SessionEvent, Task
+from shared.lib.platform_config import load_platform_config
 from shared.lib.platform_secrets import load_platform_env, load_platform_runtime_env
 from shared.lib.task_queue import complete_task
 from shared.lib.workflow_bundles import WorkflowRepoMetadata, build_workflow_bundle
 from shared.lib.workflow_paths import configured_workflow_roots
 
 logger = logging.getLogger(__name__)
+
+SECRET_ENV_NAMES_VAR = "SAGE_RUN_SECRET_ENV_NAMES"  # noqa: S105 - variable name, not a credential
 
 # Track running containers: task_id → container_id
 _running_containers: dict[str, str] = {}
@@ -353,6 +357,15 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
         if settings.age_identity or has_plain_secret:
             decrypted = decrypt_agent_secrets(agent_config, identity=settings.age_identity)
             environment.update(decrypted)
+
+        # ── Named connections from platform config → env vars and secrets ──
+        connections = resolve_workflow_connections(load_platform_config(platform_file), task.workflow, agent_config)
+        connection_env, connection_secrets = connection_environment(connections, identity=settings.age_identity)
+        environment.update(connection_env)
+        environment.update(connection_secrets)
+        # The runtime hides every injected secret from sandboxed Bash.
+        secret_names = set(secrets if isinstance(secrets, dict) else {}) | connection_secret_names(connections)
+        environment[SECRET_ENV_NAMES_VAR] = ",".join(sorted(secret_names))
 
         # Build runtime mount inputs. Docker consumes these as volumes; Cloud
         # Run/Kubernetes launchers consume the same spec as deployment metadata.

@@ -14,6 +14,10 @@ secrets:
     encrypted: "ENC[plain,test-secret-value]"
     description: "Fake secret used to prove header expansion."
 
+# Connection env and secrets come from the generated platform-config.yaml.
+connections:
+  - test-connection
+
 # Sandbox credential deny-list is seeded in settings.json and auto-populated
 # by the runtime from the secrets above + platform secrets.
 

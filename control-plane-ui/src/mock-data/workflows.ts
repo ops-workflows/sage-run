@@ -1,7 +1,6 @@
 import type {
   Agent,
   AgentFilesResult,
-  SecretItem,
   WorkflowRepoStatus,
   WorkflowRepoVersion,
 } from '@/lib/api';
@@ -224,64 +223,6 @@ export const MOCK_WORKFLOW_REPO_VERSIONS: WorkflowRepoVersion[] = [
   { name: 'v2.3.8', commit_sha: '30dfa912bb8912c01192e84' },
   { name: 'main', commit_sha: '1a4bc8992c3d11e8f203819' },
 ];
-
-export const MOCK_AGENT_SECRETS: Record<string, SecretItem[]> = {
-  'cloud-incident-investigator': [
-    {
-      name: 'SPLUNK_PASSWORD',
-      description: 'Splunk search credentials for telemetry investigations',
-      has_value: true,
-    },
-    {
-      name: 'POSTGRES_READ_PASSWORD',
-      description:
-        'Read-only production database credentials for lock inspection',
-      has_value: true,
-    },
-    {
-      name: 'PAGERDUTY_TOKEN',
-      description: 'PagerDuty integration token for incident sync',
-      has_value: true,
-    },
-  ],
-  'enterprise-crm-investigator': [
-    {
-      name: 'CRM_API_TOKEN',
-      description: 'OAuth Bearer token for enterprise CRM API queries',
-      has_value: true,
-    },
-    {
-      name: 'JIRA_TOKEN',
-      description: 'Jira API token for bug escalation and ticket filing',
-      has_value: true,
-    },
-  ],
-  'online-platform-triage': [
-    {
-      name: 'AWS_ACCESS_KEY_ID',
-      description: 'AWS access key for CloudWatch logs and metrics',
-      has_value: true,
-    },
-    {
-      name: 'AWS_SECRET_ACCESS_KEY',
-      description: 'AWS secret key for CloudWatch logs and metrics',
-      has_value: true,
-    },
-    {
-      name: 'SPLUNK_PASSWORD',
-      description: 'Splunk query password',
-      has_value: true,
-    },
-  ],
-  'weekly-reflection-and-learning': [
-    {
-      name: 'GITHUB_APP_PRIVATE_KEY',
-      description: 'GitHub App private key for automated PR creation',
-      has_value: true,
-    },
-  ],
-  'daily-operations-digest': [],
-};
 
 export const MOCK_AGENT_FILES: Record<string, AgentFilesResult> = {
   'cloud-incident-investigator': {

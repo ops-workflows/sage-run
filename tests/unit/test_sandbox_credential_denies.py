@@ -212,3 +212,14 @@ def test_resolve_default_agent_none_when_absent(tmp_path, monkeypatch):
     settings_path.write_text(json.dumps({"permissions": {"ask": []}}))
     monkeypatch.setattr(session_entrypoint, "CLAUDE_SETTINGS_PATH", settings_path)
     assert _resolve_default_agent() is None
+
+
+def test_injected_connection_secret_names_are_denied_before_secret_loading(tmp_path, monkeypatch):
+    """The deny-list is built during workspace staging, before secrets are loaded,
+    so names injected by the session manager must be read directly."""
+    monkeypatch.setenv("SAGE_RUN_SECRET_ENV_NAMES", "SPLUNK_PASSWORD, ,AWS_SECRET_ACCESS_KEY")
+    monkeypatch.setattr(session_entrypoint, "_SECRET_ENV_KEYS", set())
+    monkeypatch.setattr(session_entrypoint, "PLUGIN_DIR", tmp_path)
+    monkeypatch.setattr(session_entrypoint, "PLATFORM_CONFIG_PATH", tmp_path / "missing.yaml")
+
+    assert session_entrypoint._collect_secret_env_keys() == {"SPLUNK_PASSWORD", "AWS_SECRET_ACCESS_KEY"}

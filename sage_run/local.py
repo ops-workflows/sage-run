@@ -22,9 +22,9 @@ from importlib.metadata import version
 from pathlib import Path
 
 import httpx
-import yaml
 
 from sage_run.profiles import CONNECTOR_PROFILES, MCP_PROFILES
+from shared.lib.platform_config import load_platform_config as load_merged_platform_config
 
 DEFAULT_CONTEXT = "rancher-desktop"
 DEFAULT_BOOTSTRAP_ENV = Path("~/.local/state/sage-run/local/compose.env")
@@ -54,6 +54,7 @@ class Instance:
     context: str = DEFAULT_CONTEXT
     sandbox_profile: str = "local"
     images: dict = field(default_factory=dict)
+    environment: str = ""
 
     @property
     def host(self) -> str:
@@ -79,11 +80,8 @@ def read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def load_platform_config(workflow_repo: Path) -> dict:
-    config = yaml.safe_load((workflow_repo / "platform-config.yaml").read_text(encoding="utf-8")) or {}
-    if not isinstance(config, dict):
-        raise ValueError("platform-config.yaml must contain a mapping")
-    return config
+def load_platform_config(workflow_repo: Path, environment: str = "") -> dict:
+    return load_merged_platform_config(workflow_repo / "platform-config.yaml", environment=environment)
 
 
 def enabled_components(config: dict) -> tuple[set[str], set[str]]:
@@ -113,6 +111,7 @@ def render_values(instance: Instance, config: dict, deployment_env: dict[str, st
         "images": instance.images,
         "workflowRepo": {"hostPath": str(instance.workflow_repo), "source": "local"},
         "env": env,
+        "environment": instance.environment,
         "runtime": {"sandboxProfile": instance.sandbox_profile},
         "ingress": {"enabled": True, "host": instance.host},
         "infrastructure": {"hindsight": {"env": hindsight_env}},
@@ -252,11 +251,14 @@ def up(
     bootstrap_env_file: Path | None = None,
     sandbox_profile: str = "local",
     build: bool = True,
+    environment: str = "",
 ) -> int:
     _require_tools("kubectl", "helm", *(["docker", "git"] if source and build else []))
     workflow_repo = workflow_repo.expanduser().resolve()
-    config = load_platform_config(workflow_repo)
-    instance = Instance(workflow_repo, instance_name(workflow_repo, name), context, sandbox_profile)
+    config = load_platform_config(workflow_repo, environment)
+    instance = Instance(
+        workflow_repo, instance_name(workflow_repo, name), context, sandbox_profile, environment=environment
+    )
     _, connectors = enabled_components(config)
 
     if source:

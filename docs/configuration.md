@@ -660,6 +660,56 @@ Reasoning-history handling and sampling controls such as temperature, top-p,
 top-k, and presence penalty belong in the model gateway or inference deployment
 when the Anthropic-compatible client does not expose them as workflow settings.
 
+### Connections
+
+`connections:` groups the environment variables one integration needs. A
+workflow lists the connections it uses in `agent.yaml`, and each of its tasks
+receives those variables, so `.mcp.json` headers such as `${SPLUNK_PASSWORD}`
+expand exactly as with workflow-level `env`/`secrets`:
+
+```yaml
+connections:
+  splunk:
+    description: Corporate Splunk REST API
+    workflows: [online-alerts-investigator]   # optional allow-list
+    env:
+      SPLUNK_BASE_URL: https://splunk.example.com
+      SPLUNK_USERNAME: ops-agent
+    secrets:
+      SPLUNK_PASSWORD:
+        encrypted: ENC[age,...]
+        description: Sent only in this workflow's Splunk MCP requests
+```
+
+A connection secret without an `encrypted` value is declared but not set; it is
+reported by `sage-run validate` and omitted from tasks. A task fails to launch
+if its workflow references an unknown connection, a connection whose
+`workflows` list excludes it, or two sources for the same variable. Connection
+secret names join the sandbox credential deny-list.
+
+### Environment overlays and keys
+
+`platform-config.yaml` holds the base (development/test) configuration, with
+secrets encrypted to the development key named by `config.AGE_PUBLIC_KEY`.
+`platform-config-<env>.yaml`, for example `platform-config-prod.yaml`, overrides
+values for one environment. Set `SAGE_RUN_ENV=prod` (Helm value `environment`)
+to merge it: mappings merge recursively, and lists and scalars from the overlay
+replace base values. Workflow sync snapshots the merged result for tasks.
+
+Each environment has its own key, and a host holds only its environment's key.
+The overlay must therefore name its own `config.AGE_PUBLIC_KEY` and override
+every encrypted value in the base; `sage-run validate` rejects an overlay that
+reuses the base key or leaves a base ciphertext in place.
+
+```sh
+sage-run keygen --out ~/.config/sage-run/keys/<instance>-prod.agekey   # prints the public key
+sage-run secret set --env prod --connection splunk --name SPLUNK_PASSWORD
+sage-run secret set --env dev --name message_bus_bot_token --value-file /secure/token
+```
+
+`secret set` encrypts to the recipient in the selected file, keeps comments and
+formatting, and never writes plaintext. Commit the change and deploy it.
+
 ### Encrypted secrets
 
 Secrets are age-encrypted (X25519, via the `pyrage` library) and stored as
@@ -691,7 +741,8 @@ These options bypass the corresponding prompts; file input is encrypted as-is.
 
 Per-workflow secrets follow the same `encrypted: ENC[...]` shape under a
 workflow's own `agent.yaml` `secrets:` block — see
-[Workflow authoring](workflow-authoring.md).
+[Workflow authoring](workflow-authoring.md). Prefer [connections](#connections)
+for integration credentials, so they are defined once per environment.
 
 ## Layer 3 — workflow packages
 

@@ -139,6 +139,61 @@ async def test_secret_var_denied_in_sandboxed_bash(
     assert secret_value not in body_text, "Secret value leaked to sandboxed Bash — credential deny was not enforced"
 
 
+# ─── §2.10.1c Named connection: MCP headers, Bash isolation ─────
+
+
+@pytest.mark.asyncio
+async def test_connection_values_reach_mcp_headers_but_not_bash_or_llm(
+    require_runtime,
+    mock_llm,
+    fake_mcp,
+    fake_mattermost,
+    create_task,
+    spawn_and_wait,
+    async_engine,
+    _fake_services,
+) -> None:
+    """platform-test lists test-connection in agent.yaml. Its env and decrypted
+    secret expand into MCP headers; the secret is hidden from sandboxed Bash and
+    never reaches the LLM."""
+    fake_mcp.reset()
+    secret_value = "conn-value-7f3a91"
+    mock_llm.set_scenario(
+        [
+            Turn(
+                respond=[{"type": "tool_use", "name": "mcp__testserver__echo_headers", "input": {}}],
+                stop_reason="tool_use",
+            ),
+            Turn(
+                respond=[
+                    {
+                        "type": "tool_use",
+                        "name": "Bash",
+                        "input": {"command": 'echo "CONNPROBE=${TEST_CONNECTION_SECRET:-EMPTY}"'},
+                    }
+                ],
+                stop_reason="tool_use",
+            ),
+            Turn(respond=[{"type": "text", "text": "connection checked"}], stop_reason="end_turn"),
+        ]
+    )
+
+    task = await create_task(prompt="Check the connection headers and Bash isolation.")
+    exit_code, logs = await spawn_and_wait(task, timeout_sec=180)
+    assert exit_code == 0, f"Container exited {exit_code}.\nLogs:\n{logs}"
+
+    headers = fake_mcp.last_headers()
+    assert headers.get("x-test-connection-url") == "https://connection.test.invalid"
+    assert headers.get("x-test-connection-secret") == secret_value
+
+    requests = mock_llm.recorded_requests()
+    for request in requests:
+        assert secret_value not in json.dumps(request.get("body", {}), ensure_ascii=False)
+    if len(requests) < 3:
+        pytest.skip("Bash output did not flow back to the LLM in this build.")
+    assert "CONNPROBE=EMPTY" in json.dumps(requests[2].get("body", {}), ensure_ascii=False)
+
+
 # ─── §2.10.2 Runtime env override `null` removes the var ─────────
 
 

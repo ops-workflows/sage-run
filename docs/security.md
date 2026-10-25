@@ -203,8 +203,10 @@ letting the model read secret values through it. `runtime/session_entrypoint.py`
 handles this at workspace-staging time:
 
 1. Every declared secret name is collected from the workflow's `agent.yaml`
-   `secrets:` block and the instance's `platform-config.yaml` `secrets:`
-   block (names only — nothing is decrypted for this step).
+   `secrets:` block, the instance's `platform-config.yaml` `secrets:` block,
+   and the secrets of the workflow's connections, which the session manager
+   passes as `SAGE_RUN_SECRET_ENV_NAMES` (names only — nothing is decrypted for
+   this step).
 2. Those names are merged into the bundle's `.claude/settings.json` under
    `sandbox.credentials.envVars` with `mode: "deny"`, alongside any entries
    the workflow already authored there.

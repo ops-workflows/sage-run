@@ -29,10 +29,10 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from shared.lib.crypto import decrypt_named_secrets
+from shared.lib.platform_config import load_platform_config
 
 logger = logging.getLogger(__name__)
 
@@ -634,23 +634,15 @@ def load_enabled_connector_instance(path: str, connector_type: str) -> tuple[str
 
 
 def _read_platform_file(path: str) -> dict[str, Any]:
+    """Read platform config merged with the selected environment overlay."""
     config_path = Path(path)
-    if not config_path.exists():
-        return {}
-
     try:
-        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        return load_platform_config(config_path)
     except OSError:
         logger.exception("Failed to read platform config file: %s", config_path)
-        return {}
-    except yaml.YAMLError:
+    except ValueError:
         logger.exception("Failed to parse platform config file: %s", config_path)
-        return {}
-
-    if not isinstance(data, dict):
-        logger.warning("Platform config file must be a YAML mapping: %s", config_path)
-        return {}
-    return data
+    return {}
 
 
 def _normalize_config_values(config_values: dict[str, Any], *, path: str) -> dict[str, str]:

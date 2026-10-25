@@ -18,12 +18,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.lib.config import settings
 from shared.lib.models import WorkflowRepoState
 from shared.lib.object_store import upload_bytes
+from shared.lib.platform_config import load_platform_config, selected_environment
 from shared.lib.workflow_bundles import (
     WorkflowRepoMetadata,
     build_workflow_bundle,
@@ -125,7 +127,11 @@ def _publish_platform_config_snapshot(bundle_root: Path) -> Path:
     with tempfile.NamedTemporaryFile(prefix=".platform-config-", dir=bundle_root, delete=False) as temp_file:
         temporary_path = Path(temp_file.name)
     try:
-        shutil.copy2(source, temporary_path)
+        if selected_environment():
+            # Tasks read one file: publish the base merged with the environment overlay.
+            temporary_path.write_text(yaml.safe_dump(load_platform_config(source), sort_keys=False), encoding="utf-8")
+        else:
+            shutil.copy2(source, temporary_path)
         temporary_path.replace(bundle_root / "platform-config.yaml")
     finally:
         temporary_path.unlink(missing_ok=True)

@@ -1,7 +1,6 @@
 import {
   MOCK_AGENTS,
   MOCK_AGENT_FILES,
-  MOCK_AGENT_SECRETS,
   MOCK_WORKFLOW_REPO_STATUS,
   MOCK_WORKFLOW_REPO_VERSIONS,
 } from './workflows';
@@ -68,12 +67,6 @@ export async function handleMockApiRequest(
         files: {},
       },
     };
-  }
-
-  const agentSecretsMatch = path.match(/^agents\/([^/]+)\/secrets$/);
-  if (agentSecretsMatch && method === 'GET') {
-    const secrets = MOCK_AGENT_SECRETS[agentSecretsMatch[1]] || [];
-    return { status: 200, data: secrets };
   }
 
   const agentPauseResume = path.match(/^agents\/([^/]+)\/(pause|resume)$/);
