@@ -121,6 +121,37 @@ def _string_map(values: dict) -> dict[str, str]:
     return {str(key): str(value) for key, value in (values or {}).items() if value is not None}
 
 
+_MCP_URL = re.compile(r"https?://mcp-([a-z0-9-]+):([0-9]+)/")
+
+
+def workflow_mcps(workflow_repo: Path, config: dict) -> dict[str, dict]:
+    """Enabled MCP servers defined in the workflow repo's ``mcps/*/mcp_*.py``.
+
+    Ports come from the ``http://mcp-<id>:<port>/`` URLs workflows use in ``.mcp.json``.
+    """
+    enabled = {str(item) for item in (config.get("mcps") or {}).get("enabled") or []}
+    ports: dict[str, set[int]] = {}
+    for mcp_json in sorted(workflow_repo.glob("workflows/*/.mcp.json")):
+        for server_id, port in _MCP_URL.findall(mcp_json.read_text(encoding="utf-8")):
+            ports.setdefault(server_id, set()).add(int(port))
+    servers: dict[str, dict] = {}
+    for source in sorted(workflow_repo.glob("mcps/*/mcp_*.py")):
+        server_id = source.stem.removeprefix("mcp_").replace("_", "-")
+        if server_id not in enabled:
+            continue
+        if server_id in MCP_PROFILES or server_id in CORE_MCPS:
+            raise ValueError(f"Workflow MCP {server_id} conflicts with a platform MCP")
+        found = ports.get(server_id, set())
+        if len(found) != 1:
+            raise ValueError(f"Workflow MCP {server_id}: .mcp.json must reference http://mcp-{server_id}:<port>/ once")
+        servers[server_id] = {
+            "dir": source.parent.relative_to(workflow_repo).as_posix(),
+            "module": source.stem,
+            "port": found.pop(),
+        }
+    return servers
+
+
 def render_values(instance: Instance, config: dict) -> dict:
     """Helm values for an instance from its merged platform config. Contains no secrets."""
     mcps, connectors = enabled_components(config)
@@ -145,6 +176,7 @@ def render_values(instance: Instance, config: dict) -> dict:
             str(name): _string_map(values) for name, values in (deployment.get("service_env") or {}).items()
         },
         "infrastructure": {"hindsight": {"env": _string_map((deployment.get("hindsight") or {}).get("env"))}},
+        "workflowMcps": workflow_mcps(instance.workflow_repo, config),
         "mcps": {name: {"enabled": name in mcps} for name in MCP_PROFILES.keys() | set(CORE_MCPS)},
         "connectors": {name: {"enabled": name in connectors} for name in CONNECTOR_COMPONENTS},
     }

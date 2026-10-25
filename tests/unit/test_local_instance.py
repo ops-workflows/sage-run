@@ -17,6 +17,7 @@ from sage_run.local import (
     instance_name,
     read_identity,
     render_values,
+    workflow_mcps,
 )
 
 pytestmark = pytest.mark.unit
@@ -158,3 +159,21 @@ def test_chart_renders_local_instance_with_compose_service_names(tmp_path):
         "resources": ["jobs"],
         "verbs": ["create", "get", "list", "watch", "delete"],
     } in role["rules"]
+
+
+def test_workflow_mcps_come_from_repo_sources_and_mcp_json_ports(tmp_path):
+    (tmp_path / "mcps/ticket-triage").mkdir(parents=True)
+    (tmp_path / "mcps/ticket-triage/mcp_ticket_triage.py").write_text("app = None\n", encoding="utf-8")
+    (tmp_path / "mcps/unused").mkdir(parents=True)
+    (tmp_path / "mcps/unused/mcp_unused.py").write_text("app = None\n", encoding="utf-8")
+    (tmp_path / "workflows/triage").mkdir(parents=True)
+    mcp_json = {"mcpServers": {"triage": {"type": "http", "url": "http://mcp-ticket-triage:8111/mcp"}}}
+    (tmp_path / "workflows/triage/.mcp.json").write_text(json.dumps(mcp_json), encoding="utf-8")
+    config = {"mcps": {"enabled": ["message", "ticket-triage"]}}
+
+    assert workflow_mcps(tmp_path, config) == {
+        "ticket-triage": {"dir": "mcps/ticket-triage", "module": "mcp_ticket_triage", "port": 8111}
+    }
+    (tmp_path / "workflows/triage/.mcp.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="must reference"):
+        workflow_mcps(tmp_path, config)

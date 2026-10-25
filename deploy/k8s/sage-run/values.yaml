@@ -120,3 +120,6 @@ mcps:
 connectors:
   servicenow: {enabled: false, component: servicenow-connector}
   gcp-pubsub: {enabled: false, component: gcp-pubsub-connector}
+
+# Workflow-defined MCP servers, derived by the CLI: {id: {dir, module, port}}.
+workflowMcps: {}
