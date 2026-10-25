@@ -35,7 +35,7 @@ workflows/<name>/
 | `runtime.parallel_workers` | int, default `3` | Concurrent sessions for this workflow (1–10). |
 | `runtime.heartbeat_interval_sec` | int, default `30` | Heartbeat frequency (10–120). |
 | `runtime.lost_task_timeout_sec` | int, default `300` | Heartbeat-loss timeout before marking a task lost (60–3600). |
-| `runtime.runtime_timeout_sec` | int, default `300` | Wall-clock ceiling per session attempt (60–7200). |
+| `runtime.runtime_timeout_sec` | int, default `300` | Active-time ceiling per session attempt (60–7200). Time waiting for approvals or clarifications is excluded; those waits have their own deadlines, and waiting tasks do not count toward running-task limits. |
 | `runtime.ask_user_question_reminder` | object | `enabled`, `min_turns`, `turn_budget_ratio`, `time_budget_ratio`, `recent_question_turn_window` — nudges the agent to ask before burning its turn/time budget. |
 | `runtime.container_image` | string | Override the runtime image for this workflow. |
 | `runtime.memory_volumes` | list[string] | Named memory volumes for this workflow. |

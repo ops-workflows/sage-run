@@ -35,6 +35,8 @@ CREATE TABLE task_queue.tasks (
     heartbeat       TIMESTAMPTZ,
     wait_reason     TEXT,
     wait_deadline   TIMESTAMPTZ,
+    wait_started    TIMESTAMPTZ,
+    waited_sec      FLOAT NOT NULL DEFAULT 0,
     result          JSONB,
     tokens_used     INT DEFAULT 0,
     duration_sec    FLOAT,

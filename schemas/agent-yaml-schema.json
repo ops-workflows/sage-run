@@ -91,7 +91,7 @@
           "minimum": 60,
           "maximum": 7200,
           "default": 300,
-          "description": "Wall-clock runtime ceiling for a session attempt. Prevents long-running misdirected sessions from burning tokens indefinitely."
+          "description": "Active runtime ceiling for a session attempt, excluding time spent waiting for approvals or clarifications (those waits have their own deadlines). Prevents long-running misdirected sessions from burning tokens indefinitely."
         },
         "ask_user_question_reminder": {
           "type": "object",

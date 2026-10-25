@@ -70,6 +70,9 @@ class Task(Base):
     heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     wait_reason: Mapped[str | None] = mapped_column(Text)
     wait_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Approval/clarification waits are excluded from the runtime timeout.
+    wait_started: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    waited_sec: Mapped[float] = mapped_column(Float, nullable=False, default=0, server_default=text("0"))
     result: Mapped[dict | None] = mapped_column(JSONB)
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)
     duration_sec: Mapped[float | None] = mapped_column(Float)

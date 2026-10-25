@@ -21,7 +21,7 @@ from shared.lib.config import settings
 from shared.lib.db import async_session_factory
 from shared.lib.message_bus import post_channel_message
 from shared.lib.models import Session, Task, TaskEvent
-from shared.lib.task_queue import waiting_timeout_sweep
+from shared.lib.task_queue import active_runtime_sec, waiting_timeout_sweep
 
 logger = logging.getLogger(__name__)
 
@@ -250,11 +250,12 @@ async def _lost_task_sweep(session) -> list:
 
 
 async def _runtime_timeout_sweep(session) -> list:
-    """Mark tasks timed_out if total runtime exceeds workflow timeout.
+    """Mark tasks timed_out if active runtime exceeds workflow timeout.
 
     This complements heartbeat expiry: a task that keeps heartbeating but never
     finishes should still be reaped after the workflow's configured runtime
-    ceiling.
+    ceiling. Time spent waiting for approvals or clarifications does not count;
+    those waits have their own deadlines (``waiting_timeout_sweep``).
     """
     result = await session.execute(select(Task).where(Task.status == "running"))
     running_tasks = list(result.scalars().all())
@@ -271,7 +272,7 @@ async def _runtime_timeout_sweep(session) -> list:
         if not started_at:
             continue
 
-        runtime_sec = (now - started_at).total_seconds()
+        runtime_sec = active_runtime_sec(task, started_at, now)
         if runtime_sec <= timeout_sec:
             continue
 

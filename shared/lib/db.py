@@ -113,6 +113,10 @@ async def ensure_runtime_schema() -> None:
         )
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS wait_reason TEXT"))
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS wait_deadline TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS wait_started TIMESTAMPTZ"))
+        await conn.execute(
+            text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS waited_sec FLOAT NOT NULL DEFAULT 0")
+        )
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS initiator TEXT"))
         await conn.execute(text("ALTER TABLE task_queue.tasks ADD COLUMN IF NOT EXISTS dedupe_keys TEXT[]"))

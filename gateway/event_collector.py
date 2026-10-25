@@ -23,6 +23,7 @@ from shared.lib.approvals import apply_approval_event
 from shared.lib.config import settings
 from shared.lib.db import async_session_factory
 from shared.lib.models import SessionEvent, Task
+from shared.lib.task_queue import wait_finished_updates, wait_started_updates
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -149,8 +150,9 @@ async def receive_event(event: EventPayload):
         )
 
         if task_uuid:
+            now = datetime.now(UTC)
             task_updates: dict[str, Any] = {
-                "heartbeat": datetime.now(UTC),
+                "heartbeat": now,
             }
 
             approval = await apply_approval_event(
@@ -170,7 +172,8 @@ async def receive_event(event: EventPayload):
                         {
                             "status": "waiting_approval",
                             "wait_reason": "operator_approval",
-                            "wait_deadline": datetime.now(UTC) + timedelta(seconds=3600),
+                            "wait_deadline": now + timedelta(seconds=3600),
+                            **wait_started_updates(task, now),
                         }
                     )
 
@@ -183,7 +186,8 @@ async def receive_event(event: EventPayload):
                             if event.event_type == "user_question_delivery_failed"
                             else "ask_user_question"
                         ),
-                        "wait_deadline": datetime.now(UTC) + timedelta(seconds=3600),
+                        "wait_deadline": now + timedelta(seconds=3600),
+                        **wait_started_updates(task, now),
                     }
                 )
 
@@ -193,6 +197,7 @@ async def receive_event(event: EventPayload):
                         "status": "resume_pending",
                         "wait_reason": None,
                         "wait_deadline": None,
+                        **wait_finished_updates(task, now),
                     }
                 )
 

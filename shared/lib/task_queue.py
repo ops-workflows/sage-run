@@ -28,6 +28,36 @@ ACTIVE_STATUSES = ("queued", "running", "resume_pending", *WAITING_STATUSES)
 MAX_RECORDED_DUPLICATES = 50
 
 
+def wait_started_updates(task: Task | None, now: datetime) -> dict:
+    """Start the human-wait clock unless a wait is already open."""
+    if task is not None and task.wait_started is not None:
+        return {}
+    return {"wait_started": now}
+
+
+def wait_finished_updates(task: Task | None, now: datetime) -> dict:
+    """Close an open human wait and add it to the task's accumulated wait time."""
+    if task is None or task.wait_started is None:
+        return {}
+    elapsed = max(0.0, (now - task.wait_started).total_seconds())
+    return {"wait_started": None, "waited_sec": float(task.waited_sec or 0) + elapsed}
+
+
+def active_runtime_sec(task: Task, started_at: datetime, now: datetime) -> float:
+    """Session time excluding approval and clarification waits."""
+    waited = float(task.waited_sec or 0)
+    if task.wait_started is not None:
+        waited += max(0.0, (now - task.wait_started).total_seconds())
+    return max(0.0, (now - started_at).total_seconds() - waited)
+
+
+# SQL forms of the helpers above, for updates that do not load the task row.
+_CLOSE_WAIT_SQL = {
+    "waited_sec": Task.waited_sec + func.coalesce(func.extract("epoch", func.now() - Task.wait_started), 0),
+    "wait_started": None,
+}
+
+
 def _message_channel_from_config(config: dict | None) -> str:
     messaging = config.get("messaging") if isinstance(config, dict) else None
     channels = messaging.get("channels") if isinstance(messaging, dict) else None
@@ -275,8 +305,11 @@ async def dequeue_task(
                 continue
 
         prior_status = task.status
+        now = datetime.now(UTC)
+        for column, value in wait_finished_updates(task, now).items():
+            setattr(task, column, value)
         task.status = "running"
-        task.heartbeat = datetime.now(UTC)
+        task.heartbeat = now
         task.wait_reason = None
         task.wait_deadline = None
         session.add(
@@ -316,6 +349,7 @@ async def mark_task_waiting(
             status=status,
             wait_reason=reason,
             wait_deadline=deadline,
+            wait_started=func.coalesce(Task.wait_started, func.now()),
             heartbeat=datetime.now(UTC),
         )
     )
@@ -345,6 +379,7 @@ async def mark_task_resume_pending(
             wait_reason=None,
             wait_deadline=None,
             heartbeat=datetime.now(UTC),
+            **_CLOSE_WAIT_SQL,
         )
     )
     session.add(TaskEvent(task_id=task_id, event_type=event_type, data={"reason": reason, **(data or {})}))
@@ -367,6 +402,7 @@ async def mark_task_running(
             wait_reason=None,
             wait_deadline=None,
             heartbeat=datetime.now(UTC),
+            **_CLOSE_WAIT_SQL,
         )
     )
     session.add(TaskEvent(task_id=task_id, event_type=event_type, data={"reason": reason, **(data or {})}))
