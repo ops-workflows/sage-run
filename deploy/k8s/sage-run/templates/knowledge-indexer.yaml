@@ -24,6 +24,7 @@ spec:
             {{- include "sage-run.commonEnv" . | nindent 12 }}
             - name: KNOWLEDGE_SOURCE_INDEXER_CACHE_ROOT
               value: {{ .Values.knowledgeIndexer.cacheRoot | quote }}
+            {{- include "sage-run.serviceEnv" (dict "root" $ "name" "knowledge-indexer") | nindent 12 }}
           envFrom:
             {{- include "sage-run.bootstrapEnvFrom" . | nindent 12 }}
           volumeMounts:

@@ -33,6 +33,7 @@ spec:
               value: {{ .Values.runtimeBundles.root | quote }}
             - name: RUNTIME_BUNDLE_OBJECT_STORE_BUCKET
               value: {{ .Values.runtimeBundles.objectStoreBucket | quote }}
+            {{- include "sage-run.serviceEnv" (dict "root" $ "name" "gateway") | nindent 12 }}
           envFrom:
             {{- include "sage-run.bootstrapEnvFrom" . | nindent 12 }}
           readinessProbe:

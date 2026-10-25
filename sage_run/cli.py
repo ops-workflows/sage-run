@@ -35,7 +35,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             local.add_argument("--source", type=Path, help="Build platform images from this sage-run checkout")
             local.add_argument("--image-tag", help="Use existing local images with this tag")
             local.add_argument("--no-build", action="store_true", help="With --source, reuse already built images")
-            local.add_argument("--bootstrap-env", type=Path, help="File with AGE_IDENTITY and LLM_API_KEY")
+            local.add_argument("--identity", type=Path, help="Age key file (default: ~/.config/sage-run/dev.agekey)")
             local.add_argument("--sandbox", default="local", choices=("local", "ci", "gvisor"))
             local.add_argument("--env", default="", help="Config overlay to use, e.g. prod (default: base config)")
         if action == "down":
@@ -112,7 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     name=args.instance,
                     context=args.context,
                     image_tag=args.image_tag,
-                    bootstrap_env_file=args.bootstrap_env,
+                    identity_file=args.identity,
                     sandbox_profile=args.sandbox,
                     build=not args.no_build,
                     environment=args.env.strip().lower(),

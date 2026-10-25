@@ -16,6 +16,10 @@
 serviceAccountName: {{ include "sage-run.serviceAccountName" . }}
 # Service-link variables (e.g. GATEWAY_PORT=tcp://...) collide with platform settings.
 enableServiceLinks: false
+{{- with .Values.hostAliases }}
+hostAliases:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 {{- with .Values.images.pullSecrets }}
 imagePullSecrets:
   {{- toYaml . | nindent 2 }}
@@ -90,5 +94,13 @@ imagePullSecrets:
 {{- define "sage-run.storageClass" -}}
 {{- with .Values.infrastructure.storageClass }}
 storageClassName: {{ . | quote }}
+{{- end }}
+{{- end -}}
+
+{{/* Extra env for one workload: dict "root" $ "name" "<deployment name>". */}}
+{{- define "sage-run.serviceEnv" -}}
+{{- range $key, $value := index (.root.Values.serviceEnv | default dict) .name | default dict }}
+- name: {{ $key }}
+  value: {{ $value | quote }}
 {{- end }}
 {{- end -}}

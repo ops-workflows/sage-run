@@ -39,6 +39,7 @@ spec:
               value: {{ include "sage-run.image" (dict "root" . "component" "session-manager") | quote }}
             - name: KUBERNETES_BOOTSTRAP_SECRET
               value: {{ .Values.bootstrap.existingSecret | quote }}
+            {{- include "sage-run.serviceEnv" (dict "root" $ "name" "session-manager") | nindent 12 }}
           envFrom:
             {{- include "sage-run.bootstrapEnvFrom" . | nindent 12 }}
           volumeMounts:

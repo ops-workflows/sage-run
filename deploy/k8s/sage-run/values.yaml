@@ -37,6 +37,12 @@ environment: ""
 # Extra non-secret environment for every platform workload.
 env: {}
 
+# Extra environment per workload, keyed by Deployment name (e.g. mcp-splunk).
+serviceEnv: {}
+
+# /etc/hosts entries for every platform pod: [{ip: 10.0.0.1, hostnames: [host]}].
+hostAliases: []
+
 runtime:
   # Session sandbox profile: local, ci or gvisor.
   sandboxProfile: gvisor

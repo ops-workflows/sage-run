@@ -26,6 +26,7 @@ spec:
           imagePullPolicy: {{ $.Values.images.pullPolicy }}
           env:
             {{- include "sage-run.commonEnv" $ | nindent 12 }}
+            {{- include "sage-run.serviceEnv" (dict "root" $ "name" $connector.component) | nindent 12 }}
           envFrom:
             {{- include "sage-run.bootstrapEnvFrom" $ | nindent 12 }}
           volumeMounts:

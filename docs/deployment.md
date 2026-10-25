@@ -209,14 +209,14 @@ make down    # keep volumes; `sage-run down --purge` deletes the namespace
 
 - builds platform images tagged `dev-<commit>` (plus a timestamp when the tree
   is dirty) from the platform checkout;
-- creates namespace `<repo folder>-dev` and its `sage-run-bootstrap` Secret,
-  taking `AGE_IDENTITY` and `LLM_API_KEY` from the private bootstrap file
-  (`~/.local/state/sage-run/local/compose.env`, or `--bootstrap-env`) and
-  generating instance database and object-store passwords once;
+- creates namespace `<repo folder>-dev` and its `sage-run-bootstrap` Secret
+  from the development key (`~/.config/sage-run/dev.agekey`, `--identity` or
+  `SAGE_RUN_AGE_IDENTITY_FILE`) and the `LLM_API_KEY`, `PG_PASSWORD` and
+  `OBJECT_STORE_SECRET_KEY` platform secrets it decrypts from
+  `platform-config.yaml` (missing passwords are generated once and kept);
 - enables the MCP servers and connectors listed in `platform-config.yaml`,
-  passes `KNOWLEDGE_*` and `HINDSIGHT_API_*` values from `deploy/compose.env`,
-  mounts the working tree, and exposes `http://<instance>.localhost` through
-  the cluster's Traefik;
+  applies its `deployment:` settings, mounts the working tree, and exposes
+  `http://<instance>.localhost` through the cluster's Traefik;
 - restarts platform services so working-tree configuration applies, and syncs
   workflows. A fresh instance starts with workflows and connectors paused.
 

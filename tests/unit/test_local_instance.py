@@ -15,6 +15,7 @@ from sage_run.local import (
     bootstrap_secret_data,
     enabled_components,
     instance_name,
+    read_identity,
     render_values,
 )
 
@@ -42,16 +43,21 @@ def test_enabled_components_always_include_core_mcps():
     assert connectors == {"servicenow"}
 
 
-def test_render_values_mounts_working_tree_and_exposes_instance_host(tmp_path):
+def test_render_values_mounts_working_tree_and_reads_deployment_settings(tmp_path):
     instance = Instance(tmp_path, "corp-dev", images={"registry": "", "tag": "dev-abc", "pullPolicy": "Never"})
-    deployment_env = {
-        "HINDSIGHT_API_LLM_MODEL": "model",
-        "KNOWLEDGE_EMBEDDINGS_DIMENSIONS": "768",
-        "SANDBOX_MODE": "gvisor",
-        "INGRESS_BIND_ADDRESS": "10.0.0.1",
+    config = {
+        **CONFIG,
+        "deployment": {
+            "public_url": "https://corp.example",
+            "sandbox_profile": "gvisor",
+            "env": {"KNOWLEDGE_EMBEDDINGS_DIMENSIONS": 768},
+            "hindsight": {"env": {"HINDSIGHT_API_LLM_MODEL": "model"}},
+            "extra_hosts": {"logs.example": "10.0.0.5"},
+            "service_env": {"mcp-splunk": {"SSL_CERT_FILE": "/app/workflows/certs/ca.pem"}},
+        },
     }
 
-    values = render_values(instance, CONFIG, deployment_env)
+    values = render_values(instance, config)
 
     assert values["workflowRepo"] == {"hostPath": str(tmp_path), "source": "local"}
     assert values["runtime"] == {"sandboxProfile": "local"}
@@ -62,25 +68,59 @@ def test_render_values_mounts_working_tree_and_exposes_instance_host(tmp_path):
         "GATEWAY_PUBLIC_BASE_URL": "http://corp-dev.localhost",
     }
     assert values["infrastructure"]["hindsight"]["env"] == {"HINDSIGHT_API_LLM_MODEL": "model"}
+    assert values["hostAliases"] == [{"ip": "10.0.0.5", "hostnames": ["logs.example"]}]
+    assert values["serviceEnv"] == {"mcp-splunk": {"SSL_CERT_FILE": "/app/workflows/certs/ca.pem"}}
     assert values["mcps"]["splunk"] == {"enabled": True}
     assert values["mcps"]["jira"] == {"enabled": False}
     assert values["connectors"] == {"servicenow": {"enabled": True}, "gcp-pubsub": {"enabled": False}}
     assert "secret" not in json.dumps(values).lower()
 
+    remote = render_values(Instance(tmp_path, "corp", sandbox_profile="", local=False), config)
+    assert remote["runtime"] == {"sandboxProfile": "gvisor"}
+    assert remote["env"]["CONTROL_PLANE_UI_URL"] == "https://corp.example"
 
-def test_bootstrap_secret_keeps_existing_passwords_and_requires_operator_keys():
-    existing = {"PG_PASSWORD": "kept", "AGE_IDENTITY": "old"}
-    data = bootstrap_secret_data(existing, {"AGE_IDENTITY": "AGE-SECRET-KEY-1", "LLM_API_KEY": "llm"})
-    assert data["PG_PASSWORD"] == "kept"
-    assert data["AGE_IDENTITY"] == "AGE-SECRET-KEY-1"
-    assert len(data["OBJECT_STORE_SECRET_KEY"]) >= 24
+
+@pytest.mark.parametrize(
+    "deployment",
+    [{"unknown": 1}, {"env": []}, {"sandbox_profile": "none"}, {"hindsight": {"env": "x"}}],
+)
+def test_invalid_deployment_settings_are_rejected(tmp_path, deployment):
+    with pytest.raises(ValueError):
+        render_values(Instance(tmp_path, "x"), {"deployment": deployment})
+
+
+def test_bootstrap_secret_decrypts_infrastructure_secrets_and_keeps_existing_passwords():
+    config = {
+        "secrets": {
+            "LLM_API_KEY": {"encrypted": "ENC[plain,llm]"},
+            "PG_PASSWORD": {"encrypted": "ENC[plain,pg]"},
+            "message_bus_bot_token": {"encrypted": "ENC[plain,not-infrastructure]"},
+        }
+    }
+    data = bootstrap_secret_data({"OBJECT_STORE_SECRET_KEY": "kept", "PG_PASSWORD": "old"}, "AGE-SECRET-KEY-1X", config)
+    assert data == {
+        "AGE_IDENTITY": "AGE-SECRET-KEY-1X",
+        "LLM_API_KEY": "llm",
+        "PG_PASSWORD": "pg",
+        "OBJECT_STORE_SECRET_KEY": "kept",
+    }
+    generated = bootstrap_secret_data({}, "AGE-SECRET-KEY-1X", config)
+    assert len(generated["OBJECT_STORE_SECRET_KEY"]) >= 24
     with pytest.raises(ValueError, match="LLM_API_KEY"):
-        bootstrap_secret_data({}, {"AGE_IDENTITY": "x"})
+        bootstrap_secret_data({}, "AGE-SECRET-KEY-1X", {"secrets": {}})
+
+
+def test_read_identity_extracts_key_lines(tmp_path):
+    key_file = tmp_path / "dev.agekey"
+    key_file.write_text("# public key: age1abc\nAGE-SECRET-KEY-1XYZ\n", encoding="utf-8")
+    assert read_identity(key_file) == "AGE-SECRET-KEY-1XYZ"
+    with pytest.raises(ValueError, match="not found"):
+        read_identity(tmp_path / "missing")
 
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
 def test_chart_renders_local_instance_with_compose_service_names(tmp_path):
-    values = render_values(Instance(tmp_path, "corp-dev", images={"registry": "", "tag": "dev-abc"}), CONFIG, {})
+    values = render_values(Instance(tmp_path, "corp-dev", images={"registry": "", "tag": "dev-abc"}), CONFIG)
     values_file = tmp_path / "values.json"
     values_file.write_text(json.dumps(values), encoding="utf-8")
 

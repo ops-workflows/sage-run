@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import secrets
 import shutil
@@ -24,10 +25,16 @@ from pathlib import Path
 import httpx
 
 from sage_run.profiles import CONNECTOR_PROFILES, MCP_PROFILES
+from shared.lib.crypto import decrypt_named_secrets
 from shared.lib.platform_config import load_platform_config as load_merged_platform_config
 
 DEFAULT_CONTEXT = "rancher-desktop"
-DEFAULT_BOOTSTRAP_ENV = Path("~/.local/state/sage-run/local/compose.env")
+# Development key shared by local instances; production keys live only on their hosts.
+DEFAULT_DEV_IDENTITY = "~/.config/sage-run/dev.agekey"
+IDENTITY_ENV = "SAGE_RUN_AGE_IDENTITY_FILE"
+INFRASTRUCTURE_SECRETS = ("LLM_API_KEY", "PG_PASSWORD", "OBJECT_STORE_SECRET_KEY")
+SANDBOX_PROFILES = ("local", "ci", "gvisor")
+DEPLOYMENT_KEYS = {"public_url", "sandbox_profile", "env", "hindsight", "extra_hosts", "service_env"}
 RELEASE_NAME = "sage-run"
 BOOTSTRAP_SECRET = "sage-run-bootstrap"  # noqa: S105 - Secret resource name, not a credential
 CORE_MCPS = ("message", "memory", "knowledge", "platform")
@@ -55,6 +62,7 @@ class Instance:
     sandbox_profile: str = "local"
     images: dict = field(default_factory=dict)
     environment: str = ""
+    local: bool = True
 
     @property
     def host(self) -> str:
@@ -67,17 +75,6 @@ def instance_name(workflow_repo: Path, explicit: str | None = None) -> str:
     if not _DNS_LABEL.fullmatch(name):
         raise ValueError(f"Instance name {name!r} is not a valid Kubernetes namespace")
     return name
-
-
-def read_env_file(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
 
 
 def load_platform_config(workflow_repo: Path, environment: str = "") -> dict:
@@ -100,37 +97,89 @@ def enabled_components(config: dict) -> tuple[set[str], set[str]]:
     return mcps, connectors
 
 
-def render_values(instance: Instance, config: dict, deployment_env: dict[str, str]) -> dict:
-    """Helm values for a local instance. Contains no secrets."""
+def deployment_settings(config: dict) -> dict:
+    """Validated ``deployment:`` section of the merged platform config."""
+    section = config.get("deployment") or {}
+    if not isinstance(section, dict):
+        raise ValueError("deployment must be a mapping")
+    unknown = set(section) - DEPLOYMENT_KEYS
+    if unknown:
+        raise ValueError(f"deployment has unknown keys: {', '.join(sorted(unknown))}")
+    for key in ("env", "extra_hosts", "service_env", "hindsight"):
+        if section.get(key) is not None and not isinstance(section[key], dict):
+            raise ValueError(f"deployment.{key} must be a mapping")
+    hindsight_env = (section.get("hindsight") or {}).get("env")
+    if hindsight_env is not None and not isinstance(hindsight_env, dict):
+        raise ValueError("deployment.hindsight.env must be a mapping")
+    profile = section.get("sandbox_profile")
+    if profile is not None and profile not in SANDBOX_PROFILES:
+        raise ValueError(f"deployment.sandbox_profile must be one of {', '.join(SANDBOX_PROFILES)}")
+    return section
+
+
+def _string_map(values: dict) -> dict[str, str]:
+    return {str(key): str(value) for key, value in (values or {}).items() if value is not None}
+
+
+def render_values(instance: Instance, config: dict) -> dict:
+    """Helm values for an instance from its merged platform config. Contains no secrets."""
     mcps, connectors = enabled_components(config)
-    env = {key: value for key, value in deployment_env.items() if key.startswith("KNOWLEDGE_")}
-    env["CONTROL_PLANE_UI_URL"] = f"http://{instance.host}"
-    env["GATEWAY_PUBLIC_BASE_URL"] = f"http://{instance.host}"
-    hindsight_env = {key: value for key, value in deployment_env.items() if key.startswith("HINDSIGHT_API_")}
+    deployment = deployment_settings(config)
+    env = _string_map(deployment.get("env"))
+    public_url = f"http://{instance.host}" if instance.local else str(deployment.get("public_url") or "")
+    if public_url:
+        env["CONTROL_PLANE_UI_URL"] = public_url
+        env["GATEWAY_PUBLIC_BASE_URL"] = public_url
+    sandbox_profile = instance.sandbox_profile or str(deployment.get("sandbox_profile") or "gvisor")
     return {
         "images": instance.images,
         "workflowRepo": {"hostPath": str(instance.workflow_repo), "source": "local"},
         "env": env,
         "environment": instance.environment,
-        "runtime": {"sandboxProfile": instance.sandbox_profile},
+        "runtime": {"sandboxProfile": sandbox_profile},
         "ingress": {"enabled": True, "host": instance.host},
-        "infrastructure": {"hindsight": {"env": hindsight_env}},
+        "hostAliases": [
+            {"ip": str(ip), "hostnames": [str(host)]} for host, ip in (deployment.get("extra_hosts") or {}).items()
+        ],
+        "serviceEnv": {
+            str(name): _string_map(values) for name, values in (deployment.get("service_env") or {}).items()
+        },
+        "infrastructure": {"hindsight": {"env": _string_map((deployment.get("hindsight") or {}).get("env"))}},
         "mcps": {name: {"enabled": name in mcps} for name in MCP_PROFILES.keys() | set(CORE_MCPS)},
         "connectors": {name: {"enabled": name in connectors} for name in CONNECTOR_COMPONENTS},
     }
 
 
-def bootstrap_secret_data(existing: dict[str, str], bootstrap_env: dict[str, str]) -> dict[str, str]:
-    """Merge operator keys with existing (or newly generated) local infrastructure passwords."""
+def bootstrap_secret_data(existing: dict[str, str], identity: str, config: dict) -> dict[str, str]:
+    """Instance Secret: the environment key plus infrastructure secrets decrypted from config.
+
+    Database and object-store passwords not yet in config keep their existing (or
+    newly generated) values, so running instances keep access to their data.
+    """
+    platform_secrets = config.get("secrets") or {}
+    wanted = {
+        name: platform_secrets[name] for name in INFRASTRUCTURE_SECRETS if isinstance(platform_secrets.get(name), dict)
+    }
+    decrypted = decrypt_named_secrets(wanted, identity=identity)
+    if "LLM_API_KEY" not in decrypted:
+        raise ValueError("platform config needs an encrypted LLM_API_KEY secret for this environment's key")
     data = dict(existing)
-    for key in ("AGE_IDENTITY", "LLM_API_KEY"):
-        if bootstrap_env.get(key):
-            data[key] = bootstrap_env[key]
-        if not data.get(key):
-            raise ValueError(f"{key} is required: set it in the bootstrap env file")
+    data["AGE_IDENTITY"] = identity
+    data.update(decrypted)
     for key in ("PG_PASSWORD", "OBJECT_STORE_SECRET_KEY"):
-        data.setdefault(key, secrets.token_urlsafe(24))
+        if not data.get(key):
+            data[key] = secrets.token_urlsafe(24)
     return data
+
+
+def read_identity(path: Path) -> str:
+    path = path.expanduser()
+    if not path.is_file():
+        raise ValueError(f"Age key {path} not found; pass --identity or create it with sage-run keygen")
+    identity = "\n".join(line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("AGE-"))
+    if not identity:
+        raise ValueError(f"{path} contains no AGE-SECRET-KEY")
+    return identity
 
 
 def dev_image_tag(source: Path) -> str:
@@ -201,8 +250,8 @@ def _existing_secret(instance: Instance) -> dict[str, str]:
     return {key: base64.b64decode(value).decode("utf-8") for key, value in data.items()}
 
 
-def apply_bootstrap_secret(instance: Instance, bootstrap_env: dict[str, str]) -> None:
-    data = bootstrap_secret_data(_existing_secret(instance), bootstrap_env)
+def apply_bootstrap_secret(instance: Instance, identity: str, config: dict) -> None:
+    data = bootstrap_secret_data(_existing_secret(instance), identity, config)
     manifest = {
         "apiVersion": "v1",
         "kind": "Secret",
@@ -248,7 +297,7 @@ def up(
     name: str | None = None,
     context: str = DEFAULT_CONTEXT,
     image_tag: str | None = None,
-    bootstrap_env_file: Path | None = None,
+    identity_file: Path | None = None,
     sandbox_profile: str = "local",
     build: bool = True,
     environment: str = "",
@@ -274,10 +323,8 @@ def up(
     else:
         instance.images = {"tag": version("sage-run")}
 
-    env_path = (bootstrap_env_file or DEFAULT_BOOTSTRAP_ENV).expanduser()
-    bootstrap_env = read_env_file(env_path) if env_path.is_file() else {}
-    deployment_env_path = workflow_repo / "deploy/compose.env"
-    deployment_env = read_env_file(deployment_env_path) if deployment_env_path.is_file() else {}
+    identity = read_identity(identity_file or Path(os.environ.get(IDENTITY_ENV, DEFAULT_DEV_IDENTITY)))
+    values = render_values(instance, config)
 
     print(f"Instance {instance.name} (context {context}) from {workflow_repo}", flush=True)
     _kubectl(
@@ -288,9 +335,8 @@ def up(
         stdin=json.dumps({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": instance.name}}),
         capture=True,
     )
-    apply_bootstrap_secret(instance, bootstrap_env)
+    apply_bootstrap_secret(instance, identity, config)
 
-    values = render_values(instance, config, deployment_env)
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(values, handle)
         values_file = handle.name

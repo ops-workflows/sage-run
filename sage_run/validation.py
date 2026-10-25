@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 
+from sage_run.local import deployment_settings
 from shared.lib.connections import ConnectionConfigError, parse_connections, resolve_workflow_connections
 from shared.lib.platform_config import deep_merge, read_yaml_mapping, secrets_not_overridden
 from shared.lib.plugin_validation import validate_plugin_dir
@@ -106,6 +107,10 @@ def _validate_overlay(report: ValidationReport, base: dict, overlay: dict, name:
 def _validate_configuration(
     report: ValidationReport, config: dict, workflows: list[Path], *, label: str, warn: bool
 ) -> None:
+    try:
+        deployment_settings(config)
+    except ValueError as exc:
+        report.errors.append(f"{label}: {exc}")
     try:
         connections = parse_connections(config)
     except ConnectionConfigError as exc:

@@ -687,6 +687,31 @@ if its workflow references an unknown connection, a connection whose
 `workflows` list excludes it, or two sources for the same variable. Connection
 secret names join the sandbox credential deny-list.
 
+### Deployment settings
+
+`deployment:` holds the non-secret settings `sage-run up`/`deploy` turn into
+Helm values; `platform-config-<env>.yaml` can override any of them:
+
+```yaml
+deployment:
+  public_url: https://sage.example.com     # CONTROL_PLANE_UI_URL and GATEWAY_PUBLIC_BASE_URL
+  sandbox_profile: gvisor                  # local, ci or gvisor (local instances always use local)
+  env:                                     # extra environment for every platform workload
+    KNOWLEDGE_EMBEDDINGS_DIMENSIONS: "768"
+  hindsight:
+    env:                                   # HINDSIGHT_API_* settings for the Hindsight container
+      HINDSIGHT_API_LLM_BASE_URL: http://llm.internal:8080/v1
+  extra_hosts:                             # /etc/hosts entries for every platform pod
+    logs.example.com: 10.0.0.5
+  service_env:                             # extra environment per workload
+    mcp-splunk:
+      SSL_CERT_FILE: /app/workflows/certs/splunk-ca-bundle.pem   # files in the workflow repo
+```
+
+The instance Secret is built from the environment's key plus the encrypted
+platform secrets `LLM_API_KEY`, `PG_PASSWORD` and `OBJECT_STORE_SECRET_KEY`, so
+a host needs only its key.
+
 ### Environment overlays and keys
 
 `platform-config.yaml` holds the base (development/test) configuration, with
@@ -697,6 +722,10 @@ to merge it: mappings merge recursively, and lists and scalars from the overlay
 replace base values. Workflow sync snapshots the merged result for tasks.
 
 Each environment has its own key, and a host holds only its environment's key.
+Generate a production key on its host (root-only
+`/etc/sage-run/<instance>/age.key`, for example with `age-keygen`) and copy
+only the public key into the overlay; local instances use
+`~/.config/sage-run/dev.agekey`.
 The overlay must therefore name its own `config.AGE_PUBLIC_KEY` and override
 every encrypted value in the base; `sage-run validate` rejects an overlay that
 reuses the base key or leaves a base ciphertext in place.
