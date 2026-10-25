@@ -169,9 +169,9 @@ def deploy(
             instance.images = {"registry": "", "tag": image_tag, "pullPolicy": "Never"}
         values = remote_values(instance, config, checkout=checkout, repo_url=repo_url, ref=ref, version=version)
         ciphertexts = infrastructure_ciphertexts(config)
-        print(f"Deploy {commit[:12]} ({ref}) of {workflow_repo.name} to {host} as {instance.name} [env={environment}]")
-        print(f"  checkout {checkout}; key {key_file}; images {values['images']}")
-        print(f"  workflow MCPs: {', '.join(values['workflowMcps']) or 'none'}")
+        print(f"Deploy {commit[:12]} ({ref}) of {workflow_repo.name} to {host} as {instance.name} [env={environment}]", flush=True)
+        print(f"  checkout {checkout}; key {key_file}; images {values['images']}", flush=True)
+        print(f"  workflow MCPs: {', '.join(values['workflowMcps']) or 'none'}", flush=True)
         if plan_only:
             return 0
 
@@ -211,7 +211,7 @@ def deploy(
         for manifest in sorted((tree / "deploy/k8s").glob("*.yaml")):
             rendered = manifest.read_text(encoding="utf-8").replace("${WORKFLOW_REPO_PATH}", checkout)
             _ssh(host, f"{kubectl} apply -f -", stdin=rendered)
-            print(f"  applied {manifest.name}")
+            print(f"  applied {manifest.name}", flush=True)
         selector = f"app.kubernetes.io/component in ({','.join(PLATFORM_COMPONENTS)})"
         _ssh(host, f"{kubectl} rollout restart deployment -l {shlex.quote(selector)} >/dev/null")
         _ssh(host, f"{kubectl} rollout status deployment -l {shlex.quote(selector)} --timeout=10m")
@@ -223,7 +223,7 @@ def deploy(
                 "r.raise_for_status(); print('workflows synced')"
             ),
         )
-    print(f"Deployed {commit[:12]} to {instance.name} on {host}")
+    print(f"Deployed {commit[:12]} to {instance.name} on {host}", flush=True)
     return 0
 
 

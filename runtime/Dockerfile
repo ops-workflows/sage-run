@@ -60,8 +60,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 RUN claude --version
 
 # Python dependencies (includes claude-agent-sdk)
+COPY --from=ghcr.io/astral-sh/uv:0.11.24 /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 COPY runtime/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN uv pip install --system --no-cache -r /tmp/requirements.txt
 
 # Copy entrypoint and the shared harness library. Workflow content (plugin
 # dir or workflow bundle) is provided at runtime, not baked in, but shared/lib

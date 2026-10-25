@@ -456,9 +456,13 @@ def test_operator_dependencies_exclude_service_stack():
 )
 def test_service_images_install_server_dependencies(dockerfile: str):
     content = (REPO_ROOT / dockerfile).read_text(encoding="utf-8")
-    assert 'pip install --no-cache-dir ".[server,' in content
+    assert "COPY --from=ghcr.io/astral-sh/uv:" in content
+    locked = content.index("RUN uv export --frozen --no-dev --no-emit-project --extra server")
+    # Dependencies install from the lockfile before sources, so source edits reuse the layer.
+    assert content.index("COPY pyproject.toml uv.lock ./") < locked
+    project = content.index("RUN uv pip install --system --no-cache --no-deps .")
     for resource in ("COPY sage_run/", "COPY shared/", "COPY schemas/", "COPY README.md LICENSE"):
-        assert content.index(resource) < content.index("RUN pip install")
+        assert locked < content.index(resource) < project
 
 
 def test_source_development_and_ci_install_server_dependencies():

@@ -57,9 +57,30 @@ jobs:
           printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   verify:
-    name: Verify release
+    name: Require green CI on main
     needs: version
-    uses: ./.github/workflows/ci.yml
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check the release commit is on main with a successful CI run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ needs.version.outputs.sha }}
+        run: |
+          status="$(gh api "repos/$REPOSITORY/compare/main...$SHA" --jq .status)"
+          if [[ "$status" != identical && "$status" != behind ]]; then
+            printf 'Release commit %s is not on main (%s)\n' "$SHA" "$status" >&2
+            exit 1
+          fi
+          runs="$(gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&branch=main&status=success" --jq .total_count)"
+          if [[ "$runs" -lt 1 ]]; then
+            printf 'No successful CI run on main for %s; wait for CI or fix it first\n' "$SHA" >&2
+            exit 1
+          fi
 
   images:
     name: Publish ${{ matrix.component }} image

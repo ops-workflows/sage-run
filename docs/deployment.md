@@ -448,8 +448,9 @@ source snapshots without packages or images.
 
 The [release workflow](../.github/workflows/release.yml) runs when a GitHub
 release is published. Draft creation and ordinary tag
-pushes do not publish artifacts. It checks out the release tag, runs the full
-CI suite, and requires the tag to equal `v` plus the package version in
+pushes do not publish artifacts. It resolves the tag to one commit, requires
+that commit to be on `main` with a successful CI run (tests are not re-run),
+and requires the tag to equal `v` plus the package version in
 `pyproject.toml`. Only plain `MAJOR.MINOR.PATCH` versions are accepted; there
 are no pre-releases, and development or local versions are rejected.
 Update the package version and `uv.lock` before creating the release tag.

@@ -21,7 +21,10 @@ def test_release_event_and_publication_permissions(release_workflow):
     assert release_workflow["on"] == {"release": {"types": ["published"]}}
     assert release_workflow["permissions"] == {"contents": "read"}
     jobs = release_workflow["jobs"]
-    assert jobs["verify"]["uses"] == "./.github/workflows/ci.yml"
+    assert "uses" not in jobs["verify"]
+    gate = jobs["verify"]["steps"][0]["run"]
+    assert "compare/main...$SHA" in gate and "ci.yml/runs?head_sha=$SHA&branch=main&status=success" in gate
+    assert jobs["verify"]["permissions"] == {"actions": "read", "contents": "read"}
     assert jobs["images"]["needs"] == ["version", "verify"]
     assert jobs["images"]["permissions"] == {"contents": "read", "packages": "write"}
     assert jobs["package"]["needs"] == ["version", "images"]
