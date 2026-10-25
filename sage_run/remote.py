@@ -169,7 +169,10 @@ def deploy(
             instance.images = {"registry": "", "tag": image_tag, "pullPolicy": "Never"}
         values = remote_values(instance, config, checkout=checkout, repo_url=repo_url, ref=ref, version=version)
         ciphertexts = infrastructure_ciphertexts(config)
-        print(f"Deploy {commit[:12]} ({ref}) of {workflow_repo.name} to {host} as {instance.name} [env={environment}]", flush=True)
+        print(
+            f"Deploy {commit[:12]} ({ref}) of {workflow_repo.name} to {host} as {instance.name} [env={environment}]",
+            flush=True,
+        )
         print(f"  checkout {checkout}; key {key_file}; images {values['images']}", flush=True)
         print(f"  workflow MCPs: {', '.join(values['workflowMcps']) or 'none'}", flush=True)
         if plan_only:
