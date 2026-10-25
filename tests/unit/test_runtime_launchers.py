@@ -211,3 +211,153 @@ def test_runtime_launcher_defaults_to_docker(monkeypatch):
 
     assert get_runtime_launcher().provider == "docker"
     reset_runtime_launcher_for_tests()
+
+
+def _kubernetes_launcher():
+    kubernetes_client = pytest.importorskip("kubernetes.client")
+    from session_manager.runtime_launchers import KubernetesRuntimeLauncher
+
+    launcher = KubernetesRuntimeLauncher.__new__(KubernetesRuntimeLauncher)
+    launcher.client = kubernetes_client
+    launcher.batch = MagicMock()
+    launcher.batch.create_namespaced_job.side_effect = lambda namespace, body: body
+    launcher.core = MagicMock()
+    launcher.namespace = "sage-test"
+    return launcher
+
+
+def _launch_kubernetes_job(memory_volume_name: str | None = None):
+    launcher = _kubernetes_launcher()
+    launcher.launch(
+        RuntimeLaunchSpec(
+            task_id="task-12345678",
+            workflow="platform-test",
+            image="runtime:1.0.0",
+            environment={"TASK_ID": "task-12345678"},
+            memory_volume_name=memory_volume_name,
+        )
+    )
+    return launcher.batch.create_namespaced_job.call_args.kwargs["body"]
+
+
+def _env(container) -> dict[str, str]:
+    return {item.name: item.value for item in container.env}
+
+
+def test_kubernetes_launcher_gvisor_profile_runs_non_root_in_runtime_class(monkeypatch):
+    monkeypatch.setenv("SANDBOX_MODE", "gvisor")
+
+    job = _launch_kubernetes_job()
+
+    pod = job.spec.template.spec
+    assert pod.runtime_class_name == "gvisor"
+    assert pod.automount_service_account_token is False
+    assert pod.security_context.run_as_non_root is True
+    assert pod.security_context.run_as_user == 1000
+    assert pod.security_context.run_as_group == 0
+    assert pod.security_context.seccomp_profile is None
+    runtime = pod.containers[0]
+    assert runtime.security_context is None
+    assert _env(runtime)["HOME"] == "/home/sage"
+    assert "CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED" not in _env(runtime)
+    assert job.spec.ttl_seconds_after_finished == 86400
+    assert job.metadata.labels["sage_run.type"] == "agent-session"
+
+
+def test_kubernetes_launcher_uses_configured_runtime_class_and_user(monkeypatch):
+    from shared.lib.config import settings
+
+    monkeypatch.setenv("SANDBOX_MODE", "gvisor")
+    monkeypatch.setattr(settings, "kubernetes_runtime_class", "runsc-pr15008")
+    monkeypatch.setattr(settings, "kubernetes_runtime_uid", 4242)
+    monkeypatch.setattr(settings, "kubernetes_runtime_ttl_sec", 0)
+
+    job = _launch_kubernetes_job()
+
+    assert job.spec.template.spec.runtime_class_name == "runsc-pr15008"
+    assert job.spec.template.spec.security_context.run_as_user == 4242
+    assert job.spec.ttl_seconds_after_finished is None
+
+
+@pytest.mark.parametrize("mode", ["local", "macos"])
+def test_kubernetes_launcher_local_profile_relaxes_seccomp_only(monkeypatch, mode):
+    monkeypatch.setenv("SANDBOX_MODE", mode)
+
+    job = _launch_kubernetes_job()
+
+    pod = job.spec.template.spec
+    assert pod.runtime_class_name is None
+    assert pod.security_context.seccomp_profile.type == "Unconfined"
+    assert pod.containers[0].security_context is None
+    assert _env(pod.containers[0])["CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED"] == "1"
+
+
+@pytest.mark.parametrize("mode", ["ci", "gha"])
+def test_kubernetes_launcher_ci_profile_mirrors_docker_gha_mode(monkeypatch, mode):
+    monkeypatch.setenv("SANDBOX_MODE", mode)
+
+    job = _launch_kubernetes_job()
+
+    pod = job.spec.template.spec
+    context = pod.containers[0].security_context
+    assert pod.security_context.seccomp_profile.type == "Unconfined"
+    assert context.capabilities.add == ["SYS_ADMIN"]
+    assert context.app_armor_profile.type == "Unconfined"
+    assert _env(pod.containers[0])["CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED"] == "1"
+
+
+def test_kubernetes_launcher_memory_helpers_share_non_root_pod_identity(monkeypatch):
+    from shared.lib.config import settings
+
+    monkeypatch.setenv("SANDBOX_MODE", "gvisor")
+    monkeypatch.setattr(settings, "kubernetes_memory_helper_image", "session-manager:1.0.0")
+
+    job = _launch_kubernetes_job(memory_volume_name="agent-memory-platform-test")
+
+    pod = job.spec.template.spec
+    assert [container.name for container in pod.init_containers] == ["memory-restore"]
+    assert [container.name for container in pod.containers] == ["agent-runtime", "memory-upload"]
+    assert all(container.security_context is None for container in [*pod.init_containers, *pod.containers])
+    assert pod.security_context.run_as_user == 1000
+
+
+def test_unknown_sandbox_mode_fails_closed(monkeypatch):
+    monkeypatch.setenv("SANDBOX_MODE", "insecure")
+
+    with pytest.raises(RuntimeError, match="Unsupported SANDBOX_MODE"):
+        _launch_kubernetes_job()
+
+
+def test_docker_launcher_uses_configured_gvisor_runtime(monkeypatch):
+    from shared.lib.config import settings
+
+    monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "linux")
+    monkeypatch.setenv("SANDBOX_MODE", "gvisor")
+    monkeypatch.setattr(settings, "gvisor_docker_runtime", "runsc-pr15008")
+    client = MagicMock()
+    client.containers.get.side_effect = docker.errors.NotFound("missing")
+    client.networks.get.return_value.containers = []
+
+    DockerRuntimeLauncher(client).launch(
+        RuntimeLaunchSpec(task_id="task-12345678", workflow="platform-test", image="runtime:latest", environment={})
+    )
+
+    assert client.containers.run.call_args.kwargs["runtime"] == "runsc-pr15008"
+
+
+@pytest.mark.parametrize(
+    ("mode", "security_opt"), [("local", ["seccomp=unconfined"]), ("ci", ["seccomp=unconfined", "apparmor=unconfined"])]
+)
+def test_docker_launcher_accepts_profile_names(monkeypatch, mode, security_opt):
+    monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "linux")
+    monkeypatch.setenv("SANDBOX_MODE", mode)
+    client = MagicMock()
+    client.containers.get.side_effect = docker.errors.NotFound("missing")
+
+    DockerRuntimeLauncher(client).launch(
+        RuntimeLaunchSpec(task_id="task-12345678", workflow="platform-test", image="runtime:latest", environment={})
+    )
+
+    kwargs = client.containers.run.call_args.kwargs
+    assert kwargs["security_opt"] == security_opt
+    assert kwargs["environment"]["CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED"] == "1"

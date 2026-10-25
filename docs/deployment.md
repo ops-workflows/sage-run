@@ -19,8 +19,9 @@ command; it does not change Git configuration for later commands. If cloning a
 private repository instead, enter your username and PAT at Git's prompts rather
 than putting the PAT in the URL or command line.
 
-Run `make init` for source development. It installs the `dev` and `server`
-extras; service Dockerfiles also request `server` explicitly. A plain operator
+Run `make init` for source development. It installs the `dev`, `server` and
+`kubernetes` extras; service Dockerfiles also request `server` explicitly, and
+the Gateway and session-manager images include the Kubernetes client. A plain operator
 package install does not install the Claude Agent SDK, database drivers, web
 server or indexing libraries. This dependency split does not change model
 configuration or runtime capabilities.
@@ -299,7 +300,7 @@ and newly built task bundles describe the same revision.
 
 | Target | Does |
 | --- | --- |
-| `init` | `uv sync --extra dev --extra server`. |
+| `init` | `uv sync --extra dev --extra server --extra kubernetes`. |
 | `bootstrap` | Run `sage-run bootstrap` interactively, writing to `BOOTSTRAP_OUTPUT_DIR` outside Git. |
 | `sync` | Rebuild the active platform/workflow release through `GATEWAY_URL` (default `http://localhost:8080`). |
 | `set-platform-secret` | Interactively encrypt a secret in the configured `platform-config.yaml`, then sync. |

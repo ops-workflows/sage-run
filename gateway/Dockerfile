@@ -11,7 +11,7 @@ COPY README.md LICENSE ./
 COPY sage_run/ ./sage_run/
 COPY shared/ ./shared/
 COPY schemas/ ./schemas/
-RUN pip install --no-cache-dir ".[server,connectors]"
+RUN pip install --no-cache-dir ".[server,connectors,kubernetes]"
 
 # Copy shared library and gateway
 COPY CLAUDE.md ./CLAUDE.md

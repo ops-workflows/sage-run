@@ -57,7 +57,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --frozen --extra dev --extra server
+          uv sync --frozen --extra dev --extra server --extra kubernetes
           npm --prefix control-plane-ui ci
 
       - name: Verify installed operator wheel

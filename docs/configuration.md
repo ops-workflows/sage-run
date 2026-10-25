@@ -153,6 +153,11 @@ workflow bundles and agent-memory backups across supported deployment targets.
 | `KUBERNETES_MEMORY_HELPER_IMAGE` | `""` | Image containing `session_manager.memory_sync`; Helm defaults it to the session-manager image. |
 | `KUBERNETES_BOOTSTRAP_SECRET` | `""` | Bootstrap Secret name referenced by Kubernetes memory helper Jobs for object-store credentials. Helm sets it from `bootstrap.existingSecret`. |
 | `KUBERNETES_NAMESPACE` | `default` | Kubernetes launcher namespace. |
+| `SANDBOX_MODE` | `""` | Sandbox profile for agent sessions: `local` (alias `macos`), `ci` (alias `gha`) or `gvisor`. Unknown values fail task launch. |
+| `GVISOR_DOCKER_RUNTIME` | `runsc-pr13532` | Docker runtime name used by the `gvisor` profile. |
+| `KUBERNETES_RUNTIME_CLASS` | `gvisor` | RuntimeClass used by the `gvisor` profile for Kubernetes session Jobs. |
+| `KUBERNETES_RUNTIME_UID` | `1000` | Non-root UID (group 0) for Kubernetes session pods, including memory helpers. |
+| `KUBERNETES_RUNTIME_TTL_SEC` | `86400` | `ttlSecondsAfterFinished` for session Jobs; `0` disables it. |
 
 ### Gateway / UI
 

@@ -112,6 +112,13 @@ class Settings(
     knowledge_source_request_retries: int = Field(default=3, ge=0)
     kubernetes_memory_helper_image: str = ""
     kubernetes_bootstrap_secret: str = ""
+    # Docker runtime name registered for the patched gVisor build (SANDBOX_MODE=gvisor).
+    gvisor_docker_runtime: str = "runsc-pr13532"
+    # Kubernetes runtime Jobs: RuntimeClass for the gvisor sandbox profile and the
+    # non-root user (group 0) that Claude Code's Bubblewrap sandbox requires.
+    kubernetes_runtime_class: str = "gvisor"
+    kubernetes_runtime_uid: int = Field(default=1000, gt=0)
+    kubernetes_runtime_ttl_sec: int = Field(default=86400, ge=0)
     housekeeping_enabled: bool = True
     housekeeping_interval_sec: int = 3600
     background_job_run_history_limit: int = 5

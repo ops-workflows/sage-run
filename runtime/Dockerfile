@@ -78,7 +78,14 @@ ENV PYTHONPATH=/
 # Claude.  /memory is the persistent agent-memory Docker volume. A host
 # shared/ directory may still be bind-mounted over /shared for local
 # development so live edits don't require an image rebuild.
-RUN mkdir -p /plugin-src /workspace /memory
+#
+# The Docker launcher still runs sessions as root. Kubernetes runs them as UID
+# 1000 in group 0: Claude Code's Bubblewrap sandbox needs a non-root user, and
+# group-writable directories also suit arbitrary-UID platforms.
+RUN useradd --uid 1000 --gid 0 --home-dir /home/sage --create-home --shell /bin/bash sage \
+    && mkdir -p /plugin-src /workspace /memory \
+    && chown -R 1000:0 /home/sage /plugin-src /workspace /memory \
+    && chmod -R g=u /home/sage /plugin-src /workspace /memory
 
 WORKDIR /workspace
 

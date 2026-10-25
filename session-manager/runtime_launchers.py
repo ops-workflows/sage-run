@@ -21,10 +21,24 @@ from shared.lib.config import settings
 logger = logging.getLogger(__name__)
 
 DEFAULT_DOCKER_NETWORK = "sage-run-network"
+RUNTIME_HOME = "/home/sage"
+# Legacy Docker mode names map onto the named sandbox profiles.
+SANDBOX_PROFILES = {"macos": "local", "local": "local", "gha": "ci", "ci": "ci", "gvisor": "gvisor"}
 
 
 def _sandbox_mode() -> str:
     return os.environ.get("SANDBOX_MODE", "").strip().lower()
+
+
+def _sandbox_profile() -> str:
+    """Return the sandbox profile (``local``, ``ci``, ``gvisor``) or ``""`` when unset."""
+    mode = _sandbox_mode()
+    if not mode:
+        return ""
+    try:
+        return SANDBOX_PROFILES[mode]
+    except KeyError:
+        raise RuntimeError(f"Unsupported SANDBOX_MODE {mode!r}; expected one of {sorted(SANDBOX_PROFILES)}") from None
 
 
 def _docker_network() -> str:
@@ -191,16 +205,16 @@ class DockerRuntimeLauncher:
         }
         if sys.platform == "linux":
             run_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
-        sandbox_mode = _sandbox_mode()
-        if sandbox_mode == "macos":
+        sandbox_profile = _sandbox_profile()
+        if sandbox_profile == "local":
             run_kwargs["security_opt"] = ["seccomp=unconfined"]
             run_kwargs["environment"]["CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED"] = "1"
-        elif sandbox_mode == "gha":
+        elif sandbox_profile == "ci":
             run_kwargs["security_opt"] = ["seccomp=unconfined", "apparmor=unconfined"]
             run_kwargs["cap_add"] = ["SYS_ADMIN"]
             run_kwargs["environment"]["CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED"] = "1"
-        elif sandbox_mode == "gvisor":
-            run_kwargs["runtime"] = "runsc-pr13532"
+        elif sandbox_profile == "gvisor":
+            run_kwargs["runtime"] = settings.gvisor_docker_runtime
             run_kwargs.setdefault("extra_hosts", {}).update(_network_peer_hosts(self.client, run_kwargs["network"]))
 
         container = self.client.containers.run(**run_kwargs)
@@ -276,11 +290,43 @@ class KubernetesRuntimeLauncher:
         self.core = client.CoreV1Api()
         self.namespace = settings.kubernetes_namespace
 
+    def _runtime_pod_security_context(self, sandbox_profile: str) -> Any:
+        """Run every session container as the non-root runtime user in group 0.
+
+        Claude Code's Bubblewrap sandbox cannot create namespaces as root in an
+        unprivileged container; it works as a non-root user. Group 0 keeps the
+        image compatible with arbitrary-UID platforms.
+        """
+        seccomp = self.client.V1SeccompProfile(type="Unconfined") if sandbox_profile in {"local", "ci"} else None
+        return self.client.V1PodSecurityContext(
+            run_as_non_root=True,
+            run_as_user=settings.kubernetes_runtime_uid,
+            run_as_group=0,
+            seccomp_profile=seccomp,
+        )
+
+    def _runtime_container_security_context(self, sandbox_profile: str) -> Any:
+        if sandbox_profile != "ci":
+            return None
+        return self.client.V1SecurityContext(
+            capabilities=self.client.V1Capabilities(add=["SYS_ADMIN"]),
+            app_armor_profile=self.client.V1AppArmorProfile(type="Unconfined"),
+        )
+
     def launch(self, spec: RuntimeLaunchSpec) -> RuntimeHandle:
         job_name = (spec.container_name or f"session-{spec.task_id[:8]}-{spec.workflow}").replace("_", "-")[:63]
+        sandbox_profile = _sandbox_profile()
         environment = _environment_with_bundle_contract(spec)
+        environment.setdefault("HOME", RUNTIME_HOME)
+        if sandbox_profile in {"local", "ci"}:
+            environment["CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED"] = "1"
         env = [self.client.V1EnvVar(name=name, value=value) for name, value in sorted(environment.items())]
-        container = self.client.V1Container(name="agent-runtime", image=spec.image, env=env)
+        container = self.client.V1Container(
+            name="agent-runtime",
+            image=spec.image,
+            env=env,
+            security_context=self._runtime_container_security_context(sandbox_profile),
+        )
         init_containers = []
         volumes = []
         if spec.memory_volume_name:
@@ -339,6 +385,9 @@ class KubernetesRuntimeLauncher:
             containers=containers,
             init_containers=init_containers,
             volumes=volumes,
+            automount_service_account_token=False,
+            security_context=self._runtime_pod_security_context(sandbox_profile),
+            runtime_class_name=settings.kubernetes_runtime_class if sandbox_profile == "gvisor" else None,
         )
         template = self.client.V1PodTemplateSpec(
             metadata=self.client.V1ObjectMeta(
@@ -346,7 +395,11 @@ class KubernetesRuntimeLauncher:
             ),
             spec=pod_spec,
         )
-        job_spec = self.client.V1JobSpec(template=template, backoff_limit=0)
+        job_spec = self.client.V1JobSpec(
+            template=template,
+            backoff_limit=0,
+            ttl_seconds_after_finished=settings.kubernetes_runtime_ttl_sec or None,
+        )
         job = self.client.V1Job(
             metadata=self.client.V1ObjectMeta(
                 name=job_name,

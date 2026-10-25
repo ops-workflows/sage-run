@@ -45,7 +45,7 @@ TEST_COMPOSE ?= AGE_IDENTITY=test-only-not-a-real-age-key LLM_API_KEY=test-only-
 	k8s-deploy k8s-update
 
 init: ## Install Python dependencies
-	uv sync --extra dev --extra server
+	uv sync --extra dev --extra server --extra kubernetes
 
 bootstrap: ## Guided operator bootstrap (workflow-repo pointer, AGE identity, model key)
 	$(PYTHON) -m sage_run bootstrap --output-dir "$(BOOTSTRAP_OUTPUT_DIR)"

@@ -122,12 +122,23 @@ After `make bootstrap`, start the platform with:
 SANDBOX_MODE=gvisor make up
 ```
 
-The session manager currently requests `runtime="runsc-pr13532"` for each
-agent-session container. Keep `runsc` as an explicitly selected runtime rather
-than changing Docker's global default unless every workload on the VM has been
-qualified for it. Once PR 13532 is included in a qualified gVisor release,
-remove the compatibility runtime registration and switch sessions back to
-`runtime="runsc"`.
+The session manager requests the runtime named by `GVISOR_DOCKER_RUNTIME`
+(default `runsc-pr13532`) for each agent-session container. Keep it as an
+explicitly selected runtime rather than changing Docker's global default unless
+every workload on the VM has been qualified for it. PR 13532 was closed without
+merging; [PR 15008](https://github.com/google/gvisor/pull/15008) carries the
+same fix. A build of release-20261019.0 plus that commit passed the Bubblewrap
+and full-task qualification; register it under a new name (for example
+`runsc-pr15008`) and set `GVISOR_DOCKER_RUNTIME` accordingly. Once the fix is in
+a qualified gVisor release, switch to that release.
+
+Claude Code's Bubblewrap sandbox cannot create namespaces when the session runs
+as root in an unprivileged container (`bwrap: Creating new namespace failed:
+Operation not permitted`), under Docker and Kubernetes alike. The runtime image
+includes a non-root `sage` user (UID 1000, group 0); Kubernetes session pods run
+as that user. Docker sessions still run as root, so workflows that enable Bash
+under the Docker `gvisor` profile are affected until the Docker launcher also
+runs sessions as a non-root user.
 
 gVisor netstack cannot use Docker's embedded DNS on a user-defined bridge
 network because it does not import Docker's netfilter redirection for
@@ -147,6 +158,27 @@ CRDs plus a compatible runtime such as gVisor or Kata Containers. Confirm that
 the cluster's pod security, seccomp, AppArmor, and user-namespace policies also
 allow the desired inner Bubblewrap behavior before treating the configuration as
 production-ready.
+
+The Kubernetes launcher applies the `SANDBOX_MODE` profile to each session Job:
+`gvisor` sets `runtimeClassName` to `KUBERNETES_RUNTIME_CLASS`; `local` and `ci`
+relax seccomp (and, for `ci`, AppArmor plus `SYS_ADMIN`) and enable Claude's weaker
+nested sandbox. Every profile runs the pod as the non-root runtime user with no
+service-account token. On k3s, qualified with release-20261019.0 plus the PR 15008
+commit, register the patched shim as a containerd runtime and point a RuntimeClass
+at it:
+
+```toml
+# /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/gvisor.toml
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc-pr15008]
+  runtime_type = "io.containerd.runsc.v1"
+  runtime_path = "/opt/gvisor/release-20261019.0-pr15008/containerd-shim-runsc-v1"
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc-pr15008.options]
+  TypeUrl = "io.containerd.runsc.v1.options"
+  ConfigPath = "/etc/gvisor/runsc-pr15008.toml"   # binary_name, systemd-cgroup = "true"
+```
+
+Kubernetes cluster DNS works inside gVisor pods, so the Docker `/etc/hosts`
+workaround described above is not needed there.
 
 **Cloud Run.**
 [Cloud Run sandboxes](https://cloud.google.com/blog/topics/developers-practitioners/google-cloud-run-sandboxes-are-in-public-preview)
