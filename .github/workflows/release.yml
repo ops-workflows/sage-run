@@ -14,7 +14,7 @@ concurrency:
 jobs:
   version:
     name: Resolve and check release version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -64,7 +64,7 @@ jobs:
   images:
     name: Publish ${{ matrix.component }} image
     needs: [version, verify]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     permissions:
       contents: read
@@ -149,7 +149,7 @@ jobs:
   package:
     name: Build Python distributions
     needs: [version, images]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out release commit
@@ -230,7 +230,7 @@ jobs:
   pypi:
     name: Publish to PyPI
     needs: [package]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
       name: pypi
@@ -253,7 +253,7 @@ jobs:
   release-assets:
     name: Attach release assets
     needs: [version, pypi]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
