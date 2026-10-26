@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tarfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,6 +72,40 @@ def test_dump_failure_does_not_prune_previous_backups(tmp_path, monkeypatch):
         backups.create_backup(namespace="corp", kind="deployment", checkout=tmp_path)
     assert len(list(tmp_path.glob("deployment-*"))) == 5
     assert len(list(tmp_path.glob("*/manifest.json"))) == 5
+
+
+@pytest.mark.parametrize("validation_exit", [0, 23])
+def test_dump_validation_drains_large_input_and_preserves_exit_status(tmp_path, monkeypatch, validation_exit):
+    payload = b"archive" * 200_000
+    reader = tmp_path / "pg_restore"
+    reader.write_text(f"#!/bin/sh\nhead -c 1 >/dev/null\nexit {validation_exit}\n")
+    reader.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    monkeypatch.setenv("SAGE_RUN_BACKUP_ROOT", str(tmp_path / "backups"))
+    real_run = subprocess.run
+
+    def run(command, **kwargs):
+        if "pg_dump" in command:
+            kwargs["stdout"].write(payload)
+            return SimpleNamespace(returncode=0)
+        try:
+            return real_run(command[command.index("--") + 1 :], **kwargs)
+        finally:
+            assert kwargs["stdin"].tell() == len(payload), "kubectl upload must be fully consumed"
+
+    def stop_after_validation(_):
+        raise RuntimeError("validation completed")
+
+    monkeypatch.setattr(backups.subprocess, "run", run)
+    monkeypatch.setattr(backups, "_export_objects", stop_after_validation)
+    if validation_exit:
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            backups.create_backup(namespace="corp", kind="deployment", checkout=tmp_path)
+        assert error.value.returncode == validation_exit
+    else:
+        with pytest.raises(RuntimeError, match="validation completed"):
+            backups.create_backup(namespace="corp", kind="deployment", checkout=tmp_path)
+    assert not list((tmp_path / "backups").glob("*/manifest.json"))
 
 
 @pytest.mark.parametrize("mounted", [False, True])

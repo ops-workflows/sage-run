@@ -15,7 +15,7 @@ home-directory checkout paths, `kubectl`, Helm and
 
 ```sh
 # Published platform:
-uvx --from 'sage-run==1.0.2' sage-run up .
+uvx --from 'sage-run==1.0.3' sage-run up .
 # Local platform changes, no registry or PyPI publish:
 /path/to/sage-run/.venv/bin/python -m sage_run up . --source /path/to/sage-run
 ```
@@ -32,9 +32,9 @@ Prepare a single-node k3s host with qualified gVisor and a root-only key at
 recipient and re-encrypt every base secret for it. Commit and push the ref.
 
 ```sh
-uvx --from 'sage-run==1.0.2' sage-run deploy . \
+uvx --from 'sage-run==1.0.3' sage-run deploy . \
   --host my-agent --instance my-workflows --env prod --ref main --plan
-uvx --from 'sage-run==1.0.2' sage-run deploy . \
+uvx --from 'sage-run==1.0.3' sage-run deploy . \
   --host my-agent --instance my-workflows --env prod --ref main
 ```
 

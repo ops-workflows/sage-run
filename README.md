@@ -59,9 +59,9 @@ before running it.
 ```sh
 cd /path/to/my-workflows
 # Local: Rancher Desktop Kubernetes/Moby, kubectl, Helm, configured dev key.
-uvx --from 'sage-run==1.0.2' sage-run up .
+uvx --from 'sage-run==1.0.3' sage-run up .
 # Production: prepared k3s host and host-only production key.
-uvx --from 'sage-run==1.0.2' sage-run deploy . \
+uvx --from 'sage-run==1.0.3' sage-run deploy . \
   --host my-agent --env prod --ref main
 ```
 

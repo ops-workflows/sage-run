@@ -1,12 +1,15 @@
 # Deployment and operations
 
-This guide describes the **1.0.2 implementation**, not the target design.
+This guide describes the **1.0.3 implementation**, not the target design.
 Use the workflow repository as the instance, the published `sage-run` CLI as
 the operator tool, and Kubernetes as the serving environment. No platform
 source checkout or platform image build is required on a production server.
 
 The deployment Job and backup features below require 1.0.2 or newer.
-Existing 1.0.1 instances do not acquire them until explicitly upgraded.
+Use **1.0.3 or newer** for production: 1.0.2 can stall while validating large
+Postgres dumps over Kubernetes exec because the list reader exits early.
+The fix drains the upload and preserves validation errors. Existing 1.0.1
+instances do not acquire these features until explicitly upgraded.
 Check GitHub Releases for publication status before installing a version.
 
 ## Deployment Jobs and backups
@@ -134,7 +137,7 @@ repository's `make up` (Kubernetes). Use the explicit CLI when in doubt.
 Use an exact operator version:
 
 ```sh
-uvx --from 'sage-run==1.0.2' sage-run --version
+uvx --from 'sage-run==1.0.3' sage-run --version
 ```
 
 The PyPI project is `sage-run`, not the GitHub organization name. The wheel
@@ -180,7 +183,7 @@ template values before deploying; it is deliberately not a runnable tenant.
 2. Generate a local key once:
 
    ```sh
-   uvx --from 'sage-run==1.0.2' sage-run keygen \
+   uvx --from 'sage-run==1.0.3' sage-run keygen \
      --out ~/.config/sage-run/dev.agekey
    ```
 
@@ -206,13 +209,13 @@ template values before deploying; it is deliberately not a runnable tenant.
    private key:
 
    ```sh
-   uvx --from 'sage-run==1.0.2' sage-run secret set . --env dev --name LLM_API_KEY
-   uvx --from 'sage-run==1.0.2' sage-run secret set . --env dev --name PG_PASSWORD
-   uvx --from 'sage-run==1.0.2' sage-run secret set . --env dev --name OBJECT_STORE_SECRET_KEY
-   uvx --from 'sage-run==1.0.2' sage-run secret set . --env prod --name LLM_API_KEY
-   uvx --from 'sage-run==1.0.2' sage-run secret set . --env prod --name PG_PASSWORD
-   uvx --from 'sage-run==1.0.2' sage-run secret set . --env prod --name OBJECT_STORE_SECRET_KEY
-   uvx --from 'sage-run==1.0.2' sage-run secret set . --env prod \
+   uvx --from 'sage-run==1.0.3' sage-run secret set . --env dev --name LLM_API_KEY
+   uvx --from 'sage-run==1.0.3' sage-run secret set . --env dev --name PG_PASSWORD
+   uvx --from 'sage-run==1.0.3' sage-run secret set . --env dev --name OBJECT_STORE_SECRET_KEY
+   uvx --from 'sage-run==1.0.3' sage-run secret set . --env prod --name LLM_API_KEY
+   uvx --from 'sage-run==1.0.3' sage-run secret set . --env prod --name PG_PASSWORD
+   uvx --from 'sage-run==1.0.3' sage-run secret set . --env prod --name OBJECT_STORE_SECRET_KEY
+   uvx --from 'sage-run==1.0.3' sage-run secret set . --env prod \
      --connection example-service --name SERVICE_TOKEN
    ```
 
@@ -229,7 +232,7 @@ template values before deploying; it is deliberately not a runnable tenant.
 7. Validate, review, commit and push:
 
    ```sh
-   uvx --from 'sage-run==1.0.2' sage-run validate .
+   uvx --from 'sage-run==1.0.3' sage-run validate .
    ```
 
 The namespace Secret `sage-run-bootstrap` holds the age identity plus decrypted
@@ -263,9 +266,9 @@ can be narrower. Never embed a PAT in a remote URL.
 Run from the **workstation's workflow checkout**, with its Git origin set:
 
 ```sh
-uvx --from 'sage-run==1.0.2' sage-run deploy . \
+uvx --from 'sage-run==1.0.3' sage-run deploy . \
   --host my-agent --instance my-workflows --env prod --ref main --plan
-uvx --from 'sage-run==1.0.2' sage-run deploy . \
+uvx --from 'sage-run==1.0.3' sage-run deploy . \
   --host my-agent --instance my-workflows --env prod --ref main
 ```
 
@@ -355,7 +358,7 @@ From the workflow checkout:
 
 ```sh
 # Published platform images, no platform checkout required:
-uvx --from 'sage-run==1.0.2' sage-run up . \
+uvx --from 'sage-run==1.0.3' sage-run up . \
   --identity ~/.config/sage-run/dev.agekey
 
 # Test local platform changes without publishing a package or images:
@@ -388,8 +391,8 @@ Separate dev integrations are strongly recommended: a development key does
 not make production endpoint values safe to use.
 
 ```sh
-uvx --from 'sage-run==1.0.2' sage-run status .
-uvx --from 'sage-run==1.0.2' sage-run down .  # keeps PVCs and Secrets
+uvx --from 'sage-run==1.0.3' sage-run status .
+uvx --from 'sage-run==1.0.3' sage-run down .  # keeps PVCs and Secrets
 # --purge deletes the namespace and its data; use only for disposable instances.
 ```
 

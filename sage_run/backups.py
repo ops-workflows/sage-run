@@ -115,8 +115,18 @@ def create_backup(*, namespace: str, kind: str, checkout: Path) -> Path:
             check=True,
         )
     with dump.open("rb") as source:
+        # pg_restore stops at the TOC; drain the upload so Kubernetes exec can finish.
         subprocess.run(  # noqa: S603 - validates the dump with the matching PostgreSQL tool
-            [*kubectl, "exec", "-i", "postgres-0", "--", "pg_restore", "--list"],
+            [
+                *kubectl,
+                "exec",
+                "-i",
+                "postgres-0",
+                "--",
+                "sh",
+                "-c",
+                'pg_restore --list; result=$?; cat >/dev/null || exit $?; exit "$result"',
+            ],
             stdin=source,
             stdout=subprocess.DEVNULL,
             check=True,
