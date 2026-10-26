@@ -38,8 +38,9 @@ live in your own workflow repository; this repo is the platform they run on.
 - **Web control plane** — tasks, session replay, schedules, approvals,
   analytics, and platform catalogs (MCPs, connectors, memory, workflow-repo
   sync/versioning).
-- **Docker Compose and Helm** deployment packages, with a provider-neutral
-  object-storage layer (`s3` or `gcs`).
+- **Kubernetes instances** from a workflow checkout: published, digest-pinned
+  platform images in production and local source builds for development.
+  Provider-neutral object storage supports `s3` and `gcs`.
 
 ## Architecture
 
@@ -50,33 +51,37 @@ bus/approvals → completion → memory sync → control-plane UI).
 
 ## Quick start
 
-```sh
-docker compose -f deploy/docker-compose.yml up --build
-```
-
-This runs the base stack against
-[examples/workflow-repo](examples/workflow-repo/) as a starter workflow repo. To
-point at your own workflow repo instead:
+Start with your own configured workflow checkout, not a platform clone on the
+production server. The [starter](examples/workflow-repo/) is a copy-and-fill
+template; configure model access, encrypted credentials and the environment key
+before running it.
 
 ```sh
-HOST_WORKFLOW_REPO_PATH=/path/to/workflow-repo \
-docker compose -f deploy/docker-compose.yml up --build
+cd /path/to/my-workflows
+# Local: Rancher Desktop Kubernetes/Moby, kubectl, Helm, configured dev key.
+uvx --from 'sage-run==1.0.1' sage-run up .
+# Production: prepared k3s host and host-only production key.
+uvx --from 'sage-run==1.0.1' sage-run deploy . \
+  --host my-agent --env prod --ref main
 ```
 
-For a guided setup that also handles secrets, remote workflow repos, and
-Kubernetes targets, use `make bootstrap` (it writes private state outside Git) — see
-[docs/deployment.md](docs/deployment.md).
+See [Deployment and operations](docs/deployment.md) for first-time keys,
+server preparation, local platform development, updates and recovery.
+Production deploy currently targets single-node k3s over SSH. UI Deploy now,
+selective service reload and scheduled full backups are **not implemented yet**;
+the UI still offers workflow Sync. Legacy Compose tooling remains for
+unmigrated instances and is not the recommended new-instance path.
 
 ## Documentation
 
 | Doc | Covers |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Components and the request/task flow. |
-| [docs/configuration.md](docs/configuration.md) | The three config layers, full `platform-config.yaml` reference, bootstrap env reference. |
+| [docs/configuration.md](docs/configuration.md) | Base/prod overlays, named connections, encrypted secrets, deployment settings and service env reference. |
 | [docs/connectors.md](docs/connectors.md) | Connector model, available connectors, and how to add one. |
 | [docs/mcps.md](docs/mcps.md) | Core vs. integration MCP servers and their config. |
 | [docs/memory.md](docs/memory.md) | Long-term memory (Hindsight), per-agent project memory, hooks, and weekly reflection. |
-| [docs/deployment.md](docs/deployment.md) | `make bootstrap`, Compose/Helm, bundle sync and versioning. |
+| [docs/deployment.md](docs/deployment.md) | First install, host prerequisites, local development, CLI/UI update limits, portability, backups and releases. |
 | [docs/security.md](docs/security.md) | Permissions, sandbox/credential controls, bundle integrity, approvals, encrypted secrets. |
 | [docs/workflow-authoring.md](docs/workflow-authoring.md) | How to build a workflow package (agent.yaml, skills, hooks) and its bundle. |
 

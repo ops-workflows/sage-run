@@ -1,57 +1,65 @@
-# Deployment (Example)
+# Kubernetes deployment
 
-This directory shows how to run the public platform's base stack against a
-workflow repo checked out as a sibling directory of `sage-run`.
-This is one of two supported deployment modes — see
-[docs/deployment.md](../../../docs/deployment.md) for the other (`make
-bootstrap` targeting a remote/pinned workflow repo).
+Use the workflow checkout as the instance. No committed/generated Compose env
+file, separate Helm values file or combined MCP image is needed.
 
-## Docker Compose
+Follow [Deployment and operations](../../../docs/deployment.md) before running
+these commands: replace template values, configure models/integrations and
+encrypt every secret to the correct environment key.
 
-The base `deploy/docker-compose.yml` already covers everything a workflow repo
-needs — pointing at your repo, and every MCP server/connector the platform
-ships — via env vars and `COMPOSE_PROFILES`. **No compose override is needed**
-unless you're adding a *custom* MCP server or connector (see
-[docker-compose.override.yml](docker-compose.override.yml) for that case).
+## Local development
 
-Run `make bootstrap` in `sage-run/` first (see its
-`docs/deployment.md`) to generate a private `compose.env` (default
-`~/.local/state/sage-run/local/`) with the operator bootstrap
-layer (`AGE_IDENTITY`, `LLM_API_KEY`, workflow-repo pointer, pointed
-at your repo's local path). Copy [compose.env.example](compose.env.example) to
-your workflow repo as `deploy/compose.env` and set its non-secret values. Then
-from `sage-run/`, run:
+Prerequisites: Rancher Desktop Kubernetes with Moby and Traefik, shared
+home-directory checkout paths, `kubectl`, Helm and
+`~/.config/sage-run/dev.agekey`.
 
 ```sh
-make up
+# Published platform:
+uvx --from 'sage-run==1.0.1' sage-run up .
+# Local platform changes, no registry or PyPI publish:
+/path/to/sage-run/.venv/bin/python -m sage_run up . --source /path/to/sage-run
 ```
 
-The Makefile loads `deploy/compose.env` first, then the generated private
-`compose.env`, and derives the required profiles from `platform-config.yaml`.
+The example Makefile defaults to a sibling `../sage-run`; run `make init` in
+that checkout, then `make up` here. Set `SAGE_RUN_DIR` and `SAGE_RUN_SOURCE`
+for a different layout. Workflows use the base config and mounted working tree.
+`make down` keeps volumes; do not use `--purge` for valuable data.
 
-### Adding your own custom MCP server or connector
+## First production install and later updates
 
-If your workflow repo defines its own MCP server or connector (see
-[mcps/custom-mcp-example/](../mcps/custom-mcp-example/) and
-[connectors/custom-connector-example/](../connectors/custom-connector-example/)),
-those don't exist in the base compose file and do need an override. After
-`make bootstrap`, the public Makefile automatically loads the workflow repo's
-`deploy/docker-compose.override.yml` when it exists:
+Prepare a single-node k3s host with qualified gVisor and a root-only key at
+`/etc/sage-run/<instance>/age.key`. Configure the production overlay's public
+recipient and re-encrypt every base secret for it. Commit and push the ref.
 
 ```sh
-COMPOSE_PROFILES=custom-example make up
+uvx --from 'sage-run==1.0.1' sage-run deploy . \
+  --host my-agent --instance my-workflows --env prod --ref main --plan
+uvx --from 'sage-run==1.0.1' sage-run deploy . \
+  --host my-agent --instance my-workflows --env prod --ref main
 ```
 
-Set these when the repos are not sibling directories:
+The workstation sends the commit over SSH into the host's sole serving
+checkout. It does not require a server-side clone or PAT. Later workflow
+fetches use the configured GitHub App.
 
-```sh
-export HOST_WORKFLOW_REPO_PATH=/path/to/my-workflow-repo
-```
+Put instance-owned ingress or other reviewed manifests under `deploy/k8s/`.
+CLI deploy applies `*.yaml` there with `${WORKFLOW_REPO_PATH}` replaced by the
+host checkout. No generic public ingress is included: provision TLS and
+authentication for your environment. Extra manifests are not automatically
+pruned when files disappear from Git.
 
-## Kubernetes (Helm)
+MCP enablement comes from `mcps.enabled`; workflow MCP modules are read from
+`mcps/*/mcp_*.py` using the platform image. Built-in connectors have separate
+images/Deployments. Custom connector skeletons are authoring examples, not
+automatically deployed services.
 
-Run the repository as a local Kubernetes instance with `sage-run up` (see
-[docs/deployment.md](../../../docs/deployment.md#kubernetes-deployment)). The
-chart takes its values from this repository: MCP servers and connectors from
-`platform-config.yaml`, knowledge and Hindsight settings from
-`deploy/compose.env`. No separate values file is needed.
+## Current limits
+
+- UI **Sync now** updates bundles, not service topology. **Deploy now** is not
+  implemented yet.
+- CLI `up`/`deploy` currently restarts platform Deployments; selective reload
+  is planned, not active.
+- There is no `make deploy`/`make plan` wrapper or scheduled full-backup/retention
+  automation yet. Use explicit pinned CLI commands and operator-managed backups.
+- GKE, OpenShift and k3d need storage, runtime, image and ingress adaptation;
+  `--context` alone does not make them qualified targets.

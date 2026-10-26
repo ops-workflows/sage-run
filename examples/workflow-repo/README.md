@@ -17,6 +17,9 @@ See [docs/workflow-authoring.md](../../docs/workflow-authoring.md) for the
 full package/bundle reference, [docs/configuration.md](../../docs/configuration.md)
 for the config-layer model, and the platform root
 [README.md](../../README.md) for how to point a running platform at your repo.
+For first-time keys, server/local prerequisites and exact pinned commands, use
+[Deployment](deploy/README.md). Production deploy runs from this checkout on
+your workstation and operates the k3s host remotely.
 
 ## What's here
 
@@ -24,6 +27,7 @@ for the config-layer model, and the platform root
 examples/workflow-repo/
 ├── platform-config.yaml           # instance config template (mcps, connectors,
 │                                   # message bus, memory banks, model profiles)
+├── platform-config-prod.yaml      # production overrides; all secrets re-encrypted
 ├── litellm.config.example.yaml    # model-gateway (LiteLLM) config template
 ├── connectors/
 │   ├── README.md                  # how to enable/configure/add a connector
@@ -35,8 +39,7 @@ examples/workflow-repo/
 │   ├── README.md                  # repo-wide shared skills (precedence vs. platform/workflow-local)
 │   └── custom-skill-example/      # minimal skeleton to copy and adapt
 ├── deploy/
-│   ├── README.md                  # the "convenience" sibling-checkout deploy mode
-│   └── docker-compose.override.yml
+│   └── README.md                  # Kubernetes local/production setup and limits
 └── workflows/
     └── example-workflow/          # copy-and-fill workflow package template
         ├── agent.yaml             # platform-only config: secrets, runtime, schedules
@@ -77,10 +80,10 @@ replace the `team-wiki` URL/email and age-encrypted token in
 
 Before indexing, configure a real embedding model and its verified positive
 output dimension on both the indexer and Knowledge MCP. The examples deliberately
-leave dimensions at `0` and reranking disabled. Compose reuses Hindsight's
-embedding endpoint/model from `deploy/compose.env.example`; `sage-run up` passes the
-same `KNOWLEDGE_*` values to Kubernetes. Both use the existing
-bootstrap `LLM_API_KEY` unless a dedicated encrypted key is configured.
+leave dimensions at `0` and reranking disabled. Configure `knowledge.embeddings`
+and `deployment.hindsight.env` explicitly with the real endpoints/models.
+Knowledge uses the instance Secret's `LLM_API_KEY` unless a dedicated encrypted
+key is configured.
 
 Register this example through the Knowledge Sources view or
 `POST /platform/knowledge-sources`, replacing the page ID with an accessible page:

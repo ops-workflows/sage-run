@@ -1,517 +1,415 @@
-# Deployment
+# Deployment and operations
 
-## Clone the platform
+This guide describes the **1.0.1 implementation**, not the target design.
+Use the workflow repository as the instance, the published `sage-run` CLI as
+the operator tool, and Kubernetes as the serving environment. No platform
+source checkout or platform image build is required on a production server.
 
-Clone the public platform repository on the deployment host. This example uses
-`/home/ubuntu/sage-run`; choose a writable checkout path for your deployment user.
+## Current support and unfinished work
 
-```sh
-git -c credential.helper= clone \
-   https://github.com/ops-workflows/sage-run.git \
-   /home/ubuntu/sage-run
-
-cd /home/ubuntu/sage-run
-```
-
-The repository is public, so this HTTPS clone requires no credentials or PAT.
-`-c credential.helper=` disables configured credential helpers only for this
-command; it does not change Git configuration for later commands. If cloning a
-private repository instead, enter your username and PAT at Git's prompts rather
-than putting the PAT in the URL or command line.
-
-Run `make init` for source development. It installs the `dev`, `server` and
-`kubernetes` extras; service Dockerfiles also request `server` explicitly, and
-the Gateway and session-manager images include the Kubernetes client. A plain operator
-package install does not install the Claude Agent SDK, database drivers, web
-server or indexing libraries. This dependency split does not change model
-configuration or runtime capabilities.
-
-## Bootstrap (`make bootstrap`)
-
-`make bootstrap` runs the packaged `sage-run bootstrap` command, a guided prompt that produces
-the **layer 1** bootstrap artifact described in
-[Configuration](configuration.md). For a remote source it clones or refreshes
-the initial local checkout, but never modifies its `platform-config.yaml`.
-
-Prompts:
-
-1. **Deployment target** — `compose` or `kubernetes`.
-2. **Workflow source** — `remote` (git URL + ref + initial checkout path) or
-   `local` (an existing filesystem checkout path). Compose bind-mounts the
-   checkout; Kubernetes uses the checkout's config for cold start and then
-   performs remote syncs with the configured GitHub App.
-3. **One-time clone PAT** (remote only, optional for public repositories). It
-   is supplied to Git only through a temporary `GIT_ASKPASS` process and is
-   never written to `compose.env`, a Kubernetes Secret, the Git remote URL, or
-   platform config. All subsequent workflow sync, Knowledge Source sync,
-   version lookup, reflection PR, and GitHub MCP operations use the named
-   GitHub App connections in `platform-config.yaml`.
-   Kubernetes bootstrap also prompts for the target namespace; use the same
-   namespace with `helm upgrade`.
-4. **Compose host overrides** — optional Gateway URL, UI URL and sandbox
-   (`macos` or `gvisor`). Blank entries retain workflow deployment settings.
-   No host policy is inferred from package source or workflow source.
-5. **AGE identity** — an armored
-   `AGE-SECRET-KEY-...` string or a path to a key file. A path is read into
-   the generated secret artifact so it works inside containers.
-6. **LLM API key** — one
-   key shared by runtime model profiles and Hindsight's LLM/embeddings clients.
-7. **Postgres password** and **object-store secret key** —
-   direct-container secrets required by Compose infrastructure.
-
-Generated artifacts live under `~/.local/state/sage-run/local` by default,
-outside the platform and workflow checkouts. Set `BOOTSTRAP_OUTPUT_DIR` to a
-different private directory for another instance. Bootstrap refuses to overwrite
-an existing artifact; back it up and move it aside before regenerating it.
-
-Generated artifact per target, relative to that private directory:
-
-| Target | Artifact | Apply |
+| Surface | Works today | Not yet implemented or qualified |
 | --- | --- | --- |
-| `compose` | `compose.env` | `make up` |
-| `kubernetes` | `dist/bootstrap/k8s-secret.sh` | run the script to create/update bootstrap and `platform-config.yaml` Secrets |
+| Production CLI | Single-node k3s over SSH, committed workflow ref, packaged chart and digest-pinned release images | Generic remote kube-context deployment; multi-node checkout placement |
+| Local CLI | Rancher Desktop Kubernetes, working-tree mount, optional platform source builds | Turnkey k3d/kind setup or image import |
+| UI | Existing **Sync now** and version pin for workflow bundles | **Deploy now**, deploy Job, deployment logs and platform upgrades |
+| Reconciliation | Helm applies topology and image changes; CLI then restarts platform Deployments | Selective config reload/restart and deploy diff planning |
+| Recovery | Operator-created backups and a verified reference migration | Scheduled full backups, automatic pre-upgrade backups, retention cleanup and migration framework |
 
-The installed CLI can generate the same artifacts from any working directory:
+The legacy Compose Makefile/bootstrap commands remain in the platform for
+instances not yet migrated. They are not the setup path in this guide.
+Do not confuse platform-root `make up` (legacy Compose) with a workflow
+repository's `make up` (Kubernetes). Use the explicit CLI when in doubt.
 
-```sh
-sage-run bootstrap --output-dir "$HOME/.local/state/sage-run/local"
-```
+## Prerequisites
 
-This command generates configuration only. It does not start Compose or apply
-Kubernetes resources. Compose files are created with mode `0600`; Kubernetes
-scripts are private executables with mode `0700`. Existing files and symlinks
-are not overwritten.
+### Workstation
 
-To preserve an existing checkout-root `compose.env`, copy it to the private
-directory with mode `0600` rather than regenerating credentials. The original
-file is no longer loaded by default. An explicit
-`COMPOSE_BOOTSTRAP_ENV_FILE=/absolute/path/to/compose.env` selects another
-existing file without copying it. Source builds and the platform Makefile still require the platform checkout.
+- A checkout of the workflow repository, Git, Python 3.11+ and `uv`.
+- For production: SSH access to the host, passwordless noninteractive `sudo`,
+  and a pushed branch or tag at the exact commit being deployed.
+- For local Kubernetes: `kubectl`, Helm, Rancher Desktop with Kubernetes and
+  the Moby engine enabled. Its Docker images must be visible to the cluster.
+- For platform development only: a SAGE Run checkout, its development
+  dependencies (`make init` in that checkout), and Docker builds.
 
-## Validate a Workflow Repository
-
-```sh
-sage-run validate /path/to/workflow-repo
-```
-
-Omitting the path validates the current directory. The command checks JSON/YAML
-syntax and workflow package structure against the schema included in the
-installed package. It ignores Git metadata and installed dependency directories,
-returns a nonzero status on errors, and does not fetch repositories, decrypt
-secrets or contact a running platform. Gateway uses the same package checks.
-
-## Authentication and Ingress
-
-SAGE Run does not currently provide browser authentication or public ingress.
-Workflow repositories and production deployment configurations own those
-concerns and can add only the components required by their environment. For
-example, a public-cloud load balancer can provide OIDC-based access control, a
-local proxy such as Envoy can integrate with an OIDC provider, or a deployment
-can intentionally expose the platform without browser authentication.
-
-The public hostname and gateway callback base URL must both use HTTPS whenever
-Mattermost approval callbacks are enabled. Any ingress layer that permits the
-callback must allow `POST /webhooks/message/actions/approval`; Gateway verifies
-the signed callback context for that route.
-
-## Register a GitHub App
-
-Use a separate GitHub App registration for each GitHub.com or GitHub Enterprise
-Server host. The helper requires Python 3.11+ and a browser signed in as an
-organization owner or a member allowed to manage organization GitHub Apps:
+Use an exact operator version:
 
 ```sh
-make create-github-app
+uvx --from 'sage-run==1.0.1' sage-run --version
 ```
 
-It prompts for an organization URL (for example `https://github.com/acme` or
-`https://ghes.example.com/platform-ops`) and an App name. Organization
-settings URLs and `host/organization` paths also work. It opens a local form;
-choose **Continue to GitHub**, review the name, then **Create GitHub App**.
-Registration is not a headless REST operation: GitHub's
-[manifest handshake](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
-requires browser approval. The script then exchanges the one-time code through
-the REST API without a PAT or stored `gh` credentials. GHES uses `/api/v3` and
-normal TLS verification; trust the instance's CA on the machine running the
-helper rather than disabling verification.
+The PyPI project is `sage-run`, not the GitHub organization name. The wheel
+contains the chart and a release manifest with GHCR image digests.
 
-The manifest grants repository **Contents, Issues, and Pull Requests: write**
-and **Metadata: read**, with no subscribed events. The App is private to its
-owning organization, webhooks are inactive, and user OAuth authorization is not
-requested. These are service-identity defaults, not a clone of any existing
-App's unexposed administrative settings. The homepage is the target organization
-URL. The loopback redirect is only for registration, not a runtime OAuth callback.
+### Production server
 
-Credentials are saved in a unique directory under
-`~/.config/sage-run/github-apps/<host>/`. The directory has mode `0700`, and
-files have mode `0600`:
+Provision a Linux node with a qualified k3s/containerd installation, working
+cluster DNS, persistent storage/default StorageClass, and enough capacity for
+Postgres, MinIO, Hindsight, indexing and concurrent sessions.
 
-- `private-key.pem`: App private key for SAGE authentication.
-- `credentials.json`: complete API response, including the PEM, client secret,
-  and webhook secret if supplied. Treat this entire file as a secret.
-- `connection.json`: web/API base URLs, App ID, installation/settings URLs,
-  and a suggested private-key secret name. It is connection metadata, not a
-  complete `platform-config.yaml`; `installation_id` is initially unset.
+The SSH deployer assumes:
 
-The script never prints secret values or overwrites existing output directories.
-Keep these plaintext files out of Git and encrypt the PEM with
-`scripts/set_secret.py --scope shared --name github_app_private_key --value-file
-/path/to/private-key.pem`, supplying the instance's `--identity` and
-`--platform-file`. Set the connection's `private_key_secret` to the same secret
-name, then securely archive or remove the plaintext credential files.
+- `sudo k3s kubectl` and `/etc/rancher/k3s/k3s.yaml`;
+- Git, Python 3, `age` (and `age-keygen` for key creation), tar, curl,
+  checksum tools and standard Linux utilities;
+- registry access to public GHCR images and upstream infrastructure images;
+- access to the configured model, messaging, GitHub App and integration endpoints;
+- an instance key already installed at `/etc/sage-run/<instance>/age.key`;
+- a working `gvisor` RuntimeClass for production tasks.
 
-Open the printed installation URL and choose **Only select repositories**,
-including the workflow repository and any repositories the workflows need.
-Copy the installation ID from the resulting installation URL into the named
-connection's `installation_id`. An App ID and an installation ID are different.
-Choose that connection for `github.workflow_repo_connection` when appropriate.
+It installs Helm **v4.0.5** on the host if needed, verifying its download.
+The current SSH installer assumes Linux **amd64**; multi-architecture images
+do not make that installer architecture-independent.
 
-For an SSH deployment host, forward the helper's loopback port from your
-workstation, then run the command in that SSH session:
+There is no automatic host-preparation/doctor command yet. Install k3s and
+qualify its sandbox before deploying; do not run an unreviewed install script
+on an existing production host.
+
+The qualified reference host uses k3s **v1.36.5+k3s1**, with Traefik and ServiceLB disabled,
+and pod/service CIDRs are `172.30.0.0/16` and `172.31.0.0/16`. These are
+instance-specific choices to avoid network conflicts, not universal defaults.
+Use the [sandbox configuration](security.md#providing-an-outer-sandbox) and
+verify Bubblewrap and a complete task as non-root under gVisor. A version
+number alone is not a qualification result.
+
+## First-time workflow configuration and keys
+
+Start from [examples/workflow-repo](../examples/workflow-repo/). Replace all
+template values before deploying; it is deliberately not a runnable tenant.
+
+1. Configure the base `platform-config.yaml` for development/test.
+2. Generate a local key once:
+
+   ```sh
+   uvx --from 'sage-run==1.0.1' sage-run keygen \
+     --out ~/.config/sage-run/dev.agekey
+   ```
+
+   Put the printed public recipient in base `config.AGE_PUBLIC_KEY`.
+   Do not overwrite an existing key: existing ciphertext depends on it.
+
+3. On the production host, create a separate root-only key:
+
+   ```sh
+   sudo install -d -m 700 /etc/sage-run/my-workflows
+   sudo sh -c 'umask 077; test ! -e /etc/sage-run/my-workflows/age.key &&
+     age-keygen -o /etc/sage-run/my-workflows/age.key'
+   sudo age-keygen -y /etc/sage-run/my-workflows/age.key
+   ```
+
+   Substitute the actual namespace/instance name. Copy **only the public
+   recipient** into `platform-config-prod.yaml` at `config.AGE_PUBLIC_KEY`.
+   Keep a separately secured recovery copy of the private key; same-disk data
+   backups cannot recover encrypted config after losing this key.
+
+4. Encrypt platform and integration credentials with the CLI from the workflow
+   checkout. It prompts without echo and needs only the recipient, not the
+   private key:
+
+   ```sh
+   uvx --from 'sage-run==1.0.1' sage-run secret set . --env dev --name LLM_API_KEY
+   uvx --from 'sage-run==1.0.1' sage-run secret set . --env dev --name PG_PASSWORD
+   uvx --from 'sage-run==1.0.1' sage-run secret set . --env dev --name OBJECT_STORE_SECRET_KEY
+   uvx --from 'sage-run==1.0.1' sage-run secret set . --env prod --name LLM_API_KEY
+   uvx --from 'sage-run==1.0.1' sage-run secret set . --env prod --name PG_PASSWORD
+   uvx --from 'sage-run==1.0.1' sage-run secret set . --env prod --name OBJECT_STORE_SECRET_KEY
+   uvx --from 'sage-run==1.0.1' sage-run secret set . --env prod \
+     --connection example-service --name SERVICE_TOKEN
+   ```
+
+   Use `--value-file /secure/path` for multiline credentials. Never put
+   plaintext credentials in command arguments, Git or Helm values.
+
+5. Override **every base ciphertext** in the production overlay, including
+   GitHub App and messaging credentials, even when the plaintext is identical.
+   Mappings merge recursively; lists/scalars replace base values. The
+   production environment has one key, not both development and production keys.
+6. Set `deployment.public_url`, `deployment.sandbox_profile`, Hindsight model
+   settings and any service-specific options. Connections supply per-workflow
+   integration URLs and request headers; see [Configuration](configuration.md).
+7. Validate, review, commit and push:
+
+   ```sh
+   uvx --from 'sage-run==1.0.1' sage-run validate .
+   ```
+
+The namespace Secret `sage-run-bootstrap` holds the age identity plus decrypted
+`LLM_API_KEY`, `PG_PASSWORD` and `OBJECT_STORE_SECRET_KEY`. The host key is the
+only separately managed plaintext credential file, **not** the only plaintext
+copy: Kubernetes Secrets and trusted service memory also contain credentials.
+Protect cluster-admin access, node storage and backups accordingly.
+
+### GitHub App access
+
+Initial deploy sends a Git bundle over SSH; no Git clone or PAT is needed on
+the server. Later UI syncs fetch through the named App installation in
+`github.workflow_repo_connection`.
+
+Register separate GitHub Apps for GitHub.com and each GHES host. The optional
+platform-source helper `make create-github-app` performs the browser-approved
+manifest handshake and writes private files under
+`~/.config/sage-run/github-apps/<host>/` (directory 0700, files 0600).
+Install the App on the workflow repository and configure its installation ID.
+Encrypt its PEM under the `secrets` entry referenced by `private_key_secret`.
+Use `sage-run secret set --name <entry> --value-file /secure/private-key.pem`.
+Archive or remove the plaintext helper output securely.
+
+Grant only needed repository permissions: Contents read/write for sync and
+reflection changes, Issues read/write for permitted issue operations, Pull
+Requests read/write for reflection PRs, and Metadata read. Sync-only access
+can be narrower. Never embed a PAT in a remote URL.
+
+## First production deployment
+
+Run from the **workstation's workflow checkout**, with its Git origin set:
 
 ```sh
-ssh -L 8765:127.0.0.1:8765 ubuntu@your-host
-cd /home/ubuntu/sage-run
-make create-github-app GITHUB_APP_ARGS="--no-browser"
+uvx --from 'sage-run==1.0.1' sage-run deploy . \
+  --host my-agent --instance my-workflows --env prod --ref main --plan
+uvx --from 'sage-run==1.0.1' sage-run deploy . \
+  --host my-agent --instance my-workflows --env prod --ref main
 ```
 
-Open the printed `http://127.0.0.1:8765/register/...` URL in your workstation's
-browser. No public listener or firewall change is needed. Use `--port` and a
-matching forward if that port is occupied. Browser approval times out after
-600 seconds; `--timeout` can extend it up to GitHub's one-hour handshake limit.
-`GITHUB_APP_ARGS="--help"` lists all options, including `--org`, `--name`, and
-`--output-dir` (which must be a new directory). Cancellation never deletes an
-already-registered App; inspect its settings before retrying after an error.
+`--plan` prints the selected commit, images and enabled workflow MCPs. It is
+not yet a live diff, readiness check or migration plan.
 
-## Kubernetes deployment
+The deployer:
 
-`sage_run/chart` is a namespace-scoped chart: one release per namespace,
-with Services named as in Compose (`gateway`, `postgres`, `minio`,
-`hindsight`, `control-plane-ui`, `mcp-<id>`), so workflow `.mcp.json` URLs and
-platform defaults work unchanged. It mounts the instance's single workflow
-checkout at `/app/workflows` (a host path for local development, or a PVC) and
-reads `platform-config.yaml` from it. Postgres, MinIO (with its buckets) and
-Hindsight run in the namespace by default. Session Jobs run as the non-root
-runtime user with the selected sandbox profile (`runtime.sandboxProfile`).
+1. Verifies that the selected commit is pushed to `origin` at `--ref`.
+2. Transfers it into `/var/lib/sage-run/<instance>/workflow-repo` as a Git
+   bundle, with the same checkout mounted into all services that need it.
+3. Decrypts infrastructure credentials on the host using its key and applies
+   the Kubernetes Secret. Only ciphertext travels from the workstation.
+4. Runs Helm with the installed package's chart and release image digests.
+5. Applies committed `deploy/k8s/*.yaml`, substituting
+   `${WORKFLOW_REPO_PATH}` with the host checkout path.
+6. Restarts platform Deployments, waits for rollouts and syncs workflow bundles.
 
-### Local instance (Rancher Desktop)
+The checkout is deployment-managed: the CLI force-checks out the commit and
+cleans untracked files. **Do not edit it or store private files there.**
+Keep keys under `/etc/sage-run` and backups outside the checkout.
 
-Enable Kubernetes in Rancher Desktop with the `moby` engine, so locally built
-images are visible to the cluster. From a workflow repository:
+Provision/resume workflows and connectors deliberately after checking targets,
+credentials and schedules. A new instance starts paused; an existing instance
+preserves its operator state.
+
+### Ingress and authentication
+
+SAGE Run does not yet provide application-enforced authorization. Identity
+groups are informational. Restrict network access and use an appropriate TLS
+and identity boundary before exposure.
+
+An instance can commit ingress manifests under `deploy/k8s/`; CLI deploy applies
+them on first install and later updates. A private Caddy Deployment can use the same
+workflow checkout for its Caddyfile, validates Google IAP JWTs, and binds node
+port 443. Its custom Caddy image is currently **manually built/imported** into
+k3s, with `imagePullPolicy: Never`: the manifest is automated, image provisioning
+is not. A replacement node must import that exact image before deployment.
+
+Alternatively `deployment.ui.host_ip`/`host_port` exposes the UI directly.
+That does not add TLS or authentication. Configure callback reachability for
+`POST /webhooks/message/actions/approval`; Gateway validates signed callback
+context, independently of browser authentication.
+
+## Ongoing updates: actual behavior
+
+| Change | Operator action today | Effect |
+| --- | --- | --- |
+| Prompts, skills, agents, instructions, workflow settings | Push and use **Sync now**, or run CLI deploy | Sync rebuilds/promotes bundles without reconciling Kubernetes; CLI deploy additionally restarts platform services |
+| Local uncommitted workflow edits | Local **Sync now**, or `sage-run up` again | Sync reads working tree; `up` restarts platform services |
+| Connections/config needed only by new tasks | Sync can snapshot per-task settings | Does not reload every long-running service; use CLI deploy when service config/credentials change |
+| MCP/connector enablement, source or service config | CLI deploy (local: `up`) | Helm reconciles workloads; current CLI restarts platform Deployments |
+| Platform/runtime image upgrade | Run the desired exact CLI release's deploy | Chart/images come from that package; workflow image overrides take precedence |
+| Database/infrastructure change | Reviewed backup and explicit upgrade procedure | No automatic backup/migration framework; do not assume safe rollback or storage migration |
+
+**Selective reload is a target, not current behavior.** Both `up` and SSH
+`deploy` restart Gateway, session-manager, UI, knowledge-indexer, MCPs and
+connectors after Helm. Postgres, MinIO and Hindsight are not in that explicit
+restart selector, although changing their pod specifications makes Kubernetes
+roll them. Workflow-only UI Sync does not roll services.
+
+The UI still exposes Sync/pin. A pin can override the default ref for later
+syncs; clear or align it when choosing a different deployment ref. The planned
+Deploy-now Job will replace these controls; it is not available in 1.0.1.
+Platform upgrades and recovery remain CLI operations. There is no published
+`make deploy`/`make plan` wrapper in the workflow templates yet: use the commands
+above rather than assuming such targets exist.
+
+Running tasks retain their launch environment and bundle. Avoid disruptive
+deploys during active work; there is no deploy drain or concurrent-deploy lock
+yet. Do not run UI sync and CLI deploy concurrently against the shared checkout.
+
+## Local workflow and platform development
+
+Arrange sibling checkouts, or pass an explicit platform source:
+
+```text
+work/
+  sage-run/
+  my-workflows/
+```
+
+In the platform checkout run `make init` for its development environment.
+Enable Rancher Desktop Kubernetes/Moby, verify the `rancher-desktop` context,
+and keep checkouts under a path shared into its VM (home directories work;
+host `/tmp` is not assumed shared). Ensure Traefik is available on local port
+80. Install `kubectl` and Helm on the workstation.
+
+From the workflow checkout:
 
 ```sh
-make up      # build platform images from ../sage-run and install the instance
-make status
-make down    # keep volumes; `sage-run down --purge` deletes the namespace
+# Published platform images, no platform checkout required:
+uvx --from 'sage-run==1.0.1' sage-run up . \
+  --identity ~/.config/sage-run/dev.agekey
+
+# Test local platform changes without publishing a package or images:
+/path/to/sage-run/.venv/bin/python -m sage_run up . \
+  --source /path/to/sage-run --identity ~/.config/sage-run/dev.agekey
+
+# Reuse built images for workflow-only iterations:
+/path/to/sage-run/.venv/bin/python -m sage_run up . \
+  --source /path/to/sage-run --no-build
 ```
 
-`make up` runs `sage-run up . --source ../sage-run`, which:
+`--no-build` requires the matching development image tag to exist; supply
+`--image-tag <existing-tag>` if the source tree has changed since the build.
+Local builds use `imagePullPolicy: Never`. There is no automatic image import
+into a different cluster's node image store.
 
-- builds platform images tagged `dev-<commit>` (plus a timestamp when the tree
-  is dirty) from the platform checkout;
-- creates namespace `<repo folder>-dev` and its `sage-run-bootstrap` Secret
-  from the development key (`~/.config/sage-run/dev.agekey`, `--identity` or
-  `SAGE_RUN_AGE_IDENTITY_FILE`) and the `LLM_API_KEY`, `PG_PASSWORD` and
-  `OBJECT_STORE_SECRET_KEY` platform secrets it decrypts from
-  `platform-config.yaml` (missing passwords are generated once and kept);
-- enables the MCP servers and connectors listed in `platform-config.yaml`,
-  applies its `deployment:` settings, mounts the working tree, and exposes
-  `http://<instance>.localhost` through the cluster's Traefik;
-- restarts platform services so working-tree configuration applies, and syncs
-  workflows. A fresh instance starts with workflows and connectors paused.
+The workflow Makefile's `make up` uses `--source ../sage-run` by default.
+Set `SAGE_RUN_DIR=/path/to/sage-run` and `SAGE_RUN_SOURCE=/path/to/sage-run` for
+another layout. Commands execute from the workflow checkout, so changing
+repositories needs no shared environment-file edit.
 
-Run `make up` again after edits. Several workflow repositories run side by side
-as separate namespaces.
+Namespaces default to `<repo-folder>-dev`; `--instance` supports additional
+instances. Routes use `http://<instance>.localhost` through Traefik.
+Node-bound UI ports or custom ingress can still conflict. Use distinct ports
+or stop the conflicting workload; namespaces do not isolate host ports.
 
-### Production instance (k3s host over SSH)
-
-A production host runs single-node k3s with the patched gVisor runtime
-(RuntimeClass `gvisor`, see [Security](security.md)) and holds the instance's
-age key at `/etc/sage-run/<instance>/age.key` (root, 0600). Generate the key on
-the host (`sudo age-keygen -o /etc/sage-run/<instance>/age.key`) and put its
-public key in `platform-config-prod.yaml`; the private key never leaves the host.
-
-From the workflow repository on a workstation:
+`--identity` or `SAGE_RUN_AGE_IDENTITY_FILE` overrides
+`~/.config/sage-run/dev.agekey`. Base configs must be encrypted to that key.
+Separate dev integrations are strongly recommended: a development key does
+not make production endpoint values safe to use.
 
 ```sh
-sage-run deploy --host <ssh-host> --env prod --ref main --plan   # review
-sage-run deploy --host <ssh-host> --env prod --ref main
+uvx --from 'sage-run==1.0.1' sage-run status .
+uvx --from 'sage-run==1.0.1' sage-run down .  # keeps PVCs and Secrets
+# --purge deletes the namespace and its data; use only for disposable instances.
 ```
 
-Deploy requires `--ref` to be pushed to `origin` at the same commit. It:
+### Other Kubernetes distributions
 
-1. streams that commit as a git bundle into `/var/lib/sage-run/<instance>/workflow-repo`
-   and sets `origin` (no clone credentials on the host);
-2. builds the `sage-run-bootstrap` Secret on the host: the host key decrypts the
-   `LLM_API_KEY`, `PG_PASSWORD` and `OBJECT_STORE_SECRET_KEY` platform secrets
-   (only ciphertexts leave the workstation);
-3. installs Helm on the host if needed (pinned, checksum-verified) and upgrades
-   the release with the chart and the release's digest-pinned images;
-4. applies `deploy/k8s/*.yaml` from the commit (`${WORKFLOW_REPO_PATH}` is the
-   host checkout), restarts platform services and syncs workflows.
+The workload chart and launcher use standard Deployments, StatefulSets,
+Services, Secrets, PVCs and Jobs, but the operator commands are more specific:
 
-Afterwards, workflow-only changes merged to the deployed ref can be applied
-with the control plane's **Sync now**, which fetches through the instance's
-GitHub App connection; platform, configuration and MCP changes use
-`sage-run deploy` again. `deployment.ui` (`host_ip`, `host_port`) publishes the
-UI on a node address when there is no ingress controller.
+- `deploy` assumes single-node k3s, SSH/sudo and a hostPath checkout.
+- `up --context <name>` selects another context, but still assumes a host
+  checkout visible on the node, Traefik routing on workstation port 80 for
+  the final sync, and locally built images in the node's image store.
+- k3d/kind require explicit volume mapping into nodes, registry/image import,
+  storage and ingress/port setup. They are not qualified turnkey targets.
+- GKE/OpenShift require storage/checkout distribution, scheduling, ingress,
+  security policy and runtime adaptation. The chart has
+  `workflowRepo.existingClaim`, but current CLIs do not prepare a shared PVC
+  checkout. A multi-node hostPath is not shared storage.
+- A newer gVisor fixes only one compatibility dependency. GKE-managed runtime
+  versions cannot simply be replaced with a host binary; OpenShift SCC/UID
+  policies may reject the fixed runtime UID 1000 or local/CI sandbox privileges.
+  Qualification must include the actual session image, Bubblewrap and policies.
 
-## Which services actually start
+Do not claim production support from successful Helm rendering alone.
 
-Compose gates every optional MCP server and connector behind a profile (see
-`deploy/docker-compose.yml`'s `profiles:` entries). `make up` derives the
-profile set with `sage-run profiles`, which reads the instance's
-`platform-config.yaml`
-and maps its `mcps.enabled`, `connectors.enabled` (by connector `type`), and
-`model_profiles` (by `ANTHROPIC_BASE_URL`) to the matching profile names:
+## Backups and recovery
 
-```sh
-make up
-# Computed COMPOSE_PROFILES=gcp-pubsub,model-gateway,salesforce
-```
+Persistent volumes are live storage, not backups. Project-memory archives and
+housekeeping are not a full database/object-store disaster-recovery solution.
 
-The workflow repo owns a committed `deploy/compose.env` with non-secret
-production coordinates. `make bootstrap` writes a separate private
-`compose.env` under `BOOTSTRAP_OUTPUT_DIR` with bootstrap secrets and the workflow checkout path,
-and explicit host overrides when supplied. The Makefile loads committed defaults
-first and the generated file second.
+**As of 1.0.1 there is no scheduled full-backup CronJob, automatic pre-upgrade
+backup, or automatic cleanup of operator backups.** Planned retention is seven
+nightly and three pre-upgrade backups; those numbers are not active settings.
+Until implemented, arrange and monitor operator backups and clean them only
+after validating replacement backups and restore requirements.
 
-Workflow Repo **Sync** is the release boundary for workflow packages and
-repo-owned per-task runtime settings. After a successful sync, the selected
-revision's `platform-config.yaml` is snapshotted with the workflow bundles; new
-tasks use that snapshot for model profiles, context limits, and runtime env.
-Running tasks retain their launch environment. This behavior is identical for
-local-directory and remote Git workflow sources.
+Back up:
 
-Sync does not reconcile long-running service topology. Changes to `mcps.enabled`
-or `connectors.enabled` still require an operator deployment action: run
-`make down && make up` for Compose, or update Helm/Kubernetes manifests through the
-deployment control plane. The Workflow Repo UI should surface this requirement
-when those settings change.
+- Postgres, including `task_queue`, `control_plane` and `hindsight` schemas;
+- MinIO/object storage: project memory, bundles and Knowledge Sources;
+- Hindsight filesystem assets where applicable;
+- encrypted workflow Git history, pinned package/image references, runtime
+  configuration and the separately secured age identity.
 
-Legacy Compose database, volume, bucket, runtime-path, and Hindsight storage
-identifiers must be changed through the verified backup and cutover procedure in
-[SAGE Run Stateful Identifier Migration](sage-run-stateful-identifier-migration.md),
-not by direct replacement in a running deployment.
+Use `pg_dump`/`pg_restore` or another consistent database backup, and coordinated
+object-store snapshots/exports. Do not copy live Postgres data files as a
+backup. Same-disk backups protect against some operator mistakes, not disk/node
+loss; copy them to a separately controlled destination and test restoration.
 
-Kubernetes (Helm) does **not** have an equivalent automatic derivation today:
+An operator-created cleanup backup can live at
+`/var/backups/sage-run/<instance>/<timestamp>-pre-compose-cleanup`.
+Keep a database dump, object-store backup and checksums, with any retained
+inactive checkouts private. Such a manual directory has no automatic expiry.
+Treat all backup contents as sensitive data.
 
-- The Helm chart's `mcps.<id>.enabled` / `connectors.<id>.enabled` booleans in
-  `values.yaml` directly gate which templates render — but the chart never
-  reads `platform-config.yaml` itself, so these booleans have to be kept in
-  sync with it by hand.
+Application housekeeping separately retains project-memory snapshots (defaults:
+10 versions, 90 days), archives old tasks and prunes learning memory. See
+[Configuration](configuration.md#housekeeping--retention). It does not rotate
+the backup directory above.
 
-For remote private workflow repositories, the Helm chart uses an ephemeral
-clone cache in Gateway and session-manager plus object storage as the durable
-release transport. A successful UI Sync uploads immutable bundles and the
-matching `platform-config.yaml`, then advances the active release pointer.
-New tasks resolve both from that one release; no workflow-repo PVC is needed.
-Kubernetes runtime Jobs use an `emptyDir` mounted at `/memory`; a helper
-restores agent memory from object storage before the runtime starts and uploads
-it after the runtime signals completion. PostgreSQL, self-hosted MinIO, and
-Hindsight remain the only chart-managed components that need durable PVCs.
+## Workflow bundles and UI sync
 
-Large Knowledge Source repositories can require more memory during Graphify
-extraction than a default local Docker VM provides. The Compose
-`knowledge-indexer` has no container memory limit, so increasing a Compose
-limit does not increase available memory; size the Docker Desktop or Rancher
-Desktop VM instead. A 16 GiB VM is a practical starting point for large source
-trees. For Kubernetes, give the `knowledge-indexer` pod a corresponding memory
-request and limit through the deployment's resource policy.
+Bundles merge platform, repository-shared and workflow-specific assets into
+one checksummed release. Root `CLAUDE.md` precedence, skills, hooks, approvals,
+messaging and secret scrubbing are unchanged; see
+[Workflow authoring](workflow-authoring.md#bundle-assembly).
 
-## Local development (uncommitted working tree)
-
-In the bootstrap prompt, choose the `local` workflow source so
-`HOST_WORKFLOW_REPO_PATH` points at a plain filesystem checkout. **Sync now**
-rebuilds the bundle from whatever is currently on disk — no git fetch, no
-commit, no pinned tag required. Object storage is optional in this mode; a
-local `RUNTIME_BUNDLE_ROOT` works fine.
-When the workflow repository contains `deploy/docker-compose.override.yml`,
-the Makefile loads it after the public base stack.
-
-For a remote Compose source, the gateway manages the mounted workflow-repository
-checkout: **Sync now** fetches the configured or pinned ref and checks out its
-resolved commit before building bundles. Mount the repository root (including
-`.git`), not its `workflows/` subdirectory. The gateway can update that checkout;
-the session manager consumes the same checkout read-only, so workflow details
-and newly built task bundles describe the same revision.
-
-## `make` targets
-
-| Target | Does |
+| Runtime contract | Meaning |
 | --- | --- |
-| `init` | `uv sync --extra dev --extra server --extra kubernetes`. |
-| `bootstrap` | Run `sage-run bootstrap` interactively, writing to `BOOTSTRAP_OUTPUT_DIR` outside Git. |
-| `sync` | Rebuild the active platform/workflow release through `GATEWAY_URL` (default `http://localhost:8080`). |
-| `set-platform-secret` | Interactively encrypt a secret in the configured `platform-config.yaml`, then sync. |
-| `set-workflow-secret WORKFLOW=<name>` | Interactively encrypt a secret in the selected workflow's `agent.yaml`, then sync. |
-| `compose-build` | Build all Compose services. |
-| `runtime-build` | Build the `sage-run-agent-runtime` image. |
-| `build` | `runtime-build` + `compose-build`. |
-| `up` / `down` | Start/stop the local Compose stack. |
-| `restart` | `down` + `build` + `up`. |
-| `restart-<service>` | Rebuild and recreate one service, e.g. `make restart-postgres`. |
-| `ensure-test-db` | Create the dedicated Postgres test database if missing. |
-| `unit-tests` | `tests/unit` (no infra). |
-| `service-tests` | `tests/service` against real Postgres. |
-| `runtime-tests` | `tests/runtime` against real Postgres + Docker. |
-| `tests` | All three suites. |
-| `clean-test-containers` | Remove dangling test session containers. |
-| `format` / `lint` | ruff fix+format / ruff check+format-check. |
+| `WORKFLOW_BUNDLE_PATH` | Mounted bundle, where supported by the launcher |
+| `WORKFLOW_BUNDLE_URI` | Bundle URI, normally a presigned object-store URL on Kubernetes |
+| `WORKFLOW_BUNDLE_CHECKSUM` | SHA-256 of the bundle manifest, verified before execution |
 
-## Deployment artifacts (`deploy/`)
-
-- `deploy/docker-compose.yml` — the public base stack (Postgres, MinIO,
-  gateway, session-manager, runtime image, control-plane UI, core MCPs).
-   Mounts `HOST_WORKFLOW_REPO_PATH` and derives its `platform-config.yaml`
-   (default `../examples/workflow-repo`),
-  and `RUNTIME_BUNDLE_ROOT`. Optional profiles: `model-gateway`, `local-llm`,
-   `salesforce`, `splunk`, `cloudwatch`, `gcp-logging`, `github`, `jira`, `servicenow`,
-   `gcp-pubsub`.
-- `sage_run/chart` — Kubernetes (Helm) chart for one instance per
-   namespace; `sage-run up` renders its values from the workflow repository
-   (see [Kubernetes deployment](#kubernetes-deployment)).
-
-Private/customer deployments should commit non-secret Compose/Kubernetes values
-in the workflow repo (`deploy/compose.env`) and use
-the generated bootstrap artifact for secrets, rather than editing the public
-base stack or adding a Compose override for shipped services.
-
-## Workflow bundles
-
-A **bundle** is the assembled, runnable package for one workflow: `CLAUDE.md`,
-`agent.yaml`, `settings.json`, `.mcp.json`, `agents/`, `skills/`, `hooks/`,
-and a `manifest.yaml`, merged from the platform core, the workflow repo's
-shared assets, and the workflow itself (see
-[Workflow authoring](workflow-authoring.md) for assembly/precedence detail).
-
-Every supported launcher (Docker and Kubernetes) consumes the same contract:
-
-| Env var | Meaning |
-| --- | --- |
-| `WORKFLOW_BUNDLE_PATH` | A mounted local bundle directory. |
-| `WORKFLOW_BUNDLE_URI` | `file://`, `s3://`, `gs://`, or a presigned `https://` URL the runtime fetches and extracts. |
-| `WORKFLOW_BUNDLE_CHECKSUM` | `sha256:<hex>` of the bundle's `manifest.yaml`; the runtime refuses to start if this doesn't match. |
-
-Bundles are uniformly object-storage-backed: when
-`RUNTIME_BUNDLE_OBJECT_STORE_BUCKET` is set, session-manager uploads a freshly
-built bundle and generates a short-lived presigned https URL for
-`WORKFLOW_BUNDLE_URI`, so the runtime container needs no cloud SDK — just
-plain https plus the standard library `tarfile`.
-
-## Sync and versioning
-
-Sync — whether the initial bootstrap sync, `make sync`, or the UI **Sync now**
-button — runs one pipeline (`shared/lib/workflow_repo_sync.py::sync_workflow_repo`):
-
-1. Fetch the source at the effective ref (pinned ref if set, else the
-   bootstrap `WORKFLOW_REPO_REF`) — or read the current working tree in
-   local-path mode.
-2. Discover `workflows/*/agent.yaml`.
-3. Rebuild every bundle and check `manifest.yaml`'s `platform_version` against
-   the running platform's version (see [Compatibility policy](#compatibility-policy)).
-4. Upload bundles to object storage, if configured.
-5. Persist the result — synced ref/commit, discovered workflows, any bundle
-   errors, sync status/error, timestamp — to the `control_plane.workflow_repo_state`
-   singleton row.
-
-For a remote source, Sync fetches the configured ref (such as `main`) or a
-version pinned from the UI. A pin stays in effect for later syncs until changed.
-Local-path mode never fetches and simply rebuilds from the mounted files. Sync
-never touches bootstrap secrets (repo URL/PAT,
-`AGE_IDENTITY`, `LLM_API_KEY`); changing those means re-running
-`make bootstrap`.
+Sync fetches the effective remote ref through the App (or reads the local
+working tree), validates/discovers workflows, builds bundles and the matching
+merged config snapshot, uploads them and advances the active release.
+New tasks use that release; it does not reconcile service topology.
 
 ### Compatibility policy
 
-Compatible within a major version: if a bundle's `platform_version` major
-component is newer than the running platform's, that bundle is blocked
-("incompatible"); if older, it's built with a warning; if equal, it's OK.
+Compatibility compares bundle/platform major versions: newer is blocked,
+older warns, equal is accepted.
 
-### Gateway endpoints
+Existing endpoints:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/platform/workflow-repo` | Current state: source, pinned/default ref, last sync result, discovered workflows, bundle errors. |
-| `POST /api/platform/workflow-repo/sync` | Trigger the sync pipeline now ("Sync now"). |
-| `POST /api/platform/workflow-repo/pin` | Set the operator-pinned ref (`{"ref": "..."}`), stored in Postgres and used by the next sync. |
-| `GET /api/platform/workflow-repo/versions` | List released versions to pin from — GitHub-hosted repos only (queries the GitHub tags API with the bootstrap PAT); returns `[]` for other hosts. |
+| `GET /api/platform/workflow-repo` | Current checkout/release and sync state |
+| `POST /api/platform/workflow-repo/sync` | Fetch/read and promote workflow bundles |
+| `POST /api/platform/workflow-repo/pin` | Set the effective sync ref |
+| `GET /api/platform/workflow-repo/versions` | Version choices through the GitHub App |
 
-The control-plane UI's workflow-repo page only lets an operator change the
-pinned version and trigger a sync; the repo URL and PAT are bootstrap-owned
-and are never editable from the UI.
+## Publishing a platform release
 
-## Publishing Releases
+1. Update the exact `X.Y.Z` package version and lockfile/chart metadata.
+2. Merge to `main` and wait for successful full CI (lint and tests).
+3. Publish a GitHub release tagged `vX.Y.Z`. Tag pushes alone do not publish.
+4. The release workflow requires green CI at that commit, builds eight amd64/
+   arm64 GHCR images, records their digests in `release.json`, packages the
+   chart and publishes PyPI after the protected environment approval.
 
-No packaged release has been published yet. Tags `v0.1.0` through `v0.6.0` are
-source snapshots without packages or images.
+Releases 1.0.0 and 1.0.1 are published. Operator version selects the platform
+version; the workflow repo does not yet have an installed dependency lock.
+Use exact CLI pins in automation. Never move a published tag or overwrite a
+PyPI version; fixes get a new patch release.
 
-The [release workflow](../.github/workflows/release.yml) runs when a GitHub
-release is published. Draft creation and ordinary tag
-pushes do not publish artifacts. It resolves the tag to one commit, requires
-that commit to be on `main` with a successful CI run (tests are not re-run),
-and requires the tag to equal `v` plus the package version in
-`pyproject.toml`. Only plain `MAJOR.MINOR.PATCH` versions are accepted; there
-are no pre-releases, and development or local versions are rejected.
-Update the package version and `uv.lock` before creating the release tag.
+PyPI uses Trusted Publishing: project `sage-run`, owner `ops-workflows`,
+repository `sage-run`, workflow `release.yml`, environment `pypi`. GHCR uses
+the Actions `GITHUB_TOKEN` with package-write permission. All eight SAGE Run
+packages must be public for anonymous production pulls. The workflow does not
+change package visibility. Multi-registry publication is not atomic; a partial
+failure may leave images published without the wheel.
 
-Each release builds the images first, records their digests in `release.json`,
-embeds that manifest and the Helm chart in the wheel, and publishes to PyPI
-last. An installed `sage-run` therefore deploys exactly the images built for
-its version. Each release produces:
-
-- A pure-Python `sage_run-VERSION-py3-none-any.whl` and matching
-   `sage_run-VERSION.tar.gz` source distribution, published to PyPI and attached
-   to the GitHub release. The wheel is built from the sdist and checked with
-   Twine. It works on both CPU architectures; dependencies supply their own
-   platform-specific wheels where necessary.
-- Eight GHCR images under `ghcr.io/ops-workflows/sage-run-<component>:VERSION`:
-   `gateway`, `session-manager`, `knowledge-indexer`, `control-plane-ui`,
-   `mcp`, `gcp-pubsub-connector`, `servicenow-connector` and `agent-runtime`.
-   Each tag contains `linux/amd64` and `linux/arm64` variants, plus build
-   provenance and an SBOM. No floating `latest` or major/minor tags are published.
-
-PyPI publishing waits for every image job to succeed. Publication across the
-two registries is not atomic: a failed image job can leave some images uploaded,
-and a PyPI failure can leave all images uploaded. Rerun failed jobs after fixing
-registry access; do not move a released tag or overwrite an existing PyPI
-version. A source change requires a new release version.
-
-### Registry Setup
-
-GitHub Packages does not provide a native Python/pip registry. Use PyPI for the
-public operator package. GitHub release assets are an additional direct-download
-option, not a Python package index.
-
-Use [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) instead
-of a long-lived API token or a shared CI account. A maintainer's PyPI account
-still owns and manages the project; automation authenticates using GitHub OIDC.
-Configure the project's trusted publisher with:
-
-| Setting | Value |
-| --- | --- |
-| PyPI project | `sage-run` |
-| GitHub owner | `ops-workflows` |
-| GitHub repository | `sage-run` |
-| Workflow filename | `release.yml` |
-| GitHub environment | `pypi` |
-
-If the PyPI project does not yet exist and the name is available, configure a
-[pending publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
-It does not reserve the name. For an existing project, its owner must add this
-publisher. Create the GitHub `pypi` environment with appropriate release-tag
-restrictions and, when required, maintainer approval. No `PYPI_API_TOKEN`
-secret is needed; only the PyPI job receives `id-token: write`.
-
-GHCR uses the job's `GITHUB_TOKEN` with `packages: write`, not a personal access
-token. Permit package creation in the organization and ensure any existing
-packages grant this repository Actions access. Images include a source label
-linking them to this repository. GHCR packages initially default to private;
-make all eight packages public in their package settings for anonymous pulls.
-The workflow does not change package visibility.
-
-Only SAGE Run-owned images are published. Third-party infrastructure images
-remain upstream dependencies. Publishing `agent-runtime` does not change
-workflow `runtime.container_image` settings; pin those explicitly to the
-matching version. Bundled third-party software retains its own licensing
-and applicable terms.
+The eight images are `gateway`, `session-manager`, `knowledge-indexer`,
+`control-plane-ui`, `mcp`, `gcp-pubsub-connector`, `servicenow-connector` and
+`agent-runtime`. Infrastructure images remain upstream dependencies.
+Workflows should inherit the pinned runtime; an explicit
+`runtime.container_image` overrides it. Bundled third-party software retains
+its own licensing and usage terms.

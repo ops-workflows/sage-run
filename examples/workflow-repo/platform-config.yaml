@@ -1,13 +1,10 @@
 # SAGE Run starter platform configuration.
-# Provide equivalent values through your deployment secret/config system when
-# deploying outside Compose.
-#
 # Edit the plain `config:` values directly for local development.
 # Keep sensitive values in `secrets:` encrypted with age.
 #
-# Only `AGE_IDENTITY` must come from outside the repo so services can decrypt
-# the encrypted values below. `AGE_PUBLIC_KEY` can live here because the gateway
-# only needs the public key to encrypt newly entered secrets.
+# The private key is ~/.config/sage-run/dev.agekey locally and
+# /etc/sage-run/<instance>/age.key on the production host. Only public
+# recipients belong in Git. Replace every placeholder before deploying.
 
 config:
   INSTANCE_NAME: local-sage-run
@@ -23,11 +20,31 @@ config:
   OBJECT_STORE_ENDPOINT: minio:9000
   OBJECT_STORE_ACCESS_KEY: sage_run
 
-  CONTROL_PLANE_UI_URL: http://localhost:3000
-  GATEWAY_PUBLIC_BASE_URL: http://localhost:8080
   # Caps concurrently admitted parent tasks across every workflow. This does
   # not cap concurrent subagent/model calls within a running task.
   PLATFORM_MAX_RUNNING_TASKS: "3"
+
+deployment:
+  public_url: http://my-workflows-dev.localhost
+  sandbox_profile: local
+  hindsight:
+    env:
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_BASE_URL: https://llm.example.internal/v1
+      HINDSIGHT_API_LLM_MODEL: replace-with-reflection-model
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: openai
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: https://llm.example.internal/v1
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: replace-with-embedding-model
+
+# Workflows select these by name; .mcp.json expands their per-task values.
+connections:
+  custom-example:
+    workflows: [example-workflow]
+    env:
+      CUSTOM_EXAMPLE_BASE_URL: https://service.example.com
+    secrets:
+      CUSTOM_EXAMPLE_TOKEN:
+        encrypted: ENC[age,replace-with-encrypted-development-service-token]
 
 # Optional identity-provider group translation for the user-info API. External
 # names are matched exactly; only the canonical application group names are
@@ -92,6 +109,7 @@ mcps:
     - memory
     - platform
     - knowledge
+    - custom-example
   # Instance-specific MCP policy lives under `config.<server_id>`, e.g.:
   # config:
   #   salesforce:
@@ -201,7 +219,7 @@ default_model_profile: example
 # environment at load time, which is useful for local provider API keys.
 model_profiles:
   example:
-    ANTHROPIC_BASE_URL: http://model-gateway:1235
+    ANTHROPIC_BASE_URL: https://model-gateway.example.internal
     ANTHROPIC_AUTH_TOKEN: ${LLM_API_KEY}
     ANTHROPIC_MODEL: example-model
     ANTHROPIC_DEFAULT_OPUS_MODEL: example-model
@@ -225,6 +243,12 @@ memory:
     learning: {}
 
 secrets:
+  LLM_API_KEY:
+    encrypted: ENC[age,replace-with-encrypted-development-model-key]
+  PG_PASSWORD:
+    encrypted: ENC[age,replace-with-encrypted-development-database-password]
+  OBJECT_STORE_SECRET_KEY:
+    encrypted: ENC[age,replace-with-encrypted-development-object-store-password]
   github_public_app_private_key:
     encrypted: ENC[age,replace-with-encrypted-github-app-private-key-pem]
   CONFLUENCE_TEAM_TOKEN:

@@ -43,8 +43,8 @@ as a GitHub PR through the `platform` MCP. It is deliberately about *workflow
 behavior*, not business incident themes.
 
 Hindsight reflection model calls have a 120-second timeout by default, configured
-with `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` in Compose or
-`infrastructure.hindsight.reflectLlmTimeout` in Helm. The `reflect_patterns` MCP
+with `deployment.hindsight.env.HINDSIGHT_API_REFLECT_LLM_TIMEOUT` in platform
+config. The `reflect_patterns` MCP
 tool waits up to 150 seconds for the Hindsight HTTP response; other memory tools
 retain their 30-second HTTP timeout. Reflection can make multiple model calls
 and retries, so the 150-second client timeout does not guarantee that every
@@ -95,8 +95,8 @@ sessions:
   convention, not a magic file — other note files can live beside it.
 - session-manager backs project memory up to object storage after each session
   (`agent-memory/{agent}/latest.tar.gz` plus a timestamped version) and
-  restores it before the next session. Compose uses a named Docker volume as a
-  cache; Kubernetes Jobs use a task-local `emptyDir` at `/memory`, restored by
+  restores it before the next session. Kubernetes Jobs use a task-local
+  `emptyDir` at `/memory`, restored by
   an init helper and uploaded by a completion helper, so no Kubernetes memory
   PVC is required.
 - `MEMORY_SYNC_MODE` controls the local service path (`docker_volume` or
@@ -106,6 +106,13 @@ sessions:
 Housekeeping prunes old agent-memory versions and expired learning-memory per
 the retention settings in [Configuration](configuration.md), while leaving
 business RCA memory intact.
+
+These snapshots protect project-memory history, not the whole instance.
+Hindsight memory is stored in the `hindsight` Postgres schema; task history and
+session output are in platform schemas. A recovery backup must cover those
+schemas, object storage and any Hindsight filesystem assets together.
+Scheduled full backups and automatic cleanup of operator backup directories
+are not implemented in 1.0.1; see [Deployment](deployment.md#backups-and-recovery).
 
 ## Prompt/context
 

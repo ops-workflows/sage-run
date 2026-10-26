@@ -4,6 +4,32 @@ SAGE Run is a workflow runtime and control plane for operational AI agents. This
 document describes the components that ship in this repo and how a task moves
 through them end to end.
 
+## Deployment boundary
+
+The workflow repository is the instance: base and environment-overlay config,
+encrypted credentials, connections, workflows and shared assets are committed
+together. The published `sage-run` operator package supplies the chart and
+digest-pinned platform images; production does not build them or clone the
+platform repository.
+
+For the qualified single-node k3s deployment, the workstation CLI transfers a
+committed workflow revision over SSH into
+`/var/lib/sage-run/<instance>/workflow-repo`. Gateway mounts this **same**
+checkout read/write, and consumers mount it read-only at `/app/workflows`.
+There is no second serving workflow clone. Local development mounts the
+workstation working tree instead, in a separate namespace per instance.
+
+The host's root-only `/etc/sage-run/<instance>/age.key` decrypts the selected
+config overlay. The instance Secret contains that identity and decrypted
+infrastructure credentials. Postgres, MinIO and Hindsight assets use persistent
+volumes; session Jobs and their workspace/memory volumes are ephemeral.
+
+The source tree also retains legacy Docker support for unmigrated instances.
+The supported operator paths and portability limits are documented in
+[Deployment](deployment.md). UI Deploy now, selective restart/reload, full
+backup automation and shared-checkout distribution for managed multi-node
+clusters are not implemented in 1.0.1.
+
 ## Components
 
 ### Gateway (`gateway/`)
@@ -65,6 +91,15 @@ and age encrypt/decrypt.
 ### MCP servers and connectors
 
 Covered in their own docs: [MCP servers](mcps.md) and [Connectors](connectors.md).
+Each enabled MCP is a separate Deployment/Pod/Service. Platform and
+workflow-owned MCPs reuse the **same platform MCP image**, not one shared
+container. A workflow MCP imports its source from `mcps/*/mcp_*.py` in the
+mounted checkout; no combined image build is required when its dependencies
+are already in the platform image.
+
+Built-in connector types have their own published images and Deployments,
+selected from enabled connector instances. They do not run inside MCP pods.
+The chart does not automatically discover custom workflow connector source.
 
 ## Postgres schemas
 
@@ -119,3 +154,21 @@ flowchart LR
    to object storage.
 6. The control-plane UI reads task, session, approval, and analytics state
    from the gateway API throughout.
+
+Approval/clarification waits do not consume a task's active runtime budget or
+the running-task concurrency limit. Their wait deadlines are distinct from
+active execution time; a wall-clock Kubernetes Job deadline must not silently
+override that contract.
+
+## Update boundaries
+
+UI Sync fetches the selected workflow ref through the GitHub App and promotes
+bundles plus a matching merged-config snapshot. It does not apply manifests or
+reload long-running services. CLI `up`/`deploy` renders Helm values from config,
+reconciles workloads, then currently restarts all platform Deployments.
+Infrastructure is excluded from that explicit restart selector.
+
+Project memory is restored/uploaded by session helpers against object storage.
+Postgres also contains Hindsight's `hindsight` schema, alongside platform schemas.
+Protect both it and object storage: project-memory version housekeeping is not
+a database backup, and no scheduled full-backup/retention service exists yet.

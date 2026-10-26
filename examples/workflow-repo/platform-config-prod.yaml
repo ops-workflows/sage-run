@@ -1,0 +1,43 @@
+# Copy-and-fill template, not usable ciphertext. Generate the private key on
+# the production host; copy only its public recipient here. This overlay
+# overrides every base secret so the host needs only its production key.
+config:
+  INSTANCE_NAME: my-workflows
+  AGE_PUBLIC_KEY: age1replacewiththeproductionhostsrecipient
+
+deployment:
+  public_url: https://sage.example.com
+  sandbox_profile: gvisor
+  # Use an instance-owned ingress manifest under deploy/k8s/ for TLS/auth.
+  # Direct host-port exposure is optional and does not add authentication:
+  # ui:
+  #   host_ip: 127.0.0.1
+  #   host_port: 3000
+
+connections:
+  custom-example:
+    env:
+      CUSTOM_EXAMPLE_BASE_URL: https://service.prod.example.com
+    secrets:
+      CUSTOM_EXAMPLE_TOKEN:
+        encrypted: ENC[age,replace-with-encrypted-production-service-token]
+
+secrets:
+  LLM_API_KEY:
+    encrypted: ENC[age,replace-with-encrypted-production-model-key]
+  PG_PASSWORD:
+    encrypted: ENC[age,replace-with-encrypted-production-database-password]
+  OBJECT_STORE_SECRET_KEY:
+    encrypted: ENC[age,replace-with-encrypted-production-object-store-password]
+  github_public_app_private_key:
+    encrypted: ENC[age,replace-with-encrypted-production-github-app-private-key-pem]
+  CONFLUENCE_TEAM_TOKEN:
+    encrypted: ENC[age,replace-with-encrypted-production-confluence-api-token]
+  message_bus_bot_token:
+    encrypted: ENC[age,replace-with-encrypted-production-token]
+  message_bus_app_token:
+    encrypted: ENC[age,replace-with-encrypted-production-app-token]
+  message_action_callback_secret:
+    encrypted: ENC[age,replace-with-encrypted-production-action-secret]
+  GCP_SERVICE_ACCOUNT_JSON:
+    encrypted: ENC[age,replace-with-encrypted-production-service-account-json]

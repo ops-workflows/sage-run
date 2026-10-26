@@ -1,5 +1,24 @@
 # Connectors
 
+## Kubernetes deployment model
+
+Connectors are not MCP servers and do not run in MCP containers. The operator
+maps enabled instance types to published connector images and creates a
+separate Deployment for each enabled built-in type (`gcp-pubsub` or
+`servicenow`). A connector process loads instance config from the mounted
+workflow checkout and creates tasks in Postgres.
+
+The current chart creates one Deployment per type, not per named instance.
+When several instances share a type, selection must be configured explicitly;
+do not assume independent replicas are automatically created for all of them.
+`deployment.service_env.<deployment-name>` can supply the implementation's
+instance selector.
+
+Workflow-local custom connector source is **not auto-discovered or deployed**
+like custom MCP source. It requires an explicit image, Kubernetes manifest and
+configuration contract (or a new platform connector type). Do not add a file
+under `connectors/` and assume `sage-run deploy` will run it.
+
 Connectors are how external systems get work into the platform. A connector
 is a small, generic service that reads from one external source and calls
 `shared.lib.task_queue.create_task` to enqueue a task for a workflow.
@@ -179,8 +198,9 @@ coalescing:
 
 Notes: requests use `sysparm_display_value=true` so `extract` can read
 `<field>.display_value`. The target workflow's `agent.yaml` supplies
-`SERVICENOW_INSTANCE_URL` under `env` and encrypted `SERVICENOW_USERNAME` /
-`SERVICENOW_PASSWORD` entries under `secrets`. Polling, parsing, and coalescing
+`SERVICENOW_INSTANCE_URL`, `SERVICENOW_USERNAME` and `SERVICENOW_PASSWORD`
+through its selected named connection (legacy workflow `env`/`secrets` still
+work). Polling, parsing, and coalescing
 behavior remains in the platform connector instance. When exactly one enabled
 instance has `type: servicenow`, the connector selects it automatically;
 `SERVICENOW_CONNECTOR_INSTANCE_ID` can select an instance explicitly.
@@ -192,19 +212,13 @@ instance has `type: servicenow`, the connector selects it automatically;
 2. In `main.py`: resolve `CONNECTOR_INSTANCE_ID`, load the instance with
    `load_connector_instance(...)`, read from the source using the instance
    config, and enqueue tasks via `shared.lib.task_queue.create_task()`.
-3. Add the service to `deploy/docker-compose.yml` (or a private override) with
-   `PLATFORM_CONFIG_FILE` and `CONNECTOR_INSTANCE_ID` in its environment:
-
-   ```yaml
-   my-new-connector:
-     build:
-       context: ..
-       dockerfile: connectors/my-new-connector/Dockerfile
-     profiles: ["my-new-connector", "connectors"]
-     environment:
-       PLATFORM_CONFIG_FILE: ${PLATFORM_CONFIG_FILE:-/app/platform-config.yaml}
-       CONNECTOR_INSTANCE_ID: ${MY_CONNECTOR_INSTANCE_ID}
-     depends_on:
-       postgres:
-         condition: service_healthy
-   ```
+3. For a built-in type, wire the image/release build, operator connector-type
+   mapping and chart values; test instance selection, credentials and task
+   creation. This is a platform change.
+4. For a private implementation, provide an explicit digest-pinned image and
+   Deployment/ServiceAccount manifest under the workflow repo's `deploy/k8s/`.
+   Mount the single checkout, configure `PLATFORM_CONFIG_FILE`,
+   `SAGE_RUN_ENV`, the instance selector and necessary Secret references.
+   Limit permissions and document its lifecycle. Extra manifests are applied
+   by CLI deploy, but arbitrary resources are not automatically pruned when
+   their source file is deleted.

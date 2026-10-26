@@ -1,21 +1,22 @@
 # Configuration
 
-SAGE Run configuration is split into three layers so the workflow-repo
-pointer is never circular (you shouldn't need the repo's own config file to
-know how to fetch the repo).
+SAGE Run's Kubernetes operator reads configuration from the workflow checkout.
+It does not require a generated `compose.env` or a platform source clone on
+the production host.
 
 | Layer | Owner | Committed? | Holds |
 | --- | --- | --- | --- |
-| 1. Bootstrap / infra | Operator | No (generated) | Workflow-repo pointer, `AGE_IDENTITY`, one `LLM_API_KEY`, and direct-container secrets (Postgres/object storage). A one-time PAT may be entered for the initial clone but is never written to an artifact. |
-| 2. Instance config | Workflow repo | Yes (secrets age-encrypted) | `platform-config.yaml`: GitHub App connections, message bus, MCPs, connectors, memory banks, model profiles, workflow secrets. |
+| 1. Operator inputs | Operator | Private key: no; CLI arguments: non-secret | Workflow checkout/ref, target host/context, pinned operator package and environment key. |
+| 2. Instance config | Workflow repo | Yes (secrets age-encrypted) | `platform-config.yaml` plus `platform-config-<env>.yaml`: deployment settings, infrastructure credentials, named integration connections, GitHub App, messaging, MCPs, connectors, memory and models. |
 | 3. Workflow packages | Workflow repo | Yes | `workflows/`, shared `skills/`/`hooks/`, custom `mcps/`/`connectors/`. |
 
-Boot sequence: read layer 1 → clone/sync the workflow repo at the pinned ref →
-point `PLATFORM_CONFIG_FILE` at the repo's `platform-config.yaml` → load layer
-2 → build bundles → run. See [Deployment](deployment.md) for how layer 1 is
-generated (`make bootstrap`) and how sync/versioning work.
+Boot sequence: choose the local working tree or a pushed production ref, merge
+the selected config overlay, decrypt infrastructure credentials using the host
+key, render/apply the chart, then sync bundles. The production checkout is
+transferred over SSH without clone credentials; later UI sync uses the GitHub
+App. See [Deployment](deployment.md) for exact setup and update behavior.
 
-## Layer 1 — bootstrap / infra settings
+## Layer 1 — operator inputs and service environment
 
 These are environment variables read by `shared/lib/config.py`'s `Settings`
 class. Env vars always take precedence; unset ones may be overlaid from the
@@ -31,15 +32,15 @@ repo-owned config.
 | `WORKFLOW_REPO_SOURCE` | `local` | `local` reads the mounted checkout; `remote` fetches the configured Git ref during Sync. |
 | `WORKFLOW_REPO_URL` | `""` | Canonical Git URL for a remote source. A local checkout may also set it for GitHub-backed reflection actions. |
 | `WORKFLOW_REPO_REF` | `""` | Default Git branch, tag, or SHA for a remote Sync. A UI pin overrides it until changed. |
-| `WORKFLOW_REPO_LOCAL_PATH` | `/app/workflows` | Container-side remote clone location or local checkout mount. Compose uses this default. |
+| `WORKFLOW_REPO_LOCAL_PATH` | `/app/workflows` | Container-side workflow checkout mount. |
 | `WORKFLOW_REPO_PATHS` | `""` | Advanced, `os.pathsep`-separated additional workflow roots, primarily for Kubernetes deployments with separately mounted storage. |
 | `REPO_PATH` | `""` | Path to a checked-out/mounted workflow repo root. |
-| `HOST_REPO_ROOT` | `""` | Host-side bind-mount path used by the Compose convenience override. |
+| `HOST_REPO_ROOT` | `""` | Legacy Docker bind-mount setting, not required by the Kubernetes operator. |
 
-Compose mounts the single workflow checkout at `/app/workflows`, so it does not
-set `WORKFLOW_ROOT`, `WORKFLOW_REPO_PATHS`, or `WORKFLOW_REPO_LOCAL_PATH`.
-Operators configure the host-side `HOST_WORKFLOW_REPO_PATH` in the generated
-`compose.env`; Compose maps it to that fixed container path.
+The Kubernetes operator mounts the single checkout at `/app/workflows`.
+Local `up` derives its host path from the current workflow directory; remote
+`deploy` uses `/var/lib/sage-run/<instance>/workflow-repo`. The CLI derives the
+repository URL from Git origin and receives the ref explicitly.
 
 ### GitHub App connections
 
@@ -401,27 +402,14 @@ fused using reciprocal rank fusion (RRF), not BM25.
 | `KNOWLEDGE_RERANK_CANDIDATES` | `20` | Maximum fused candidates sent to the reranker. |
 | `KNOWLEDGE_REQUIRE_EXPLICIT_SOURCE_GRANTS` | `false` | Require each workflow to declare `knowledge.sources` when enabled. |
 
-Compose passes these variables to both `knowledge-indexer` and `mcp-knowledge`.
-Unless explicitly overridden, its embedding URL/model are taken from
-`HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL` and
-`HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL`, using the existing model-gateway URL
-and placeholder embedding alias when those variables are absent. The API key
-falls back to bootstrap `LLM_API_KEY`. Set `KNOWLEDGE_EMBEDDINGS_DIMENSIONS`
-to the model's verified output size before enabling a hybrid source; Compose
-deliberately defaults it to `0`. Do not guess a dimension or assume the
-placeholder model exists. These settings do not change Hindsight's defaults.
-
-Helm exposes optional overrides under `knowledge.embeddings` (`openaiBaseUrl`,
-`openaiModel`, `dimensions`, `batchSize`, `timeoutSec`), `knowledge.rerank`
-(`enabled`, `baseUrl`, `model`, `timeoutSec`, `candidates`), and
-`knowledge.requireExplicitSourceGrants`. Null values emit no override, allowing
-mounted platform config to supply the setting. `platformEnv` wins over these
-chart settings without duplicate environment entries. Both knowledge workloads
-continue to receive `LLM_API_KEY` through `bootstrap.existingSecret`/`envFrom`;
-do not place API keys in Helm values or print rendered secret data.
+Configure these options in the mounted platform config below, identically for
+the indexer and Knowledge MCP. The API key falls back to `LLM_API_KEY` from the
+instance Secret. Set a verified positive dimension before hybrid indexing;
+`0` is deliberately unconfigured. Hindsight's embedding settings are separate.
+Do not put plaintext API keys in Helm values or print rendered Secret data.
 
 Mounted `platform-config.yaml` supports the following canonical snake_case
-configuration. These names are separate from Helm's camelCase values. Replace
+configuration. Replace
 the model aliases, dimension, and encrypted key with values verified for your
 endpoint; `768` here is illustrative, not a default or auto-detected value.
 
@@ -479,8 +467,8 @@ environment entries, then typed `knowledge:` options, then Settings defaults.
 For example, `config: {KNOWLEDGE_EMBEDDINGS_BATCH_SIZE: 8}` overrides the typed
 batch size above. An explicit `config:` entry for the dedicated API key or a
 non-empty process environment key skips decryption of the referenced key.
-Compose supplies defaults as environment values, so change its input variables
-to override those defaults rather than expecting mounted YAML to replace them.
+`deployment.env` can intentionally override mounted configuration by supplying
+process environment values; avoid defining the same option in both places.
 Use a positive verified dimension and identical settings on both services.
 
 Document embedding failures prevent promotion. Query embedding failures may
@@ -501,6 +489,10 @@ is implied by deployment wiring or unit tests.
 | `AGENT_MEMORY_VERSIONS_TO_KEEP` | `10` | Versioned agent-memory snapshots to retain per workflow. |
 | `AGENT_MEMORY_RETENTION_DAYS` | `90` | Delete agent-memory snapshots older than N days. |
 
+These settings prune application data, not full recovery backups. No scheduled
+database/object-store backup or backup-directory auto-clean exists in 1.0.1.
+The planned seven nightly/three pre-upgrade backup retention is not active.
+
 ### Secrets (age encryption)
 
 | Env var | Default | Purpose |
@@ -510,8 +502,9 @@ is implied by deployment wiring or unit tests.
 
 ### LLM API key
 
-`LLM_API_KEY` is operator-owned and lives only in the bootstrap
-layer — it is the single model-access key passed to a model gateway or direct
+`LLM_API_KEY` is age-encrypted under platform `secrets:` in each environment.
+The operator decrypts it into the instance Secret. It is the model-access key
+passed to a model gateway or direct
 LiteLLM-compatible endpoint, Hindsight's LLM and embeddings clients, and
 referenced from `model_profiles` entries in `platform-config.yaml` as
 `${LLM_API_KEY}`. There is no per-provider key variable; a workflow
@@ -530,28 +523,13 @@ usage tooltip. This cache is an
 undocumented Claude Code internal, so re-check cost reporting after CLI
 upgrades. The model gateway's own spend log remains the billing source.
 
-### Compose environment files
+### Legacy environment files
 
-For Compose deployments, two files are loaded automatically by the
-public Makefile:
-
-1. `workflow-repo/deploy/compose.env` is committed and contains **only
-  non-secret** production values used before services can read
-  `platform-config.yaml` (for example public URLs, host bindings, sandbox
-  mode, database names, and Hindsight base URLs/models).
-2. `~/.local/state/sage-run/local/compose.env` is generated by `make bootstrap`
-  outside Git and contains direct-container secrets and the workflow checkout
-  path. Set `BOOTSTRAP_OUTPUT_DIR` to choose another private directory. Explicit UI URL, Gateway URL and sandbox
-  overrides apply equally to local and remote workflow sources. Authentication
-  and ingress belong to workflow deployment configuration.
-
-The generated file is loaded last. Bootstrap does not rewrite workflow routes,
-connector targets, subscriptions, or schedules for local use. Workflows and
-connectors start paused; operators must review those settings before resuming.
-Application settings and ordinary workflow credentials remain in the workflow
-repo's `platform-config.yaml`/`agent.yaml`; services that can decrypt them do
-so after startup. Postgres, MinIO, and Hindsight cannot, so their direct
-secrets belong in the bootstrap layer.
+Generated Compose/bootstrap env files belong only to unmigrated installations.
+The Kubernetes operator does not read `deploy/compose.env` or a generated
+Compose env file. Non-secret deployment options now live under `deployment:`;
+infrastructure credentials live encrypted under `secrets:`. The operator
+decrypts them into a Secret for services that cannot decrypt age themselves.
 
 ### Loading order
 
@@ -695,7 +673,7 @@ Helm values; `platform-config-<env>.yaml` can override any of them:
 ```yaml
 deployment:
   public_url: https://sage.example.com     # CONTROL_PLANE_UI_URL and GATEWAY_PUBLIC_BASE_URL
-  sandbox_profile: gvisor                  # local, ci or gvisor (local instances always use local)
+  sandbox_profile: gvisor                  # local CLI uses its --sandbox option instead
   env:                                     # extra environment for every platform workload
     KNOWLEDGE_EMBEDDINGS_DIMENSIONS: "768"
   hindsight:
@@ -706,11 +684,22 @@ deployment:
   service_env:                             # extra environment per workload
     mcp-splunk:
       SSL_CERT_FILE: /app/workflows/certs/splunk-ca-bundle.pem   # files in the workflow repo
+  # Optional direct node exposure; does not add authentication or TLS:
+  # ui:
+  #   host_ip: 127.0.0.1
+  #   host_port: 3000
+  # Optional exact upstream image overrides (full digest-pinned references):
+  # infrastructure_images:
+  #   postgres: registry.example/postgres@sha256:<digest>
+  #   objectStore: registry.example/minio@sha256:<digest>
+  #   hindsight: registry.example/hindsight@sha256:<digest>
 ```
 
 The instance Secret is built from the environment's key plus the encrypted
 platform secrets `LLM_API_KEY`, `PG_PASSWORD` and `OBJECT_STORE_SECRET_KEY`, so
-a host needs only its key.
+a host needs only its key as separately managed credential input. The
+Kubernetes Secret and service processes necessarily also hold plaintext.
+Protect node storage and Kubernetes Secret access.
 
 ### Environment overlays and keys
 
@@ -731,7 +720,9 @@ every encrypted value in the base; `sage-run validate` rejects an overlay that
 reuses the base key or leaves a base ciphertext in place.
 
 ```sh
-sage-run keygen --out ~/.config/sage-run/keys/<instance>-prod.agekey   # prints the public key
+# On the production host, after creating the root-only instance directory:
+sudo age-keygen -o /etc/sage-run/my-workflows/age.key
+# On the workstation, with only the public recipient in the overlay:
 sage-run secret set --env prod --connection splunk --name SPLUNK_PASSWORD
 sage-run secret set --env dev --name message_bus_bot_token --value-file /secure/token
 ```
@@ -743,27 +734,27 @@ formatting, and never writes plaintext. Commit the change and deploy it.
 
 Secrets are age-encrypted (X25519, via the `pyrage` library) and stored as
 `ENC[age,<base64-ciphertext>]`. `AGE_PUBLIC_KEY` (safe to commit) encrypts new
-values; `AGE_IDENTITY` (bootstrap-only, never committed) decrypts them at
-container-spawn time. Use `make set-platform-secret` for shared values in the
-configured `platform-config.yaml`, or `make set-workflow-secret
-WORKFLOW=<workflow-name>` for values in a workflow's `agent.yaml`. Both commands
-prompt securely for the secret name and value, then run `make sync` to rebuild
-the active workflow release through the running gateway.
+values; `AGE_IDENTITY` (never committed) decrypts them in trusted services.
+Use `sage-run secret set . --env dev --name NAME` for platform values and add
+`--connection <name>` for integration credentials. For production use
+`--env prod`. This edits ciphertext in the selected file; it does not sync,
+restart services or deploy automatically. Review, commit, push and deploy.
+There is no supported secret-setting UI.
 
 For long values such as base64 credentials, bypass terminal input limits with
-`SECRET_NAME` and `SECRET_VALUE_FILE` (supported by both targets):
+`--value-file`:
 
 ```bash
-make set-workflow-secret WORKFLOW=example-workflow \
-  SECRET_NAME=SERVICE_ACCOUNT_B64 SECRET_VALUE_FILE=/secure/path/credential.b64
+sage-run secret set . --env prod --connection example-service \
+  --name SERVICE_ACCOUNT_B64 --value-file /secure/path/credential.b64
 ```
 
 On macOS, a single-line base64 value copied to the clipboard can be passed
 without a plaintext file or the secret appearing in shell history:
 
 ```bash
-pbpaste | tr -d '\r\n' | make set-workflow-secret WORKFLOW=example-workflow \
-  SECRET_NAME=SERVICE_ACCOUNT_B64 SECRET_VALUE_FILE=/dev/stdin
+pbpaste | tr -d '\r\n' | sage-run secret set . --env prod \
+  --connection example-service --name SERVICE_ACCOUNT_B64 --value-file /dev/stdin
 ```
 
 These options bypass the corresponding prompts; file input is encrypted as-is.

@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 from sage_run.validation import validate_workflow_repo
 
@@ -59,6 +60,37 @@ def test_example_workflow_repo_makefile_has_lint_and_format_targets(repo_root: P
     assert "lint: check-venv" in makefile
     assert "format: check-venv" in makefile
     assert "-m sage_run validate ." in makefile
+
+
+def test_example_repository_validates_and_inherits_the_platform_runtime(repo_root: Path) -> None:
+    repo = repo_root / "examples/workflow-repo"
+    assert validate_workflow_repo(repo) == []
+    agent = yaml.safe_load((repo / "workflows/example-workflow/agent.yaml").read_text(encoding="utf-8"))
+    assert agent["name"] == "example-workflow"
+    assert not agent["runtime"].get("container_image")
+    assert agent["connections"] == ["custom-example"]
+
+
+def test_example_overlay_replaces_all_secrets_and_discovers_workflow_mcp(repo_root: Path) -> None:
+    from sage_run.local import workflow_mcps
+    from shared.lib.platform_config import deep_merge, secrets_not_overridden
+
+    repo = repo_root / "examples/workflow-repo"
+    base = yaml.safe_load((repo / "platform-config.yaml").read_text(encoding="utf-8"))
+    overlay = yaml.safe_load((repo / "platform-config-prod.yaml").read_text(encoding="utf-8"))
+    assert secrets_not_overridden(base, overlay) == []
+    assert base["config"]["AGE_PUBLIC_KEY"] != overlay["config"]["AGE_PUBLIC_KEY"]
+    merged = deep_merge(base, overlay)
+    assert merged["deployment"]["sandbox_profile"] == "gvisor"
+    assert workflow_mcps(repo, merged) == {
+        "custom-example": {
+            "dir": "mcps/custom-mcp-example",
+            "module": "mcp_custom_example",
+            "port": 8110,
+        }
+    }
+    headers = json.loads((repo / "workflows/example-workflow/.mcp.json").read_text(encoding="utf-8"))
+    assert headers["mcpServers"]["custom-example"]["headers"]["Authorization"] == "Bearer ${CUSTOM_EXAMPLE_TOKEN}"
 
 
 @pytest.mark.parametrize("directory", [".git", ".venv", "node_modules"])

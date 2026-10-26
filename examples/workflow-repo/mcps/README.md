@@ -61,12 +61,21 @@ headers or model tool-call arguments.
 See [custom-mcp-example/](custom-mcp-example/) for a minimal FastMCP skeleton
 to copy and adapt:
 
-1. Create `mcps/mcp_<name>.py` here using `fastmcp`, exposing an ASGI `app`
+1. Create `mcps/<directory>/mcp_<name>.py` using `fastmcp`, exposing an ASGI `app`
    and a `/health` route (mirror a public server such as
    `mcps/integrations/mcp_jira.py` in the platform repo).
 2. Read any instance policy with
    `shared.lib.platform_secrets.load_mcp_server_config(path, "<name>")`.
-3. Build and run the server image in your deployment override, exposing it at
-   `http://mcp-<name>:<port>/mcp`.
+3. Use dependencies already present in the platform MCP image. The operator
+   imports source from the shared checkout and creates a separate
+   Deployment/Pod/Service using that same image, not the same container as
+   other MCPs. It does not install a local requirements file or build a
+   combined image.
 4. Reference it from a workflow's `.mcp.json` and add `<name>` to
-   `mcps.enabled` in `platform-config.yaml`.
+   `mcps.enabled` in `platform-config.yaml`. URLs must agree on one
+   `http://mcp-<name>:<port>/mcp` port. Underscores in the Python module become
+   hyphens in the server ID.
+5. Put integration credentials in named connections, select them in the
+   workflow's `agent.yaml` and expand request headers in `.mcp.json`.
+   Use CLI deploy (local: `up`) for service/source/topology changes; UI Sync
+   alone does not reconcile MCP workloads.

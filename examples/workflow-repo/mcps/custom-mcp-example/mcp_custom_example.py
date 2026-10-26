@@ -3,7 +3,7 @@
 Rename the module (e.g. mcp_billing.py), replace the example tool with your
 own, and read any instance policy from `mcps.config.<server_id>` in
 platform-config.yaml via `load_mcp_server_config`. See mcps/README.md in this
-directory for the remaining wiring steps (deployment override, .mcp.json,
+directory for the remaining wiring steps (Kubernetes discovery, .mcp.json,
 mcps.enabled).
 """
 

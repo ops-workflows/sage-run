@@ -24,7 +24,7 @@ and `sandbox` rules; the runtime enforces them for headless execution:
   markdown frontmatter. An agent expected to ask clarifying questions must
   include `AskUserQuestion` in its allowlist.
 
-The ephemeral per-task Docker container is one isolation layer, but it is not
+The ephemeral per-task container is one isolation layer, but it is not
 the only one — the Claude-native permission and sandbox rules are the first
 policy layer for agent behavior.
 
@@ -61,8 +61,9 @@ closed rather than silently running Bash outside the sandbox.
 ### gVisor for the runtime container
 
 [gVisor](https://gvisor.dev/) is the recommended outer isolation boundary for
-untrusted agent-session containers. Docker selects it through its `runsc` OCI
-runtime. Instead of letting the container directly exercise the host kernel as
+untrusted agent-session containers. Kubernetes selects it through the session
+Job's RuntimeClass and the node's containerd runtime handler. Instead of letting
+the container directly exercise the host kernel as
 an ordinary OCI container does, gVisor interposes a user-space application
 kernel between the workload and the host. This substantially reduces the host
 kernel attack surface exposed to a compromised container, while retaining the
@@ -71,9 +72,9 @@ container's normal filesystem, process, and network model.
 gVisor is not a VM and does not replace deployment policy. Operators must still
 minimize mounts, avoid Docker sockets and host paths, use non-root runtime
 users, constrain egress, apply resource limits, and keep images and gVisor
-patched. The Compose deployment selects `runsc` only for ephemeral agent-session
-containers when `SANDBOX_MODE=gvisor`; the long-running platform services
-continue to use their configured Docker runtime.
+patched. The Kubernetes launcher selects gVisor only for ephemeral agent-session
+pods when `SANDBOX_MODE=gvisor`; long-running platform services use the node's
+normal container runtime.
 
 Together, the layers look like this:
 
@@ -91,46 +92,19 @@ the selected gVisor release and Claude Code version.
 
 ### Providing an outer sandbox
 
-**Linux VM with Docker Compose.** Install a supported `runsc` binary using the
-[gVisor installation guide](https://gvisor.dev/docs/user_guide/install/), then
-register it with Docker and restart Docker:
+**Qualified production path: k3s/containerd.** Install the pinned runtime and
+shim under a versioned root-owned directory, not a user's home directory.
+The qualified reference host uses `/opt/gvisor/release-20261019.0-pr15008`, containing
+`runsc`, `containerd-shim-runsc-v1` and `gvisor-bin/` auxiliary binaries.
+Keep the complete qualified binary set and record its checksums/build provenance.
 
-```sh
-sudo runsc install
-sudo systemctl restart docker
-docker run --runtime=runsc --rm hello-world
-```
-
-**Temporary compatibility runtime.** Until
-[gVisor PR 13532](https://github.com/google/gvisor/pull/13532) is merged into a
-supported release, also build that revision of `runsc`, install its binary as
-`/usr/local/bin/runsc-pr13532`, and register it with Docker under that explicit
-runtime name:
-
-```sh
-sudo /usr/local/bin/runsc-pr13532 install --runtime=runsc-pr13532
-sudo systemctl restart docker
-docker run --runtime=runsc-pr13532 --rm hello-world
-```
-
-The runtime image pins Bubblewrap 0.11.0, the version qualified with this gVisor
-runtime. Requalify Bubblewrap and gVisor together before upgrading either one.
-
-After `make bootstrap`, start the platform with:
-
-```sh
-SANDBOX_MODE=gvisor make up
-```
-
-The session manager requests the runtime named by `GVISOR_DOCKER_RUNTIME`
-(default `runsc-pr13532`) for each agent-session container. Keep it as an
-explicitly selected runtime rather than changing Docker's global default unless
-every workload on the VM has been qualified for it. PR 13532 was closed without
-merging; [PR 15008](https://github.com/google/gvisor/pull/15008) carries the
-same fix. A build of release-20261019.0 plus that commit passed the Bubblewrap
-and full-task qualification; register it under a new name (for example
-`runsc-pr15008`) and set `GVISOR_DOCKER_RUNTIME` accordingly. Once the fix is in
-a qualified gVisor release, switch to that release.
+Stock gVisor releases tested during qualification failed Bubblewrap with
+`RTM_NEWADDR`. Release-20261019.0 plus the fix from
+[PR 15008](https://github.com/google/gvisor/pull/15008) passed Bubblewrap and
+full-task tests. The older PR 13532 was closed without merging. Do not infer
+that a later stock release contains the fix: check its provenance and re-run
+qualification before switching. The runtime image pins Bubblewrap 0.11.0;
+qualify the runtime image, Bubblewrap and outer sandbox together.
 
 Claude Code's Bubblewrap sandbox cannot create namespaces when the session runs
 as root in an unprivileged container (`bwrap: Creating new namespace failed:
@@ -140,15 +114,8 @@ as that user. Docker sessions still run as root, so workflows that enable Bash
 under the Docker `gvisor` profile are affected until the Docker launcher also
 runs sessions as a non-root user.
 
-gVisor netstack cannot use Docker's embedded DNS on a user-defined bridge
-network because it does not import Docker's netfilter redirection for
-`127.0.0.11` ([gVisor issue 7469](https://github.com/google/gvisor/issues/7469)).
-For gVisor sessions, the Docker launcher therefore snapshots the current IP and
-DNS aliases of peers already attached to `DOCKER_NETWORK` into the session's
-`/etc/hosts`. Do not switch gVisor to host networking merely to restore DNS; that
-weakens its network isolation boundary.
-
-**Kubernetes.** A plain Pod is not an agent-sandbox product by itself. On GKE,
+**Other Kubernetes distributions.** A plain Pod is not an agent-sandbox
+product by itself. On GKE,
 [GKE Agent Sandbox](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/machine-learning/agent-sandbox)
 is a managed implementation designed for isolated, stateful agent workloads;
 it uses the open-source Agent Sandbox controller and supports hardened runtimes
@@ -177,8 +144,42 @@ at it:
   ConfigPath = "/etc/gvisor/runsc-pr15008.toml"   # binary_name, systemd-cgroup = "true"
 ```
 
-Kubernetes cluster DNS works inside gVisor pods, so the Docker `/etc/hosts`
-workaround described above is not needed there.
+The corresponding `/etc/gvisor/runsc-pr15008.toml` is:
+
+```toml
+binary_name = "/opt/gvisor/release-20261019.0-pr15008/runsc"
+root = "/run/k3s/containerd/runsc-pr15008"
+[runsc_config]
+  systemd-cgroup = "true"
+```
+
+Create the RuntimeClass once as a cluster administrator:
+
+```yaml
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc-pr15008
+```
+
+Containerd must actually import the runtime stanza. Drop-in support/config
+paths depend on the pinned k3s release; inspect the active configuration rather
+than assuming a copied file is loaded. Restart/reconfigure the node runtime in
+a maintenance window, then verify a pod and a full platform task. Set production
+`deployment.sandbox_profile: gvisor`; the chart's default runtime class is
+`gvisor`. Kubernetes cluster DNS works inside these qualified gVisor pods.
+
+The `local` and `ci` profiles relax host-kernel restrictions for nested
+Bubblewrap; they are not production substitutes for gVisor. OpenShift UID/SCC
+policies and GKE-managed runtimes need separate qualification and deployment
+adaptation even after the gVisor fix merges.
+
+**Legacy Docker launcher.** It remains for unmigrated instances and selects
+the runtime from `GVISOR_DOCKER_RUNTIME`. It still starts sessions as root,
+which breaks the qualified Bubblewrap setup. Its peer-IP `/etc/hosts`
+workaround handles gVisor's inability to use Docker bridge DNS redirection
+for `127.0.0.11`; do not replace isolation with host networking to bypass DNS.
 
 **Cloud Run.**
 [Cloud Run sandboxes](https://cloud.google.com/blog/topics/developers-practitioners/google-cloud-run-sandboxes-are-in-public-preview)
@@ -265,30 +266,31 @@ already-authorized triggering message.
 Secrets are asymmetrically encrypted with [age](https://age-encryption.org)
 (X25519) via the `pyrage` library, stored as `ENC[age,<base64 ciphertext>]`:
 
-- `AGE_PUBLIC_KEY` (safe to commit) encrypts new values — used by `make
-  set-platform-secret`, `make set-workflow-secret WORKFLOW=<name>`, and any
-  gateway-side secret-entry flow.
-- `AGE_IDENTITY` (bootstrap-only, **never committed**) decrypts values at
-  container-spawn time, both for platform-wide secrets in
-  `platform-config.yaml` and per-workflow secrets in `agent.yaml`. It accepts
+- `AGE_PUBLIC_KEY` (safe to commit) encrypts new values through
+  `sage-run secret set`, which selects the base or environment-overlay recipient.
+  There is no secret-setting UI.
+- `AGE_IDENTITY` (**never committed**) decrypts values in trusted services,
+  including platform secrets and named-connection credentials. It accepts
   either an armored `AGE-SECRET-KEY-...` string or `file:/path/to/key.txt`.
-- Decrypted values only ever exist in-memory in the process that needs them
-  (gateway for encryption, session-manager for decryption at launch, the
-  runtime container's environment) — never written back to disk in plaintext.
+- Encrypted repo files are not rewritten to plaintext. However, the instance's
+  Kubernetes Secret holds the identity and decrypted infrastructure credentials;
+  Kubernetes/node storage, process environment and any backup of those resources
+  are part of the trust boundary. Age does not encrypt Kubernetes Secret storage.
+  Configure appropriate cluster encryption/access controls and protect backups.
 
 ## Secret handling rules
 
 - Never commit plaintext secrets. Secret values do not belong in prompts,
   `CLAUDE.md`, skills, or `.mcp.json` — `.mcp.json` stores `${VAR}`
   placeholders, not resolved values.
-- Keep workflow-specific secrets in the workflow repo (`agent.yaml`, or a
-  deployment secret manager); keep platform-wide secrets encrypted in
-  `platform-config.yaml`'s `secrets:`, or in Secret Manager / Kubernetes
-  Secrets.
+- Prefer named connections in base/prod platform config for integration
+  credentials, selected by workflow. Legacy `agent.yaml` secrets still work
+  but have no per-environment overlay in the current operator CLI.
 - Do not add encrypted secrets from a private deployment to the public repo.
 - MCP servers are stateless request handlers, not secret stores: auth travels
-  as per-request `${VAR}` headers so per-workflow credentials never enter the
-  MCP server trust boundary.
+  in per-request `${VAR}` headers. The receiving MCP necessarily sees those
+  credentials; treat the server and transport as trusted, avoid logging headers
+  and use network policy/TLS where required.
 - Do not expose secret env vars to Bash unless a workflow explicitly needs
   shell access and its sandbox policy allows it.
 
@@ -301,10 +303,10 @@ The public security boundary covers the mechanisms this repo owns:
 - MCP auth-header expansion without exposing secret values to the model shell
 - gateway approval and human-question flows
 - platform config and encrypted-secret loading
-- the deployment templates under `deploy/`
+- the packaged deployment chart under `sage_run/chart/`
 
 A workflow repo is responsible for its own prompts, skills, hooks, connector
 instances, private MCP policy, and which tools/domains it permits. The public
-Compose and Helm artifacts are templates — production deployments
+Helm artifacts are templates — production deployments
 must provide instance-owned TLS, IAM, network policy, database and
 object-storage credentials, and secret management.

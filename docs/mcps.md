@@ -1,5 +1,28 @@
 # MCP Servers
 
+## Kubernetes deployment model
+
+Each enabled MCP runs in its **own Deployment/Pod and Service**. Platform and
+workflow-owned servers share the release's platform MCP **image**, not one
+container. The operator derives the topology from merged platform config.
+
+Core servers are included automatically; opt-in integrations come from
+`mcps.enabled`. Repo-owned servers are discovered as
+`mcps/<directory>/mcp_<id>.py` exposing an ASGI `app`, with underscores in the
+module name mapped to hyphens in the server ID. Add the ID to `mcps.enabled`
+and reference `http://mcp-<id>:<port>/mcp` from workflow `.mcp.json` files; all
+references for an ID must agree on one port.
+
+The source is imported from the mounted checkout using `PYTHONPATH`. No
+standalone/combined image build or `pip install requirements.txt` runs at
+deployment time: dependencies must already be available in the platform image.
+Custom dependencies/images are not a fully automated workflow-MCP feature.
+
+Put integration URLs/credentials in named `connections`, select them in
+`agent.yaml`, and expand credentials into `.mcp.json` headers per request.
+See [Configuration](configuration.md#connections). Adding/removing servers or
+changing source/config requires CLI deployment today, not just UI Sync.
+
 MCP servers are how a workflow's agent reaches read/write capability against
 external systems, plus the platform's own communication and memory.
 
@@ -377,13 +400,16 @@ queries. The platform does not attempt a generic cross-log correlation engine.
 
 ## Adding a new server
 
-Drop `mcp_<name>.py` into `core/` (if every workflow needs it) or
-`integrations/` (if it's opt-in) as an HTTP MCP app, wire a service entry for
-it in `deploy/`, add it to `mcps.enabled` in `platform-config.yaml`, and
+For platform-owned servers, put `mcp_<name>.py` into `core/` or `integrations/`,
+register it in the platform operator's MCP catalog and chart values, add it to
+`mcps.enabled` in `platform-config.yaml`, and
 reference it from a workflow's `.mcp.json` (see
 [Workflow authoring](workflow-authoring.md)). Keep servers stateless —
 authenticate each request from caller-supplied headers — so they stay
 reusable across workflows.
+
+For instance-specific servers, use the checkout discovery contract above
+instead of modifying the platform catalog or building a combined image.
 
 Third-party SaaS MCP servers can be referenced directly by URL from a
 workflow's `.mcp.json` without adding anything here:

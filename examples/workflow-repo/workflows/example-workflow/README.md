@@ -9,7 +9,8 @@
 
 2. Edit `workflows/my-new-workflow/agent.yaml`:
    - Replace all `{PLACEHOLDER}` values
-   - Configure workflow-local secrets, schedules, and messaging bindings
+   - Set `name` to the new directory name
+   - Select named connections; configure schedules and messaging bindings
 
 3. Configure the platform-level `message_bus` block and its encrypted secret references in `platform-config.yaml`
 
@@ -28,8 +29,9 @@
 
 9. Test locally:
    ```bash
-   # The provisioner will auto-detect the new workflow
-   docker compose restart gateway
+   # From the workflow repo, with Rancher Kubernetes and keys configured:
+   make lint
+   make up
    ```
 
 10. Open a PR for review and merge
@@ -53,17 +55,18 @@ workflows/my-new-workflow/
 
 ## MCP servers wired in `.mcp.json`
 
-This template's `.mcp.json` wires four servers, and `settings.json`'s
+This template's `.mcp.json` wires five servers, and `settings.json`'s
 `sandbox.network.allowedDomains` lists the matching hostname for each:
 
-- `message`, `memory`, `platform` — the three core servers every instance
+- `message`, `memory`, `platform`, `knowledge` — the core servers every instance
   runs; `platform` is what `mcp__platform__create_workflow_task` (cross-workflow
   handoff) and `propose_skill_update` (skill/instruction PR proposals) come
   from. See [docs/mcps.md](../../../../docs/mcps.md).
 - `custom-example` — a wiring **example** pointed at
   [mcps/custom-mcp-example/](../../mcps/custom-mcp-example/) in this example
-  repo. It only works once you've actually built and deployed that (or your
-  own) custom server; remove the entry if you don't need one.
+  repo. The operator deploys it separately from the platform MCP image when
+  enabled, importing its source from the mounted checkout. Configure the
+  `custom-example` connection token/URL first; remove the entry if unneeded.
 
 Agent frontmatter and `.mcp.json` have separate MCP roles:
 

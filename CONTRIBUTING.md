@@ -39,11 +39,16 @@ npm run build
 For deployment changes, render templates where possible:
 
 ```sh
-docker compose config >/tmp/sage-run-compose.yaml
 helm template sage-run sage_run/chart \
   --set workflowRepo.hostPath=/tmp/workflows \
   >/tmp/sage-run-helm.yaml
 ```
+
+For an actual local instance, run `sage-run up` from the workflow checkout,
+optionally with `--source /path/to/sage-run`. See
+[Deployment](docs/deployment.md) for Rancher Desktop prerequisites and current
+portability limits. Platform-root Compose targets remain for legacy/test use,
+not as the new Kubernetes operator path.
 
 ## Workflow Bundle Checks
 
