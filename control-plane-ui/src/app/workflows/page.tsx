@@ -253,6 +253,18 @@ function WorkflowRepoDeploySection() {
               >
                 {deployment.status} · {deployment.phase} · {deployment.ref}
               </p>
+              {deployment.started_at ? (
+                <ExpandableMeta
+                  label="Started"
+                  value={new Date(deployment.started_at).toLocaleString()}
+                />
+              ) : null}
+              {deployment.finished_at ? (
+                <ExpandableMeta
+                  label="Finished"
+                  value={new Date(deployment.finished_at).toLocaleString()}
+                />
+              ) : null}
               <ExpandableMeta label="Deployment Job" value={deployment.id} />
               {deployment.commit ? (
                 <ExpandableMeta

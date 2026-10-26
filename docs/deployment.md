@@ -103,8 +103,11 @@ unfinished. Avoid service-changing deploys while tasks are active.
 | New endpoint | Purpose |
 | --- | --- |
 | `POST /api/platform/deployments` with `{"ref":"main"}` | Start a Job; 202 means accepted, not deployed |
-| `GET /api/platform/deployments` | Latest Job state, requested commit and logs |
+| `GET /api/platform/deployments` | Latest Job state, requested commit, start/finish timestamps and logs |
 | `GET /api/platform/workflow-repo` | Active bundle commit, platform version and deployment capability |
+
+The deployment panel displays available start/finish timestamps in the browser's
+local time.
 
 CLI recovery remains independent of the Gateway process. The updated SSH CLI
 uses the target release's Gateway image for its backup Job before updating
