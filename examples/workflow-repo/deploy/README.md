@@ -15,7 +15,7 @@ home-directory checkout paths, `kubectl`, Helm and
 
 ```sh
 # Published platform:
-uvx --from 'sage-run==1.0.1' sage-run up .
+uvx --from 'sage-run==1.0.2' sage-run up .
 # Local platform changes, no registry or PyPI publish:
 /path/to/sage-run/.venv/bin/python -m sage_run up . --source /path/to/sage-run
 ```
@@ -32,9 +32,9 @@ Prepare a single-node k3s host with qualified gVisor and a root-only key at
 recipient and re-encrypt every base secret for it. Commit and push the ref.
 
 ```sh
-uvx --from 'sage-run==1.0.1' sage-run deploy . \
+uvx --from 'sage-run==1.0.2' sage-run deploy . \
   --host my-agent --instance my-workflows --env prod --ref main --plan
-uvx --from 'sage-run==1.0.1' sage-run deploy . \
+uvx --from 'sage-run==1.0.2' sage-run deploy . \
   --host my-agent --instance my-workflows --env prod --ref main
 ```
 
@@ -45,8 +45,9 @@ fetches use the configured GitHub App.
 Put instance-owned ingress or other reviewed manifests under `deploy/k8s/`.
 CLI deploy applies `*.yaml` there with `${WORKFLOW_REPO_PATH}` replaced by the
 host checkout. No generic public ingress is included: provision TLS and
-authentication for your environment. Extra manifests are not automatically
-pruned when files disappear from Git.
+authentication for your environment. Managed extra manifests receive an
+ownership label and are pruned when removed from Git. Existing unowned
+resources need explicit reviewed adoption; PVC deletion needs migration.
 
 MCP enablement comes from `mcps.enabled`; workflow MCP modules are read from
 `mcps/*/mcp_*.py` using the platform image. Built-in connectors have separate
@@ -55,11 +56,15 @@ automatically deployed services.
 
 ## Current limits
 
-- UI **Sync now** updates bundles, not service topology. **Deploy now** is not
-  implemented yet.
-- CLI `up`/`deploy` currently restarts platform Deployments; selective reload
-  is planned, not active.
-- There is no `make deploy`/`make plan` wrapper or scheduled full-backup/retention
-  automation yet. Use explicit pinned CLI commands and operator-managed backups.
+- UI **Deploy now** handles workflow/config/topology updates through an independent
+  Job with persisted status/logs. Platform-version upgrades remain CLI-only.
+- Prompt-only changes restart no pods; workflow MCP source changes roll only
+  that MCP. Config changes roll consumers; full hot reload and task drain
+  remain unfinished.
+- Production deploy backs up before apply and keeps 3 deployment copies;
+  the 02:00 UTC nightly CronJob keeps 7 nightly copies. Each rotates its own
+  category. Backups remain same-disk, not a cross-service atomic snapshot.
+- There is no `make deploy`/`make plan` wrapper yet. Use explicit pinned CLI
+  commands; review the main guide's stale-lock and recovery instructions.
 - GKE, OpenShift and k3d need storage, runtime, image and ingress adaptation;
   `--context` alone does not make them qualified targets.

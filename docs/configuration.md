@@ -32,7 +32,7 @@ repo-owned config.
 | `WORKFLOW_REPO_SOURCE` | `local` | `local` reads the mounted checkout; `remote` fetches the configured Git ref during Sync. |
 | `WORKFLOW_REPO_URL` | `""` | Canonical Git URL for a remote source. A local checkout may also set it for GitHub-backed reflection actions. |
 | `WORKFLOW_REPO_REF` | `""` | Default Git branch, tag, or SHA for a remote Sync. A UI pin overrides it until changed. |
-| `WORKFLOW_REPO_MANAGED` | `false` | Unreleased deployment-managed mode: discovery reads the checkout without fetching. The deployer selects the ref; legacy Sync/pin writes are rejected. Managed charts set this automatically. |
+| `WORKFLOW_REPO_MANAGED` | `false` | Deployment-managed mode (1.0.2+): discovery reads the checkout without fetching. The deployer selects the ref; legacy Sync/pin writes are rejected. Managed charts set this automatically. |
 | `WORKFLOW_REPO_LOCAL_PATH` | `/app/workflows` | Container-side workflow checkout mount. |
 | `WORKFLOW_REPO_PATHS` | `""` | Advanced, `os.pathsep`-separated additional workflow roots, primarily for Kubernetes deployments with separately mounted storage. |
 | `REPO_PATH` | `""` | Path to a checked-out/mounted workflow repo root. |
@@ -490,13 +490,11 @@ is implied by deployment wiring or unit tests.
 | `AGENT_MEMORY_VERSIONS_TO_KEEP` | `10` | Versioned agent-memory snapshots to retain per workflow. |
 | `AGENT_MEMORY_RETENTION_DAYS` | `90` | Delete agent-memory snapshots older than N days. |
 
-These settings prune application data, not full recovery backups. No scheduled
-database/object-store backup or backup-directory auto-clean exists in 1.0.1.
-Published 1.0.1 has no automated backup retention. Unreleased source implements
+These settings prune application data, not full recovery backups. Version 1.0.2 implements
 independent copy-count retention: the nightly Kubernetes Job keeps 7 successful
 nightly sets; the deployer keeps 3 successful deployment sets. This is unrelated
 to application housekeeping and is not seven-day expiry. See
-[deployment backups](deployment.md#unreleased-deployment-jobs-and-backups).
+[deployment backups](deployment.md#deployment-jobs-and-backups).
 
 ### Secrets (age encryption)
 

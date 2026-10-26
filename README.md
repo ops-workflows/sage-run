@@ -59,18 +59,17 @@ before running it.
 ```sh
 cd /path/to/my-workflows
 # Local: Rancher Desktop Kubernetes/Moby, kubectl, Helm, configured dev key.
-uvx --from 'sage-run==1.0.1' sage-run up .
+uvx --from 'sage-run==1.0.2' sage-run up .
 # Production: prepared k3s host and host-only production key.
-uvx --from 'sage-run==1.0.1' sage-run deploy . \
+uvx --from 'sage-run==1.0.2' sage-run deploy . \
   --host my-agent --env prod --ref main
 ```
 
 See [Deployment and operations](docs/deployment.md) for first-time keys,
 server preparation, local platform development, updates and recovery.
-Production deploy currently targets single-node k3s over SSH. UI Deploy now,
-deployment Jobs and 7-nightly/3-deployment backup rotation are implemented in
-the **unreleased source**, not published 1.0.1. See
-[deployment Jobs](docs/deployment.md#unreleased-deployment-jobs-and-backups) for
+Production deploy targets single-node k3s over SSH. Version 1.0.2 adds UI
+Deploy now, deployment Jobs and 7-nightly/3-deployment backup rotation. See
+[deployment Jobs](docs/deployment.md#deployment-jobs-and-backups) for
 their scope and safety limits. In-place configuration reload and ordered
 database migrations remain unfinished. Legacy Compose tooling remains for
 unmigrated instances and is not the recommended new-instance path.

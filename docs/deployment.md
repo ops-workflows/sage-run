@@ -1,17 +1,17 @@
 # Deployment and operations
 
-This guide describes the **1.0.1 implementation**, not the target design.
+This guide describes the **1.0.2 implementation**, not the target design.
 Use the workflow repository as the instance, the published `sage-run` CLI as
 the operator tool, and Kubernetes as the serving environment. No platform
 source checkout or platform image build is required on a production server.
 
-The [unreleased deployment Job changes](#unreleased-deployment-jobs-and-backups)
-are described separately below. They are not available by installing
-`sage-run==1.0.1` and have not been rolled out to the production instances.
+The deployment Job and backup features below require 1.0.2 or newer.
+Existing 1.0.1 instances do not acquire them until explicitly upgraded.
+Check GitHub Releases for publication status before installing a version.
 
-## Unreleased deployment Jobs and backups
+## Deployment Jobs and backups
 
-Current source adds the first workflow/config deployment milestone:
+Version 1.0.2 adds the first workflow/config deployment milestone:
 
 - **Deploy now** replaces Sync/pin in the UI. Production selects `main` or a
   `v`-prefixed tag; local deployment uses the uncommitted working tree.
@@ -101,8 +101,8 @@ unfinished. Avoid service-changing deploys while tasks are active.
 CLI recovery remains independent of the Gateway process. The updated SSH CLI
 uses the target release's Gateway image for its backup Job before updating
 the serving checkout, then reconciles and activates using the installed CLI's
-chart. Publish the new package/images before using this path in production;
-an old 1.0.1 image does not contain these commands.
+chart. The target package/images must be published before using this path in
+production; an old 1.0.1 image does not contain these commands.
 
 ## Current support and unfinished work
 
@@ -110,9 +110,9 @@ an old 1.0.1 image does not contain these commands.
 | --- | --- | --- |
 | Production CLI | Single-node k3s over SSH, committed workflow ref, packaged chart and digest-pinned release images | Generic remote kube-context deployment; multi-node checkout placement |
 | Local CLI | Rancher Desktop Kubernetes, working-tree mount, optional platform source builds | Turnkey k3d/kind setup or image import |
-| UI | Existing **Sync now** and version pin for workflow bundles | **Deploy now**, deploy Job, deployment logs and platform upgrades |
-| Reconciliation | Helm applies topology and image changes; CLI then restarts platform Deployments | Selective config reload/restart and deploy diff planning |
-| Recovery | Operator-created backups and a verified reference migration | Scheduled full backups, automatic pre-upgrade backups, retention cleanup and migration framework |
+| UI | **Deploy now**, independent Job, confirmation and persisted status/logs | Live plan/diff and platform-version handover |
+| Reconciliation | Helm topology/image updates, config checksums, per-workflow MCP source checksums, namespace-owned extra pruning | In-place config reload, deploy diff planning and active-session drain |
+| Recovery | Pre-deploy and nightly backups, independent 3/7 copy rotation, isolated SQL/object/Git/Hindsight recovery qualification | Ordered schema migrations, coordinated cross-service snapshots and off-host backup |
 
 The legacy Compose Makefile/bootstrap commands remain in the platform for
 instances not yet migrated. They are not the setup path in this guide.
@@ -134,7 +134,7 @@ repository's `make up` (Kubernetes). Use the explicit CLI when in doubt.
 Use an exact operator version:
 
 ```sh
-uvx --from 'sage-run==1.0.1' sage-run --version
+uvx --from 'sage-run==1.0.2' sage-run --version
 ```
 
 The PyPI project is `sage-run`, not the GitHub organization name. The wheel
@@ -180,7 +180,7 @@ template values before deploying; it is deliberately not a runnable tenant.
 2. Generate a local key once:
 
    ```sh
-   uvx --from 'sage-run==1.0.1' sage-run keygen \
+   uvx --from 'sage-run==1.0.2' sage-run keygen \
      --out ~/.config/sage-run/dev.agekey
    ```
 
@@ -206,13 +206,13 @@ template values before deploying; it is deliberately not a runnable tenant.
    private key:
 
    ```sh
-   uvx --from 'sage-run==1.0.1' sage-run secret set . --env dev --name LLM_API_KEY
-   uvx --from 'sage-run==1.0.1' sage-run secret set . --env dev --name PG_PASSWORD
-   uvx --from 'sage-run==1.0.1' sage-run secret set . --env dev --name OBJECT_STORE_SECRET_KEY
-   uvx --from 'sage-run==1.0.1' sage-run secret set . --env prod --name LLM_API_KEY
-   uvx --from 'sage-run==1.0.1' sage-run secret set . --env prod --name PG_PASSWORD
-   uvx --from 'sage-run==1.0.1' sage-run secret set . --env prod --name OBJECT_STORE_SECRET_KEY
-   uvx --from 'sage-run==1.0.1' sage-run secret set . --env prod \
+   uvx --from 'sage-run==1.0.2' sage-run secret set . --env dev --name LLM_API_KEY
+   uvx --from 'sage-run==1.0.2' sage-run secret set . --env dev --name PG_PASSWORD
+   uvx --from 'sage-run==1.0.2' sage-run secret set . --env dev --name OBJECT_STORE_SECRET_KEY
+   uvx --from 'sage-run==1.0.2' sage-run secret set . --env prod --name LLM_API_KEY
+   uvx --from 'sage-run==1.0.2' sage-run secret set . --env prod --name PG_PASSWORD
+   uvx --from 'sage-run==1.0.2' sage-run secret set . --env prod --name OBJECT_STORE_SECRET_KEY
+   uvx --from 'sage-run==1.0.2' sage-run secret set . --env prod \
      --connection example-service --name SERVICE_TOKEN
    ```
 
@@ -229,7 +229,7 @@ template values before deploying; it is deliberately not a runnable tenant.
 7. Validate, review, commit and push:
 
    ```sh
-   uvx --from 'sage-run==1.0.1' sage-run validate .
+   uvx --from 'sage-run==1.0.2' sage-run validate .
    ```
 
 The namespace Secret `sage-run-bootstrap` holds the age identity plus decrypted
@@ -263,9 +263,9 @@ can be narrower. Never embed a PAT in a remote URL.
 Run from the **workstation's workflow checkout**, with its Git origin set:
 
 ```sh
-uvx --from 'sage-run==1.0.1' sage-run deploy . \
+uvx --from 'sage-run==1.0.2' sage-run deploy . \
   --host my-agent --instance my-workflows --env prod --ref main --plan
-uvx --from 'sage-run==1.0.1' sage-run deploy . \
+uvx --from 'sage-run==1.0.2' sage-run deploy . \
   --host my-agent --instance my-workflows --env prod --ref main
 ```
 
@@ -314,29 +314,26 @@ context, independently of browser authentication.
 
 | Change | Operator action today | Effect |
 | --- | --- | --- |
-| Prompts, skills, agents, instructions, workflow settings | Push and use **Sync now**, or run CLI deploy | Sync rebuilds/promotes bundles without reconciling Kubernetes; CLI deploy additionally restarts platform services |
-| Local uncommitted workflow edits | Local **Sync now**, or `sage-run up` again | Sync reads working tree; `up` restarts platform services |
-| Connections/config needed only by new tasks | Sync can snapshot per-task settings | Does not reload every long-running service; use CLI deploy when service config/credentials change |
-| MCP/connector enablement, source or service config | CLI deploy (local: `up`) | Helm reconciles workloads; current CLI restarts platform Deployments |
+| Prompts, skills, agents, instructions, workflow settings | Push and use **Deploy now**, or run CLI deploy | Rebuilds/promotes bundles with no serving pod restarts |
+| Local uncommitted workflow edits | Local **Deploy now**, or `sage-run up` again | Reads the working tree and reconciles only changed pod templates |
+| Connections/config | Deploy through UI or CLI | Snapshots settings for new tasks and rolls config consumers; not in-place hot reload |
+| MCP/connector enablement, source or service config | Deploy through UI or CLI (local: `up`) | Helm reconciles additions/removals; workflow MCP source changes roll only that MCP |
 | Platform/runtime image upgrade | Run the desired exact CLI release's deploy | Chart/images come from that package; workflow image overrides take precedence |
-| Database/infrastructure change | Reviewed backup and explicit upgrade procedure | No automatic backup/migration framework; do not assume safe rollback or storage migration |
+| Database/infrastructure change | Reviewed CLI upgrade/migration after backup | Backup is automated, schema/storage/credential migration is not; UI refuses these changes |
 
-**Selective reload is a target, not current behavior.** Both `up` and SSH
-`deploy` restart Gateway, session-manager, UI, knowledge-indexer, MCPs and
-connectors after Helm. Postgres, MinIO and Hindsight are not in that explicit
-restart selector, although changing their pod specifications makes Kubernetes
-roll them. Workflow-only UI Sync does not roll services.
+CLI and Job deployment do not blanket-restart services. Image/env/config
+checksums change the affected pod templates; workflow-only activation leaves
+them unchanged. Full hot reload and bounded active-session drain remain open.
 
-The UI still exposes Sync/pin. A pin can override the default ref for later
-syncs; clear or align it when choosing a different deployment ref. The planned
-Deploy-now Job will replace these controls; it is not available in 1.0.1.
+Managed instances reject the legacy Sync/pin writers. Production Deploy now
+selects `main` or a `v`-prefixed tag; local uses the working tree.
 Platform upgrades and recovery remain CLI operations. There is no published
 `make deploy`/`make plan` wrapper in the workflow templates yet: use the commands
 above rather than assuming such targets exist.
 
 Running tasks retain their launch environment and bundle. Avoid disruptive
-deploys during active work; there is no deploy drain or concurrent-deploy lock
-yet. Do not run UI sync and CLI deploy concurrently against the shared checkout.
+deploys during active work: the shared lock serializes deployment/backup
+writers, but there is no active-task drain yet.
 
 ## Local workflow and platform development
 
@@ -358,7 +355,7 @@ From the workflow checkout:
 
 ```sh
 # Published platform images, no platform checkout required:
-uvx --from 'sage-run==1.0.1' sage-run up . \
+uvx --from 'sage-run==1.0.2' sage-run up . \
   --identity ~/.config/sage-run/dev.agekey
 
 # Test local platform changes without publishing a package or images:
@@ -391,8 +388,8 @@ Separate dev integrations are strongly recommended: a development key does
 not make production endpoint values safe to use.
 
 ```sh
-uvx --from 'sage-run==1.0.1' sage-run status .
-uvx --from 'sage-run==1.0.1' sage-run down .  # keeps PVCs and Secrets
+uvx --from 'sage-run==1.0.2' sage-run status .
+uvx --from 'sage-run==1.0.2' sage-run down .  # keeps PVCs and Secrets
 # --purge deletes the namespace and its data; use only for disposable instances.
 ```
 
@@ -423,11 +420,10 @@ Do not claim production support from successful Helm rendering alone.
 Persistent volumes are live storage, not backups. Project-memory archives and
 housekeeping are not a full database/object-store disaster-recovery solution.
 
-**As of 1.0.1 there is no scheduled full-backup CronJob, automatic pre-upgrade
-backup, or automatic cleanup of operator backups.** Planned retention is seven
-nightly and three pre-upgrade backups; those numbers are not active settings.
-Until implemented, arrange and monitor operator backups and clean them only
-after validating replacement backups and restore requirements.
+Managed production deployment enables the nightly CronJob and pre-deployment
+backup Job with **7 nightly + 3 deployment copies**. See
+[backup operation and limits](#deployment-jobs-and-backups). Instances still
+on 1.0.1 have no such automation until upgraded; manual archives remain manual.
 
 Back up:
 
@@ -453,7 +449,24 @@ Application housekeeping separately retains project-memory snapshots (defaults:
 [Configuration](configuration.md#housekeeping--retention). It does not rotate
 the backup directory above.
 
-## Workflow bundles and UI sync
+### Restore qualification
+
+There is no automatic restore CLI. Rehearse in an isolated namespace before
+touching serving data: verify every manifest checksum, restore the dump into a
+new database with the matching PostgreSQL tools, restore S3 objects and check
+their hashes, then restore Hindsight's archive into a fresh PVC. The archive
+has a top-level `hindsight/` directory; mount that directory at
+`/home/hindsight/.hindsight` (for example using `subPath: hindsight`) and verify
+ownership/permissions for the image's runtime user.
+
+For a `WaitForFirstConsumer` storage class, let a scheduled consumer bind a new
+PVC; setting a restore Pod's `nodeName` bypasses scheduling and can leave it
+unbound. Start a separate Hindsight instance against the restored database and
+PVC, and verify its bank-list API plus restored file bytes. The isolated
+qualification used fake local embeddings/model responses; it did not send
+production data to a model or exercise semantic recall quality.
+
+## Workflow bundles and activation
 
 Bundles merge platform, repository-shared and workflow-specific assets into
 one checksummed release. Root `CLAUDE.md` precedence, skills, hooks, approvals,
@@ -466,23 +479,23 @@ messaging and secret scrubbing are unchanged; see
 | `WORKFLOW_BUNDLE_URI` | Bundle URI, normally a presigned object-store URL on Kubernetes |
 | `WORKFLOW_BUNDLE_CHECKSUM` | SHA-256 of the bundle manifest, verified before execution |
 
-Sync fetches the effective remote ref through the App (or reads the local
-working tree), validates/discovers workflows, builds bundles and the matching
-merged config snapshot, uploads them and advances the active release.
-New tasks use that release; it does not reconcile service topology.
+The deployment Job fetches the chosen ref through the App (or reads the local
+working tree), validates and reconciles services, then activates bundles and
+their matching merged config snapshot. Activation uploads a complete release
+before advancing its active pointer; new tasks use that immutable release.
 
 ### Compatibility policy
 
 Compatibility compares bundle/platform major versions: newer is blocked,
 older warns, equal is accepted.
 
-Existing endpoints:
+Workflow repository endpoints:
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/platform/workflow-repo` | Current checkout/release and sync state |
-| `POST /api/platform/workflow-repo/sync` | Fetch/read and promote workflow bundles |
-| `POST /api/platform/workflow-repo/pin` | Set the effective sync ref |
+| `POST /api/platform/workflow-repo/sync` | Legacy unmanaged only; managed instances return 410 |
+| `POST /api/platform/workflow-repo/pin` | Legacy unmanaged only; managed instances return 410 |
 | `GET /api/platform/workflow-repo/versions` | Version choices through the GitHub App |
 
 ## Publishing a platform release
@@ -494,8 +507,8 @@ Existing endpoints:
    arm64 GHCR images, records their digests in `release.json`, packages the
    chart and publishes PyPI after the protected environment approval.
 
-Releases 1.0.0 and 1.0.1 are published. Operator version selects the platform
-version; the workflow repo does not yet have an installed dependency lock.
+Operator version selects the platform version; the workflow repo does not
+yet have an installed dependency lock.
 Use exact CLI pins in automation. Never move a published tag or overwrite a
 PyPI version; fixes get a new patch release.
 

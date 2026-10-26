@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import tarfile
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -68,3 +71,47 @@ def test_dump_failure_does_not_prune_previous_backups(tmp_path, monkeypatch):
         backups.create_backup(namespace="corp", kind="deployment", checkout=tmp_path)
     assert len(list(tmp_path.glob("deployment-*"))) == 5
     assert len(list(tmp_path.glob("*/manifest.json"))) == 5
+
+
+@pytest.mark.parametrize("mounted", [False, True])
+def test_enabled_hindsight_requires_mount_and_archives_files(tmp_path, monkeypatch, mounted):
+    source = tmp_path / "hindsight"
+    if mounted:
+        source.mkdir()
+        (source / "asset.bin").write_bytes(b"hindsight-asset")
+    root = tmp_path / "backups"
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    monkeypatch.setenv("SAGE_RUN_BACKUP_ROOT", str(root))
+    monkeypatch.setenv("SAGE_RUN_BACKUP_HINDSIGHT", "true")
+    monkeypatch.setattr(
+        backups, "Path", lambda path: source if path == "/var/lib/sage-run/backup-hindsight" else Path(path)
+    )
+
+    def run(command, **kwargs):
+        if "pg_dump" in command:
+            kwargs["stdout"].write(b"database")
+        elif "bundle" in command and "create" in command:
+            Path(command[command.index("create") + 1]).write_bytes(b"git-history")
+        elif "helm" in Path(command[0]).name:
+            kwargs["stdout"].write("{}")
+        return SimpleNamespace(stdout="test-commit")
+
+    def export_objects(path):
+        path.mkdir()
+        return {}
+
+    monkeypatch.setattr(backups.subprocess, "run", run)
+    monkeypatch.setattr(backups, "_export_objects", export_objects)
+    if not mounted:
+        with pytest.raises(ValueError, match="Hindsight data mount is missing"):
+            backups.create_backup(namespace="corp", kind="deployment", checkout=checkout)
+        assert not list(root.glob("*/manifest.json"))
+        return
+    target = backups.create_backup(namespace="corp", kind="deployment", checkout=checkout)
+    manifest = json.loads((target / "manifest.json").read_text())
+    assert manifest["files"]["hindsight.tar.gz"] == backups.checksum(target / "hindsight.tar.gz")
+    with tarfile.open(target / "hindsight.tar.gz") as archive:
+        stream = archive.extractfile("hindsight/asset.bin")
+        assert stream is not None
+        assert stream.read() == b"hindsight-asset"

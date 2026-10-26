@@ -50,7 +50,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     deploy.add_argument("workflow_repo", type=Path, nargs="?", default=Path.cwd())
     deploy.add_argument("--host", required=True, help="SSH host (e.g. a ~/.ssh/config alias)")
     deploy.add_argument("--env", default="prod", help="Config overlay (default: prod)")
-    deploy.add_argument("--ref", default="main", help="Branch or tag on origin (default: main)")
+    deploy.add_argument("--ref", default="main", help="main or a v-prefixed tag on origin (default: main)")
     deploy.add_argument("--instance", help="Namespace (default: repository folder name)")
     deploy.add_argument("--image-tag", help="Use images already loaded on the host with this tag")
     deploy.add_argument("--plan", action="store_true", help="Show what would be deployed and stop")
