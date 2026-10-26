@@ -179,6 +179,9 @@ def test_host_bound_ui_releases_port_before_replacement(host_port):
     )
     strategy = ui["spec"].get("strategy", {}).get("type", "RollingUpdate")
     assert strategy == ("Recreate" if host_port else "RollingUpdate")
+    if host_port:
+        assert "rollingUpdate" in ui["spec"]["strategy"]
+        assert ui["spec"]["strategy"]["rollingUpdate"] is None
 
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")

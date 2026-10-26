@@ -9,6 +9,7 @@ spec:
   {{- if .Values.controlPlaneUi.hostPort }}
   strategy:
     type: Recreate
+    rollingUpdate: null
   {{- end }}
   selector:
     matchLabels:
