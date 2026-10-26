@@ -15,7 +15,13 @@ from fastmcp.dependencies import CurrentHeaders
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
-from mcps.common import bootstrap_platform_env, extract_bearer_token, require_header, validate_base_url
+from mcps.common import (
+    PolicyReloadMiddleware,
+    bootstrap_platform_env,
+    extract_bearer_token,
+    require_header,
+    validate_base_url,
+)
 from shared.lib.platform_secrets import load_mcp_server_config
 
 bootstrap_platform_env()
@@ -44,16 +50,35 @@ def _string_map(raw: dict[str, Any], key: str) -> dict[str, str]:
 
 # Object policy is instance-specific and loaded from platform config
 # (mcps.config.salesforce). The public server ships no hardcoded org policy.
-_POLICY = load_mcp_server_config(os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml"), "salesforce")
+def _reload_policy() -> None:
+    global API_VERSION, MAX_QUERY_LIMIT, MAX_QUERY_FIELDS
+    global ALLOWED_OBJECTS, ALLOWED_TOOLING_OBJECTS, FILTER_REQUIRED_OBJECTS, OBJECT_FIELDS, TOOLING_OBJECT_FIELDS
+    policy = load_mcp_server_config(
+        os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml"), "salesforce", strict=True
+    )
+    values = (
+        str(policy.get("api_version") or DEFAULT_API_VERSION),
+        int(policy.get("max_query_limit") or DEFAULT_MAX_QUERY_LIMIT),
+        int(policy.get("max_query_fields") or DEFAULT_MAX_QUERY_FIELDS),
+        _string_set(policy, "allowed_objects"),
+        _string_set(policy, "allowed_tooling_objects"),
+        _string_set(policy, "filter_required_objects"),
+        _string_map(policy, "object_fields"),
+        _string_map(policy, "tooling_object_fields"),
+    )
+    (
+        API_VERSION,
+        MAX_QUERY_LIMIT,
+        MAX_QUERY_FIELDS,
+        ALLOWED_OBJECTS,
+        ALLOWED_TOOLING_OBJECTS,
+        FILTER_REQUIRED_OBJECTS,
+        OBJECT_FIELDS,
+        TOOLING_OBJECT_FIELDS,
+    ) = values
 
-API_VERSION = str(_POLICY.get("api_version") or DEFAULT_API_VERSION)
-MAX_QUERY_LIMIT = int(_POLICY.get("max_query_limit") or DEFAULT_MAX_QUERY_LIMIT)
-MAX_QUERY_FIELDS = int(_POLICY.get("max_query_fields") or DEFAULT_MAX_QUERY_FIELDS)
-ALLOWED_OBJECTS: frozenset[str] = _string_set(_POLICY, "allowed_objects")
-ALLOWED_TOOLING_OBJECTS: frozenset[str] = _string_set(_POLICY, "allowed_tooling_objects")
-FILTER_REQUIRED_OBJECTS: frozenset[str] = _string_set(_POLICY, "filter_required_objects")
-OBJECT_FIELDS: dict[str, str] = _string_map(_POLICY, "object_fields")
-TOOLING_OBJECT_FIELDS: dict[str, str] = _string_map(_POLICY, "tooling_object_fields")
+
+_reload_policy()
 
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9]{15,18}$")
 FIELD_PATTERN = re.compile(r"^[a-zA-Z0-9_.]+$")
@@ -1101,3 +1126,4 @@ async def health(_request):
 
 
 app = mcp.http_app(path="/mcp", transport="streamable-http", stateless_http=False)
+app.add_middleware(PolicyReloadMiddleware, reload_policy=_reload_policy)

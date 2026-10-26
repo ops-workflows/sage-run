@@ -12,6 +12,10 @@
 
 {{- define "sage-run.serviceAccountName" -}}sage-run{{- end -}}
 
+{{- define "sage-run.configChecksum" -}}
+{{- index (.root.Values.configChecksums | default dict) .name | default .root.Values.configChecksum | quote -}}
+{{- end -}}
+
 {{- define "sage-run.podDefaults" -}}
 serviceAccountName: {{ include "sage-run.serviceAccountName" . }}
 # Service-link variables (e.g. GATEWAY_PORT=tcp://...) collide with platform settings.

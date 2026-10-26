@@ -70,10 +70,21 @@ server preparation, local platform development, updates and recovery.
 Production deploy targets single-node k3s over SSH. Version 1.0.2 adds UI
 Deploy now, deployment Jobs and 7-nightly/3-deployment backup rotation. See
 [deployment Jobs](docs/deployment.md#deployment-jobs-and-backups) for
-their scope and safety limits. In-place configuration reload and ordered
-database migrations remain unfinished. Serving is Kubernetes-only. Docker
+their scope and safety limits. Released versions do not provide general
+in-place configuration reload; source-only selective reload and deployment
+optimizations are described under
+[unreleased deployment changes](docs/deployment.md#unreleased-source-selective-reload-and-deployment-diffs).
+They have not changed production. Ordered database migrations remain
+unfinished. Serving is Kubernetes-only. Docker
 launch/memory helpers and the isolated Postgres fixture exist only under
 `tests/` for runtime scenarios, not as an alternative serving stack.
+
+The qualified local CLI path is Rancher Desktop Kubernetes/Moby with a
+working-tree hostPath and optional Docker source builds. The chart's standard
+Kubernetes resources do **not** establish end-to-end support for k3d, kind,
+GKE (including Sandbox/Autopilot), or OpenShift. Those targets need storage,
+UID/security policy, RuntimeClass and network adaptation plus actual task
+qualification; see the [compatibility matrix](docs/deployment.md#other-kubernetes-distributions).
 
 ## Documentation
 

@@ -17,7 +17,7 @@ from fastmcp import FastMCP
 from fastmcp.dependencies import CurrentHeaders
 from starlette.responses import JSONResponse
 
-from mcps.common import bootstrap_platform_env
+from mcps.common import PolicyReloadMiddleware, bootstrap_platform_env
 from shared.lib.github_app import GitHubAppError, github_app_connection, github_installation_token
 from shared.lib.platform_secrets import load_mcp_server_config
 
@@ -28,13 +28,21 @@ logger = logging.getLogger(__name__)
 
 PLATFORM_CONFIG_FILE = os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml")
 AGE_IDENTITY = os.environ.get("AGE_IDENTITY", "")
-_POLICY = load_mcp_server_config(PLATFORM_CONFIG_FILE, "github")
-ALLOWED_HOSTS = frozenset(
-    str(value).strip().lower() for value in _POLICY.get("allowed_hosts", []) if str(value).strip()
-)
-MAX_RESULTS = max(1, min(int(_POLICY.get("max_results") or 20), 50))
-MAX_EXCERPT_LINES = max(1, min(int(_POLICY.get("max_excerpt_lines") or 200), 500))
-MAX_FILE_BYTES = max(1_024, min(int(_POLICY.get("max_file_bytes") or 1_048_576), 5_242_880))
+
+
+def _reload_policy() -> None:
+    global ALLOWED_HOSTS, MAX_RESULTS, MAX_EXCERPT_LINES, MAX_FILE_BYTES
+    policy = load_mcp_server_config(PLATFORM_CONFIG_FILE, "github", strict=True)
+    values = (
+        frozenset(str(value).strip().lower() for value in policy.get("allowed_hosts", []) if str(value).strip()),
+        max(1, min(int(policy.get("max_results") or 20), 50)),
+        max(1, min(int(policy.get("max_excerpt_lines") or 200), 500)),
+        max(1_024, min(int(policy.get("max_file_bytes") or 1_048_576), 5_242_880)),
+    )
+    ALLOWED_HOSTS, MAX_RESULTS, MAX_EXCERPT_LINES, MAX_FILE_BYTES = values
+
+
+_reload_policy()
 MAX_CONTEXT_CHARS = 16_384
 MAX_QUERY_CHARS = 256
 MAX_ISSUE_TITLE_CHARS = 256
@@ -576,3 +584,4 @@ async def health(_request):
 
 
 app = mcp.http_app(path="/mcp", transport="streamable-http", stateless_http=False)
+app.add_middleware(PolicyReloadMiddleware, reload_policy=_reload_policy)

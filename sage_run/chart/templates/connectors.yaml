@@ -9,6 +9,9 @@ metadata:
     app.kubernetes.io/name: {{ $name }}
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       app.kubernetes.io/component: connector
@@ -16,7 +19,7 @@ spec:
   template:
     metadata:
       annotations:
-        sage-run/config-checksum: {{ $.Values.configChecksum | quote }}
+        sage-run/config-checksum: {{ include "sage-run.configChecksum" (dict "root" $ "name" $connector.component) }}
       labels:
         app.kubernetes.io/component: connector
         app.kubernetes.io/name: {{ $name }}

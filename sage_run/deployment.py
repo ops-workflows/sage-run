@@ -6,7 +6,7 @@ import copy
 import hashlib
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -31,6 +31,68 @@ EXTRA_KINDS = (
     "Job",
     "CronJob",
 )
+
+
+def configuration_checksums(config: dict, *, workloads: Iterable[str], workflow_mcps: Iterable[str]) -> dict[str, str]:
+    """Hash startup-only inputs; task settings and reloadable policies stay out of pod templates."""
+    from shared.lib.platform_secrets import _message_bus_secret_names, _structured_secret_names
+
+    dynamic = {
+        "connections",
+        "runtime_env",
+        "model_profiles",
+        "default_model_profile",
+        "mcps",
+        "connectors",
+        "deployment",
+        "message_bus",
+        "knowledge",
+        "memory",
+        "github",
+        "confluence",
+        "identity",
+    }
+    common = {key: value for key, value in config.items() if key not in dynamic}
+    secrets = config.get("secrets") or {}
+    common["secrets"] = {name: value for name, value in secrets.items() if name not in _structured_secret_names(config)}
+    custom = {f"mcp-{name}" for name in workflow_mcps}
+    checksums = {}
+    for workload in workloads:
+        inputs = {"startup": common}
+        if workload in {"gateway", "session-manager", "mcp-message"}:
+            inputs["message_bus"] = config.get("message_bus")
+            inputs["message_secrets"] = {name: secrets.get(name) for name in _message_bus_secret_names(config)}
+        if workload in {"gateway", "knowledge-indexer", "mcp-knowledge"}:
+            knowledge = config.get("knowledge") or {}
+            inputs["knowledge"] = knowledge
+            name = (knowledge.get("embeddings") or {}).get("api_key_secret")
+            inputs["embedding_secret"] = secrets.get(name)
+        if workload in custom:
+            inputs["policy"] = ((config.get("mcps") or {}).get("config") or {}).get(workload.removeprefix("mcp-"))
+        checksums[workload] = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+    return checksums
+
+
+def deployment_plan(previous: str, desired: str) -> dict[str, list[str]]:
+    """Report resource actions without exposing manifest values or secret contents."""
+
+    def resources(manifest: str) -> dict[str, dict]:
+        return {f"{item['kind']}/{item['metadata']['name']}": item for item in yaml.safe_load_all(manifest) if item}
+
+    old, new = resources(previous), resources(desired)
+    plan: dict[str, list[str]] = {"create": [], "roll": [], "update": [], "delete": []}
+    plan["create"] = sorted(new.keys() - old.keys())
+    plan["delete"] = sorted(old.keys() - new.keys())
+    for key in sorted(old.keys() & new.keys()):
+        before, after = old[key], new[key]
+        if before == after:
+            continue
+        old_spec, new_spec = before.get("spec") or {}, after.get("spec") or {}
+        rolls = after["kind"] in {"Deployment", "StatefulSet", "DaemonSet"} and (
+            old_spec.get("template") != new_spec.get("template") or old_spec.get("replicas") != new_spec.get("replicas")
+        )
+        plan["roll" if rolls else "update"].append(key)
+    return plan
 
 
 def extra_manifests(tree: Path, *, host_checkout: str, namespace: str) -> dict[tuple[str, str], dict]:

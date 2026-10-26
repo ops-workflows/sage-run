@@ -20,7 +20,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sage_run.deployment import EXTRA_KINDS, extra_manifests, job_manifest, owned_extras, validate_ref
+from sage_run.deployment import EXTRA_KINDS, deployment_plan, extra_manifests, job_manifest, owned_extras, validate_ref
 from sage_run.local import (
     BOOTSTRAP_SECRET,
     INFRASTRUCTURE_SECRETS,
@@ -328,6 +328,20 @@ def deploy(
         old_extras = owned_extras(live["items"], instance.name, desired=extras)
         if any(kind == "PersistentVolumeClaim" for kind, _ in old_extras.keys() - extras.keys()):
             raise ValueError("Removing an extra PVC requires an explicit storage migration")
+        helm = f"sudo helm --kubeconfig {KUBECONFIG} --namespace {namespace}"
+        installed = _ssh(host, f"{helm} list --filter '^{RELEASE_NAME}$' -q", capture=True).strip()
+        previous = _ssh(host, f"{helm} get manifest {RELEASE_NAME}", capture=True) if installed else ""
+        previous_values = (
+            json.loads(_ssh(host, f"{helm} get values {RELEASE_NAME} -o json", capture=True)) if installed else None
+        )
+        desired = _ssh(
+            host,
+            f"{helm} template {RELEASE_NAME} {remote_tmp}/chart -f {remote_tmp}/values.json"
+            + (" --is-upgrade" if installed else ""),
+            capture=True,
+        )
+        plan = deployment_plan(previous, desired)
+        print("Helm resource plan: " + json.dumps(plan, sort_keys=True), flush=True)
         pre_deploy_backup(host, instance.name, values, remote_tmp=remote_tmp)
         sync_checkout(workflow_repo, host, commit, checkout, repo_url)
         request = json.dumps(
@@ -338,11 +352,15 @@ def deploy(
             f"sudo python3 -c {shlex.quote(_INSTANCE_KEY_PROGRAM)}",
             stdin=request,
         )
-        _ssh(
-            host,
-            f"set -e; sudo helm upgrade --install {RELEASE_NAME} {remote_tmp}/chart --kubeconfig {KUBECONFIG} "
-            f"--namespace {namespace} -f {remote_tmp}/values.json --wait --timeout 15m; rm -rf {remote_tmp}",
-        )
+        if any(plan.values()) or previous_values != values:
+            _ssh(
+                host,
+                f"set -e; {helm} upgrade --install {RELEASE_NAME} {remote_tmp}/chart "
+                f"-f {remote_tmp}/values.json --wait --timeout 15m",
+            )
+        else:
+            print("No Helm changes; activating bundles/configuration in place", flush=True)
+        _ssh(host, f"rm -rf {remote_tmp}")
         for kind, extra_name in old_extras.keys() - extras.keys():
             _ssh(host, f"{kubectl} delete {kind} {shlex.quote(extra_name)}")
         for key, document in extras.items():

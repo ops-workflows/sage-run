@@ -4,12 +4,30 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from urllib.parse import urlparse
+
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.types import ASGIApp
 
 from shared.lib.platform_secrets import apply_platform_env_defaults
 
 logger = logging.getLogger(__name__)
+
+
+class PolicyReloadMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app: ASGIApp, *, reload_policy: Callable[[], None]) -> None:
+        super().__init__(app)
+        self.reload_policy = reload_policy
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        path = Path(os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml"))
+        if not (path.parent / ".git/sage-run-deploy.lock.d").exists():
+            self.reload_policy()
+        return await call_next(request)
 
 
 def bootstrap_platform_env() -> None:

@@ -580,9 +580,9 @@ def expand_env_placeholders(value: Any, env: Mapping[str, str] | None = None) ->
     return value
 
 
-def load_mcp_server_config(path: str, server_id: str) -> dict[str, Any]:
+def load_mcp_server_config(path: str, server_id: str, *, strict: bool = False) -> dict[str, Any]:
     """Return the structured config block for one MCP server from ``mcps.config.<server_id>``."""
-    data = _read_platform_file(path)
+    data = load_platform_config(path) if strict else _read_platform_file(path)
     mcps = data.get("mcps")
     config = mcps.get("config") if isinstance(mcps, dict) else None
     server = config.get(server_id) if isinstance(config, dict) else None

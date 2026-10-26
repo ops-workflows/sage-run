@@ -6,13 +6,16 @@ metadata:
     app.kubernetes.io/component: session-manager
 spec:
   replicas: {{ .Values.sessionManager.replicas }}
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       app.kubernetes.io/component: session-manager
   template:
     metadata:
       annotations:
-        sage-run/config-checksum: {{ .Values.configChecksum | quote }}
+        sage-run/config-checksum: {{ include "sage-run.configChecksum" (dict "root" $ "name" "session-manager") }}
       labels:
         app.kubernetes.io/component: session-manager
     spec:
@@ -27,8 +30,8 @@ spec:
               value: {{ .Values.runtimeBundles.root | quote }}
             - name: RUNTIME_BUNDLE_OBJECT_STORE_BUCKET
               value: {{ .Values.runtimeBundles.objectStoreBucket | quote }}
-            - name: RUNTIME_IMAGE
-              value: {{ include "sage-run.image" (dict "root" . "component" "agent-runtime") | quote }}
+            - name: KUBERNETES_RUNTIME_CONFIG_MAP
+              value: sage-run-runtime
             - name: SANDBOX_MODE
               value: {{ .Values.runtime.sandboxProfile | quote }}
             - name: KUBERNETES_RUNTIME_CLASS

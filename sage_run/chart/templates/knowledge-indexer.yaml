@@ -7,13 +7,16 @@ metadata:
     app.kubernetes.io/component: knowledge-indexer
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       app.kubernetes.io/component: knowledge-indexer
   template:
     metadata:
       annotations:
-        sage-run/config-checksum: {{ .Values.configChecksum | quote }}
+        sage-run/config-checksum: {{ include "sage-run.configChecksum" (dict "root" $ "name" "knowledge-indexer") }}
       labels:
         app.kubernetes.io/component: knowledge-indexer
     spec:

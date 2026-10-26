@@ -33,6 +33,43 @@ def test_local_uses_working_tree():
         validate_ref("main", remote=False)
 
 
+def test_resource_plan_reports_actual_actions_without_leaking_manifest_values():
+    from sage_run.deployment import deployment_plan
+
+    before = """
+kind: Deployment
+metadata: {name: gateway}
+spec: {template: {spec: {containers: [{image: before}]}}}
+---
+kind: Secret
+metadata: {name: credentials}
+data: {key: private-before}
+---
+kind: Deployment
+metadata: {name: removed}
+"""
+    after = before.replace("image: before", "image: after").replace("private-before", "private-after")
+    after = after.split("---\nkind: Deployment\nmetadata: {name: removed}")[0]
+    after += "---\nkind: Deployment\nmetadata: {name: added}\n"
+    plan = deployment_plan(before, after)
+    assert plan == {
+        "create": ["Deployment/added"],
+        "roll": ["Deployment/gateway"],
+        "update": ["Secret/credentials"],
+        "delete": ["Deployment/removed"],
+    }
+    assert "private" not in json.dumps(plan)
+
+
+def test_job_avoids_helm_upgrade_when_values_and_resources_are_unchanged(monkeypatch):
+    from sage_run import incluster
+
+    run = MagicMock(return_value="kind: ConfigMap\nmetadata: {name: runtime}\ndata: {image: pinned}\n")
+    monkeypatch.setattr(incluster, "_run", run)
+    incluster._helm_values({"images": {"tag": "pinned"}}, previous_values={"images": {"tag": "pinned"}})
+    assert all("upgrade" not in call.args for call in run.call_args_list)
+
+
 def test_checkout_lock_rejects_competing_writers_and_releases_on_failure(tmp_path):
     (tmp_path / ".git").mkdir()
     with checkout_lock(tmp_path), pytest.raises(ValueError, match="Another"), checkout_lock(tmp_path):
@@ -194,7 +231,9 @@ def cluster_deploy(tmp_path, monkeypatch):
         "deployer": {"enabled": True},
         "backups": {"enabled": True},
         "infrastructure": {},
-        **dict.fromkeys(("mcps", "connectors", "workflowMcps", "env", "serviceEnv", "hostAliases"), {}),
+        **dict.fromkeys(
+            ("mcps", "connectors", "workflowMcps", "env", "serviceEnv", "hostAliases", "configChecksums"), {}
+        ),
     }
     encoded = {key: base64.b64encode(b"unchanged").decode() for key in ("PG_PASSWORD", "OBJECT_STORE_SECRET_KEY")}
     run = MagicMock(side_effect=[json.dumps(current), '{"items":[]}', json.dumps({"data": encoded}), ""])

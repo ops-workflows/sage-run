@@ -14,6 +14,25 @@ from tests.runtime.docker_support import DockerRuntimeLauncher, RuntimeLaunchSpe
 pytestmark = pytest.mark.unit
 
 
+def test_runtime_image_is_read_for_each_new_task_and_missing_images_fail_explicitly(monkeypatch):
+    from session_manager.runtime_launchers import KubernetesRuntimeLauncher
+
+    from shared.lib.config import settings
+
+    launcher = object.__new__(KubernetesRuntimeLauncher)
+    launcher.core = MagicMock()
+    launcher.namespace = "test"
+    monkeypatch.setattr(settings, "kubernetes_runtime_config_map", "sage-run-runtime")
+    launcher.core.read_namespaced_config_map.return_value.data = {"image": "registry/runtime@sha256:first"}
+    assert launcher.runtime_image() == "registry/runtime@sha256:first"
+    launcher.core.read_namespaced_config_map.return_value.data = {"image": "registry/runtime@sha256:second"}
+    assert launcher.runtime_image() == "registry/runtime@sha256:second"
+    launcher.core.read_namespaced_config_map.return_value.data = {}
+    with pytest.raises(RuntimeError, match="nonempty image"):
+        launcher.runtime_image()
+    launcher.core.read_namespaced_config_map.assert_called_with("sage-run-runtime", "test")
+
+
 def test_docker_launcher_translates_spec_to_container_run(monkeypatch):
     monkeypatch.setattr("tests.runtime.docker_support.sys.platform", "linux")
     monkeypatch.delenv("SANDBOX_MODE", raising=False)

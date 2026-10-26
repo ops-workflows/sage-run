@@ -9,6 +9,11 @@ metadata:
     app.kubernetes.io/name: {{ $name }}
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/component: mcp
@@ -16,7 +21,7 @@ spec:
   template:
     metadata:
       annotations:
-        sage-run/config-checksum: {{ $.Values.configChecksum | quote }}
+        sage-run/config-checksum: {{ include "sage-run.configChecksum" (dict "root" $ "name" (printf "mcp-%s" $name)) }}
       labels:
         app.kubernetes.io/component: mcp
         app.kubernetes.io/name: {{ $name }}
@@ -30,6 +35,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ $mcp.port }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 2
           env:
             {{- include "sage-run.commonEnv" $ | nindent 12 }}
             {{- include "sage-run.serviceEnv" (dict "root" $ "name" (printf "mcp-%s" $name)) | nindent 12 }}

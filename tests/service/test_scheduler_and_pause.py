@@ -15,6 +15,92 @@ from sqlalchemy import select
 pytestmark = pytest.mark.service
 
 
+@pytest.mark.asyncio
+async def test_running_scheduler_reloads_only_after_activation_writer_finishes(
+    async_engine, fixture_workflows_dir: Path, tmp_path, monkeypatch
+) -> None:
+    from contextlib import suppress
+
+    from gateway import scheduler
+    from gateway.main import _watch_deployments
+    from gateway.provisioner import run_provisioner_scan
+    from shared.lib import config_reload
+    from shared.lib.config import settings
+    from shared.lib.db import async_session_factory
+    from shared.lib.models import Agent, Schedule, WorkflowRepoState
+
+    monkeypatch.setattr(settings, "workflow_repo_paths", str(fixture_workflows_dir))
+    monkeypatch.setattr(settings, "workflow_repo_local_path", str(tmp_path))
+    monkeypatch.setattr(config_reload, "async_session_factory", async_session_factory)
+    await run_provisioner_scan()
+    await scheduler.start_scheduler()
+    running_scheduler = scheduler._scheduler
+    assert running_scheduler is not None
+    handler_started, handler_release, handler_finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def in_flight_handler():
+        handler_started.set()
+        await handler_release.wait()
+        handler_finished.set()
+
+    running_scheduler.add_job(in_flight_handler, DateTrigger(run_date=datetime.now(UTC)))
+    await asyncio.wait_for(handler_started.wait(), timeout=1)
+    watch = asyncio.create_task(_watch_deployments())
+    try:
+        guard = tmp_path / ".git/sage-run-deploy.lock.d"
+        guard.mkdir(parents=True)
+        async with async_session_factory() as session:
+            agent = (await session.execute(select(Agent).where(Agent.name == "platform-test"))).scalar_one()
+            schedule = (
+                await session.execute(
+                    select(Schedule).where(Schedule.agent_id == agent.id, Schedule.name == "test-daily")
+                )
+            ).scalar_one()
+            schedule.name = "reloaded"
+            schedule.prompt = "new activated prompt"
+            state = await session.get(WorkflowRepoState, 1)
+            if state is None:
+                state = WorkflowRepoState(id=1)
+                session.add(state)
+            state.last_synced_at = datetime.now(UTC)
+            state.last_sync_status = "ok"
+            await session.commit()
+        await asyncio.sleep(1.1)
+        assert running_scheduler.get_job("platform-test:reloaded") is None
+        guard.rmdir()
+
+        async def wait_for_reload():
+            while running_scheduler.get_job("platform-test:reloaded") is None:
+                await asyncio.sleep(0.05)
+
+        await asyncio.wait_for(wait_for_reload(), timeout=3)
+        assert scheduler._scheduler is running_scheduler
+        assert running_scheduler.get_job("platform-test:test-daily") is None
+        assert running_scheduler.get_job("platform-test:reloaded").args[2] == "new activated prompt"
+        handler_release.set()
+        await asyncio.wait_for(handler_finished.wait(), timeout=1)
+        async with async_session_factory() as session:
+            agent = (await session.execute(select(Agent).where(Agent.name == "platform-test"))).scalar_one()
+            assert agent.paused is True
+            schedule = (
+                await session.execute(
+                    select(Schedule).where(Schedule.agent_id == agent.id, Schedule.name == "reloaded")
+                )
+            ).scalar_one()
+            schedule.cron = "invalid"
+            await session.commit()
+        jobs = running_scheduler.get_jobs()
+        with pytest.raises(ValueError, match="5-field cron"):
+            await scheduler.reload_schedules()
+        assert running_scheduler.get_jobs() == jobs
+    finally:
+        handler_release.set()
+        watch.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch
+        await scheduler.stop_scheduler()
+
+
 async def _make_client(fixture_workflows_dir: Path) -> httpx.AsyncClient:
     from shared.lib.config import settings
 

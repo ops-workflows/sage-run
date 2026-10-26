@@ -43,8 +43,9 @@ backups:
   hostPath: ""
   schedule: "0 2 * * *"
 
-# Config changes roll config consumers; workflow-only edits leave this unchanged.
+# Legacy fallback for manually supplied values; the CLI supplies per-workload hashes.
 configChecksum: ""
+configChecksums: {}
 
 # Extra non-secret environment for every platform workload.
 env: {}

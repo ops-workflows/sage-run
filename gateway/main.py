@@ -13,8 +13,9 @@ Mounts:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,8 @@ from gateway.event_collector import router as event_router
 from gateway.message import router as message_router
 from gateway.message_ingress import GatewayMessageIngress
 from gateway.provisioner import run_provisioner_scan
-from gateway.scheduler import start_scheduler, stop_scheduler
+from gateway.scheduler import reload_schedules, start_scheduler, stop_scheduler
+from shared.lib.config_reload import active_config_revision
 from shared.lib.connector_state import MESSAGE_INGRESS_CONNECTOR_ID, connector_is_paused
 from shared.lib.db import async_session_factory, ensure_runtime_schema
 
@@ -34,6 +36,22 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+async def _watch_deployments() -> None:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    revision = None
+    while True:
+        try:
+            latest = await active_config_revision()
+            if latest is not None and latest != revision:
+                await reload_schedules()
+                revision = latest
+                logger.info("Reloaded schedules after workflow activation")
+        except (SQLAlchemyError, ValueError, RuntimeError):
+            logger.exception("Failed to reload activated schedules; will retry")
+        await asyncio.sleep(1)
 
 
 @asynccontextmanager
@@ -53,8 +71,12 @@ async def lifespan(app: FastAPI):
     else:
         await message_ingress.start()
     app.state.message_ingress = message_ingress
+    reload_task = asyncio.create_task(_watch_deployments())
     logger.info("Gateway ready")
     yield
+    reload_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await reload_task
     await message_ingress.stop()
     # Shutdown
     await stop_scheduler()

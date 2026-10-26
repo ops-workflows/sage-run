@@ -108,6 +108,13 @@ class KubernetesRuntimeLauncher:
         self.core = client.CoreV1Api()
         self.namespace = settings.kubernetes_namespace
 
+    def runtime_image(self) -> str:
+        config = self.core.read_namespaced_config_map(settings.kubernetes_runtime_config_map, self.namespace)
+        image = (config.data or {}).get("image", "")
+        if not isinstance(image, str) or not image.strip():
+            raise RuntimeError("Runtime ConfigMap must contain a nonempty image")
+        return image
+
     def _runtime_pod_security_context(self, sandbox_profile: str) -> Any:
         """Run every session container as the non-root runtime user in group 0.
 

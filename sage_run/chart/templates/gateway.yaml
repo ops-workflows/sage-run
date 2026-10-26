@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        sage-run/config-checksum: {{ .Values.configChecksum | quote }}
+        sage-run/config-checksum: {{ include "sage-run.configChecksum" (dict "root" $ "name" "gateway") }}
       labels:
         app.kubernetes.io/component: gateway
     spec:

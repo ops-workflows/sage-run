@@ -1,6 +1,8 @@
 # Deployment and operations
 
-This guide describes the **1.0.4 implementation**, not the target design.
+Unless explicitly marked **unreleased source**, this guide describes the
+**1.0.4 implementation**, not the target design. The unreleased section records
+source capabilities under test; it is not a release or production qualification.
 Use the workflow repository as the instance, the published `sage-run` CLI as
 the operator tool, and Kubernetes as the serving environment. No platform
 source checkout or platform image build is required on a production server.
@@ -117,7 +119,7 @@ production; an old 1.0.1 image does not contain these commands.
 
 ## Current support and unfinished work
 
-| Surface | Works today | Not yet implemented or qualified |
+| Surface | Released behavior (through 1.0.4) | Not yet implemented or qualified in that release |
 | --- | --- | --- |
 | Production CLI | Single-node k3s over SSH, committed workflow ref, packaged chart and digest-pinned release images | Generic remote kube-context deployment; multi-node checkout placement |
 | Local CLI | Rancher Desktop Kubernetes, working-tree mount, optional platform source builds | Turnkey k3d/kind setup or image import |
@@ -184,6 +186,30 @@ instance-specific choices to avoid network conflicts, not universal defaults.
 Use the [sandbox configuration](security.md#providing-an-outer-sandbox) and
 verify Bubblewrap and a complete task as non-root under gVisor. A version
 number alone is not a qualification result.
+
+### Managed VM layout
+
+The migrated corp and PS hosts use this layout; `<instance>` is the production
+namespace. These are active paths, not instructions to reinstall or replace
+the node runtime.
+
+| Path | Purpose / handling |
+| --- | --- |
+| `/etc/sage-run/<instance>/age.key` | Production age identity: root-only 0600 file, 0700 parent; secure a separate recovery copy |
+| `/var/lib/sage-run/<instance>/workflow-repo` | Sole deployment-managed serving checkout; no manual edits or private files |
+| `/var/lib/rancher/k3s/` | Active k3s state; `storage/` contains live local-path PVC data, not disposable cache |
+| `/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/gvisor.toml` | Active containerd registration for handler `runsc-pr15008`; verify the effective config for the pinned k3s version |
+| `/etc/gvisor/runsc-pr15008.toml` | Active runtime options, including pinned binary/root paths |
+| `/opt/gvisor/release-20261019.0-pr15008/` | Keep the complete active `runsc`, shim and `gvisor-bin/` auxiliary binary set |
+| `/var/backups/sage-run/<instance>/managed/` | Verified managed recovery sets: 7 nightly / 3 deployment copies |
+| `/var/backups/sage-run/<instance>/20261026-pre-compose-cleanup/` | Manual retirement archive; outside managed rotation, no automatic expiry |
+
+PS also retains its manual `20261026-k8s-cutover/final-stopped/` recovery copy
+under the instance backup directory. The workflow READMEs record each host's
+archives. Retired home-directory checkouts/builds and obsolete Docker runtime
+registrations were archived and removed without changing the active Kubernetes
+handler. Preserve unrelated home files, SSH/shell/account configuration,
+user-managed backups and tooling; never recursively remove a user's home.
 
 ## First-time workflow configuration and keys
 
@@ -296,7 +322,8 @@ The deployer:
 4. Runs Helm with the installed package's chart and release image digests.
 5. Applies committed `deploy/k8s/*.yaml`, substituting
    `${WORKFLOW_REPO_PATH}` with the host checkout path.
-6. Restarts platform Deployments, waits for rollouts and syncs workflow bundles.
+6. Reconciles affected Deployments, waits for rollouts and activates workflow
+   bundles; workflow-only changes do not require pod restarts.
 
 The checkout is deployment-managed: the CLI force-checks out the commit and
 cleans untracked files. **Do not edit it or store private files there.**
@@ -326,6 +353,9 @@ context, independently of browser authentication.
 
 ## Ongoing updates: actual behavior
 
+This table describes released behavior through 1.0.4. Selective reload and
+diff optimizations in the working source tree are listed separately below.
+
 | Change | Operator action today | Effect |
 | --- | --- | --- |
 | Prompts, skills, agents, instructions, workflow settings | Push and use **Deploy now**, or run CLI deploy | Rebuilds/promotes bundles with no serving pod restarts |
@@ -348,6 +378,48 @@ above rather than assuming such targets exist.
 Running tasks retain their launch environment and bundle. Avoid disruptive
 deploys during active work: the shared lock serializes deployment/backup
 writers, but there is no active-task drain yet.
+
+### Unreleased source: selective reload and deployment diffs
+
+**Not published or deployed to production.** The following capabilities are
+implemented in the source tree and are under test. They do not change the
+behavior of an installed 1.0.3/1.0.4 CLI, image or production instance.
+
+The first upgrade from the released 1.0.3/1.0.4 chart can trigger a one-time
+consumer rollout as workload annotations, rollout strategies and environment
+representation change, even without a reloadable configuration change.
+Restart-free config/runtime-only guarantees apply **after adoption of the new
+chart and runtime**, not to that initial upgrade.
+
+| Change / consumer | Source behavior |
+| --- | --- |
+| Runtime environment, model profiles, named connections and bundles | Excluded from workload startup hashes; consumers that read these per task use the activated settings for new work without pod restarts |
+| Message-bus startup settings | Affect Gateway, Session Manager and message MCP hashes, not unrelated workloads |
+| Knowledge startup settings | Affect Gateway, indexer and knowledge MCP hashes, not unrelated workloads |
+| Custom MCP policy or source | Rolls that MCP; bundled integration policy refresh does not imply custom MCP hot reload |
+| Bundled Salesforce, GitHub, Splunk, CloudWatch and GCP logging MCP policy | Refreshes per HTTP request; reload is deferred while the checkout writer guard exists |
+| ServiceNow connector query/configuration and connection credentials | Checks the successful activation revision every second and reloads in the same process, preserving deduplication and pause state |
+| Pub/Sub connector configuration | Reconnects in-process only when its own activated connector configuration changes, not for unrelated workflow changes |
+| Gateway schedules | The running process reconciles the scheduler from persisted activation without killing existing handlers |
+| Runtime-only image selection | Stored in a ConfigMap and read through the Kubernetes API for each new task; no Session Manager rollout solely for that image change |
+| Startup-only infrastructure, database pools, providers, service images or environment settings | Still roll the affected services; these settings are not arbitrary in-process reloads |
+
+MCP Deployments use readiness-gated `RollingUpdate` with `maxUnavailable: 0`.
+Singleton Session Manager, connector and indexer Deployments use `Recreate`
+to avoid overlapping consumers. This is rollout sequencing, **not** atomic
+intake drain or a guarantee that all service-changing deploys are interruption-free.
+Running tasks retain their launch-time environment, image and bundle.
+
+Local CLI, SSH CLI and deployment Jobs share a secret-safe Helm resource diff,
+logging **create / roll / update / delete** actions. Helm is skipped only when
+both rendered manifests **and** Helm values are unchanged. Backup and activation
+steps still run; unchanged Helm input does not bypass production backup safety.
+This execution-time diff is not a full pre-confirmation/live-plan UI or API.
+
+Atomic intake drain, general configuration hot reload, ordered migrations,
+runtime resource/network hardening and UI platform-version handover remain
+pending. Platform upgrades and migrations remain reviewed CLI/operator work;
+no UI upgrade capability is added by these source changes.
 
 ## Local workflow and platform development
 
@@ -412,6 +484,14 @@ uvx --from 'sage-run==1.0.4' sage-run down .  # keeps PVCs and Secrets
 The workload chart and launcher use standard Deployments, StatefulSets,
 Services, Secrets, PVCs and Jobs, but the operator commands are more specific:
 
+| Target | Implemented / verified path | Remaining qualification or adaptation |
+| --- | --- | --- |
+| Single-node k3s on the production VMs | Qualified SSH/sudo deployment with a hostPath checkout and patched gVisor; Helm bootstrap assumes Linux amd64 | Preserve qualified storage, DNS, registry access and full-task sandbox behavior on each host |
+| Rancher Desktop Kubernetes/Moby | Qualified local working-tree hostPath, shared Docker image store/source builds and Traefik | Preserve checkout visibility, routing and local sandbox checks |
+| k3d / kind | Chart-level potential only; no turnkey or qualified CLI path | Node volume mapping, image import/registry, storage, ingress/ports and actual task tests; k3d `ci` gate remains planned |
+| GKE | Not an end-to-end supported operator target | Checkout distribution/storage, scheduling, identity/egress, ingress and managed-runtime/Bubblewrap qualification |
+| OpenShift | Not an end-to-end supported operator target | Runtime availability, SCC/arbitrary-UID compatibility, storage/scheduling, Routes/TLS and security-policy qualification |
+
 - `deploy` assumes single-node k3s, SSH/sudo and a hostPath checkout.
 - `up --context <name>` selects another context, but still assumes a host
   checkout visible on the node, Traefik routing on workstation port 80 for
@@ -426,6 +506,23 @@ Services, Secrets, PVCs and Jobs, but the operator commands are more specific:
   versions cannot simply be replaced with a host binary; OpenShift SCC/UID
   policies may reject the fixed runtime UID 1000 or local/CI sandbox privileges.
   Qualification must include the actual session image, Bubblewrap and policies.
+
+The production qualification used k3s v1.36.5+k3s1, RuntimeClass `gvisor`
+(handler `runsc-pr15008`) and gVisor release-20261019.0 plus PR 15008 commit
+`0ee763a`. Stock release-20260714.0 and release-20261019.0 failed the nested
+Bubblewrap loopback probe. A full Claude task passed as UID 1000/group 0;
+the root task failed. A passing low-level probe or a release containing the
+fix does not replace full-task qualification.
+
+GKE Sandbox's managed gVisor is not automatically equivalent to that pinned
+runtime; Autopilot's managed runtime and security restrictions also require
+separate validation of nested Bubblewrap and the selected pod profile. Neither
+has been qualified here. OpenShift's arbitrary-UID/SCC model requires checking
+image and volume permissions as well as admission of runtime security settings;
+do not assume the fixed UID or weaker local/CI settings will be admitted.
+For multi-node clusters, `workflowRepo.existingClaim` is chart-level plumbing,
+not automated checkout distribution: provision explicitly shared storage (for
+example RWX), placement and permissions. PS production data remains on-premises.
 
 Do not claim production support from successful Helm rendering alone.
 

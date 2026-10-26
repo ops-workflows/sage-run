@@ -11,6 +11,11 @@ metadata:
     sage-run/source: workflow
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/component: mcp
@@ -18,7 +23,7 @@ spec:
   template:
     metadata:
       annotations:
-        sage-run/config-checksum: {{ $.Values.configChecksum | quote }}
+        sage-run/config-checksum: {{ include "sage-run.configChecksum" (dict "root" $ "name" (printf "mcp-%s" $name)) }}
         sage-run/source-checksum: {{ $mcp.checksum | default "" | quote }}
       labels:
         app.kubernetes.io/component: mcp

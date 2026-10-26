@@ -5,7 +5,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +21,84 @@ main = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(main)
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initially_paused", [False, True])
+async def test_subscriber_reopens_after_closing_old_client_and_refreshes_while_paused(monkeypatch, initially_paused):
+    from unittest.mock import AsyncMock
+
+    old = {"_instance_id": "test", "source": {"project": "test-project", "subscription": "original"}}
+    new = {**old, "source": {**old["source"], "subscription": "updated"}}
+    current = {"config": old, "revision": datetime.now(UTC), "paused": initially_paused}
+    events = []
+
+    class Subscriber:
+        def subscription_path(self, project, subscription):
+            return f"projects/{project}/subscriptions/{subscription}"
+
+        def subscribe(self, path, *, callback):
+            events.append(("subscribe", path.rsplit("/", 1)[-1]))
+            return SimpleNamespace(cancel=lambda: events.append(("cancel",)))
+
+        def close(self):
+            events.append(("close",))
+
+    async def activate(*args, **kwargs):
+        current.update(config=new, revision=current["revision"] + timedelta(seconds=1), paused=False)
+
+    async def wait(future, connector_id, *, config, revision):
+        if config == old:
+            await activate()
+        else:
+            main._shutdown = True
+
+    async def active_revision():
+        return current["revision"]
+
+    async def paused(connector_id):
+        return current["paused"]
+
+    monkeypatch.setitem(
+        sys.modules, "google.cloud", SimpleNamespace(pubsub_v1=SimpleNamespace(SubscriberClient=Subscriber))
+    )
+    monkeypatch.setattr(main, "_shutdown", False)
+    monkeypatch.setattr(main, "active_config_revision", active_revision)
+    monkeypatch.setattr(main, "_load_instance_config", lambda: current["config"])
+    monkeypatch.setattr(main, "_connector_is_paused", paused)
+    monkeypatch.setattr(main, "_wait_for_subscriber", wait)
+    monkeypatch.setattr(main.asyncio, "sleep", AsyncMock(side_effect=activate))
+    await main.run_subscriber()
+    expected = [("subscribe", "updated"), ("cancel",), ("close",)]
+    if not initially_paused:
+        expected = [("subscribe", "original"), ("cancel",), ("close",), *expected]
+    assert events == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [False, True])
+async def test_subscriber_only_reconnects_for_its_own_activated_config(monkeypatch, changed):
+    from unittest.mock import AsyncMock, MagicMock
+
+    config = {"_instance_id": "test", "source": {"subscription": "original"}}
+    candidate = {**config, "source": {"subscription": "updated"}} if changed else config
+    future = MagicMock()
+    future.done.return_value = False
+    sleeps = []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        main._shutdown = True
+
+    monkeypatch.setattr(main, "_shutdown", False)
+    monkeypatch.setattr(main, "_connector_is_paused", AsyncMock(return_value=False))
+    revision = datetime.now(UTC)
+    monkeypatch.setattr(main, "active_config_revision", AsyncMock(return_value=revision + timedelta(seconds=1)))
+    monkeypatch.setattr(main, "_load_instance_config", lambda: candidate)
+    monkeypatch.setattr(main.asyncio, "sleep", sleep)
+    await main._wait_for_subscriber(future, "test", config=config, revision=revision)
+    assert sleeps == ([] if changed else [1])
+    future.result.assert_not_called()
 
 
 def test_configure_google_credentials_normalizes_literal_newlines(monkeypatch):

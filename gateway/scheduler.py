@@ -176,6 +176,35 @@ async def stop_scheduler() -> None:
         logger.info("Scheduler stopped")
 
 
+async def reload_schedules() -> None:
+    """Reconcile the running scheduler without cancelling in-flight handlers."""
+    if _scheduler is None:
+        raise RuntimeError("Cannot reload schedules before the scheduler has started")
+    async with async_session_factory() as session:
+        rows = (
+            await session.execute(
+                select(Schedule, Agent.name, Agent.config)
+                .join(Agent, Schedule.agent_id == Agent.id)
+                .where(Schedule.enabled == True)  # noqa: E712
+            )
+        ).all()
+    for schedule, _, _ in rows:
+        _parse_cron(schedule.cron)
+    desired = {_job_id(name, schedule.name) for schedule, name, _ in rows}
+    for job in _scheduler.get_jobs():
+        if job.id not in desired:
+            _scheduler.remove_job(job.id)
+    for schedule, name, config in rows:
+        register_schedule_job(
+            agent_name=name,
+            schedule_name=schedule.name,
+            cron=schedule.cron,
+            prompt=schedule.prompt or "",
+            agent_config=config or {},
+        )
+    await _persist_next_runs()
+
+
 def register_schedule_job(
     *,
     agent_name: str,

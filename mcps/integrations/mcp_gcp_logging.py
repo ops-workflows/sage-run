@@ -21,7 +21,7 @@ from fastmcp import FastMCP
 from fastmcp.dependencies import CurrentHeaders
 from starlette.responses import JSONResponse
 
-from mcps.common import bootstrap_platform_env
+from mcps.common import PolicyReloadMiddleware, bootstrap_platform_env
 from mcps.evidence import compile_redaction_patterns, fit_evidence_budget, redact_text
 from shared.lib.platform_secrets import load_mcp_server_config
 from shared.lib.task_call_budget import TaskCallBudget
@@ -41,13 +41,23 @@ APP_LOG_FILTER = '(log_id("run.googleapis.com/stderr") OR log_id("run.googleapis
 # Only these structured payload fields are projected; identity, client, query, and session fields are dropped.
 SAFE_PAYLOAD_FIELDS = ("caller", "level", "event", "method", "path", "status", "attempt", "retryCount")
 _CONFIG_PATH = os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml")
-_POLICY = load_mcp_server_config(_CONFIG_PATH, "gcp-logging")
-_EVIDENCE_POLICY = load_mcp_server_config(_CONFIG_PATH, "evidence")
-_REDACTION_PATTERNS = compile_redaction_patterns(_EVIDENCE_POLICY.get("redaction_patterns"))
-ALLOWED_PROJECTS = frozenset(str(value) for value in _POLICY.get("allowed_projects", []) if str(value).strip())
-MAX_RESULTS = max(1, min(int(_POLICY.get("max_results") or 200), 1_000))
-MAX_WINDOW_SECONDS = max(1, min(int(_POLICY.get("max_window_hours") or 24), 168)) * 3_600
-MAX_EVIDENCE_BYTES = max(8_192, min(int(_POLICY.get("max_evidence_bytes") or 65_536), 262_144))
+
+
+def _reload_policy() -> None:
+    global _REDACTION_PATTERNS, ALLOWED_PROJECTS, MAX_RESULTS, MAX_WINDOW_SECONDS, MAX_EVIDENCE_BYTES
+    policy = load_mcp_server_config(_CONFIG_PATH, "gcp-logging", strict=True)
+    evidence = load_mcp_server_config(_CONFIG_PATH, "evidence", strict=True)
+    values = (
+        compile_redaction_patterns(evidence.get("redaction_patterns")),
+        frozenset(str(value) for value in policy.get("allowed_projects", []) if str(value).strip()),
+        max(1, min(int(policy.get("max_results") or 200), 1_000)),
+        max(1, min(int(policy.get("max_window_hours") or 24), 168)) * 3_600,
+        max(8_192, min(int(policy.get("max_evidence_bytes") or 65_536), 262_144)),
+    )
+    _REDACTION_PATTERNS, ALLOWED_PROJECTS, MAX_RESULTS, MAX_WINDOW_SECONDS, MAX_EVIDENCE_BYTES = values
+
+
+_reload_policy()
 REQUEST_TIMEOUT_SEC = 20.0
 MAX_EVIDENCE_GROUPS = 20
 MAX_ERROR_CHARS = 600
@@ -410,3 +420,4 @@ async def health(_request):
 
 
 app = mcp.http_app(path="/mcp", transport="streamable-http", stateless_http=False)
+app.add_middleware(PolicyReloadMiddleware, reload_policy=_reload_policy)

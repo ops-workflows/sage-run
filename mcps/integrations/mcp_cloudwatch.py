@@ -16,7 +16,7 @@ from fastmcp import FastMCP
 from fastmcp.dependencies import CurrentHeaders
 from starlette.responses import JSONResponse
 
-from mcps.common import bootstrap_platform_env
+from mcps.common import PolicyReloadMiddleware, bootstrap_platform_env
 from mcps.evidence import (
     compile_redaction_patterns,
     fit_evidence_budget,
@@ -42,30 +42,53 @@ _LOOSE_ALARM_ARN_PATTERN = re.compile(
 )
 _ALARM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-/+=@#]{0,254}$")
 _CONFIG_PATH = os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml")
-_POLICY = load_mcp_server_config(_CONFIG_PATH, "cloudwatch")
-_EVIDENCE_POLICY = load_mcp_server_config(_CONFIG_PATH, "evidence")
-_REDACTION_PATTERNS = compile_redaction_patterns(_EVIDENCE_POLICY.get("redaction_patterns"))
-ALLOWED_REGIONS = frozenset(str(value) for value in _POLICY.get("allowed_regions", []) if str(value).strip())
-ALLOWED_ACCOUNT_IDS = frozenset(str(value) for value in _POLICY.get("allowed_account_ids", []) if str(value).strip())
-ALLOWED_LOG_GROUP_PREFIXES = tuple(
-    str(value) for value in _POLICY.get("allowed_log_group_prefixes", []) if str(value).strip()
-)
-ALLOWED_LOG_GROUPS = frozenset(str(value) for value in _POLICY.get("allowed_log_groups", []) if str(value).strip())
-ALARM_LOG_GROUP_MAPPINGS = {
-    str(alarm_name): tuple(str(value) for value in log_groups if str(value).strip())
-    for alarm_name, log_groups in _POLICY.get("alarm_log_group_mappings", {}).items()
-    if isinstance(log_groups, list)
-}
-ALARM_DIMENSION_LOG_GROUP_TEMPLATES = {
-    str(dimension_name): tuple(str(value) for value in templates if "{value}" in str(value))
-    for dimension_name, templates in _POLICY.get("alarm_dimension_log_group_templates", {}).items()
-    if isinstance(templates, list)
-}
-MAX_QUERY_RESULTS = min(int(_POLICY.get("max_results") or 500), 500)
-MAX_QUERY_CHARS = min(int(_POLICY.get("max_query_chars") or 4_096), 8_192)
-MAX_WINDOW_SECONDS = min(int(_POLICY.get("max_window_hours") or 24), 168) * 3_600
-MAX_SCAN_BYTES = max(1, min(int(_POLICY.get("max_scan_bytes") or 536_870_912), 10_737_418_240))
-MAX_EVIDENCE_BYTES = max(8_192, min(int(_POLICY.get("max_evidence_bytes") or 65_536), 262_144))
+
+
+def _reload_policy() -> None:
+    global _REDACTION_PATTERNS, ALLOWED_REGIONS, ALLOWED_ACCOUNT_IDS, ALLOWED_LOG_GROUP_PREFIXES, ALLOWED_LOG_GROUPS
+    global ALARM_LOG_GROUP_MAPPINGS, ALARM_DIMENSION_LOG_GROUP_TEMPLATES
+    global MAX_QUERY_RESULTS, MAX_QUERY_CHARS, MAX_WINDOW_SECONDS, MAX_SCAN_BYTES, MAX_EVIDENCE_BYTES
+    policy = load_mcp_server_config(_CONFIG_PATH, "cloudwatch", strict=True)
+    evidence = load_mcp_server_config(_CONFIG_PATH, "evidence", strict=True)
+    values = (
+        compile_redaction_patterns(evidence.get("redaction_patterns")),
+        frozenset(str(value) for value in policy.get("allowed_regions", []) if str(value).strip()),
+        frozenset(str(value) for value in policy.get("allowed_account_ids", []) if str(value).strip()),
+        tuple(str(value) for value in policy.get("allowed_log_group_prefixes", []) if str(value).strip()),
+        frozenset(str(value) for value in policy.get("allowed_log_groups", []) if str(value).strip()),
+        {
+            str(name): tuple(str(value) for value in groups if str(value).strip())
+            for name, groups in policy.get("alarm_log_group_mappings", {}).items()
+            if isinstance(groups, list)
+        },
+        {
+            str(name): tuple(str(value) for value in templates if "{value}" in str(value))
+            for name, templates in policy.get("alarm_dimension_log_group_templates", {}).items()
+            if isinstance(templates, list)
+        },
+        min(int(policy.get("max_results") or 500), 500),
+        min(int(policy.get("max_query_chars") or 4_096), 8_192),
+        min(int(policy.get("max_window_hours") or 24), 168) * 3_600,
+        max(1, min(int(policy.get("max_scan_bytes") or 536_870_912), 10_737_418_240)),
+        max(8_192, min(int(policy.get("max_evidence_bytes") or 65_536), 262_144)),
+    )
+    (
+        _REDACTION_PATTERNS,
+        ALLOWED_REGIONS,
+        ALLOWED_ACCOUNT_IDS,
+        ALLOWED_LOG_GROUP_PREFIXES,
+        ALLOWED_LOG_GROUPS,
+        ALARM_LOG_GROUP_MAPPINGS,
+        ALARM_DIMENSION_LOG_GROUP_TEMPLATES,
+        MAX_QUERY_RESULTS,
+        MAX_QUERY_CHARS,
+        MAX_WINDOW_SECONDS,
+        MAX_SCAN_BYTES,
+        MAX_EVIDENCE_BYTES,
+    ) = values
+
+
+_reload_policy()
 MAX_EVIDENCE_GROUPS = 20
 MAX_SAMPLES_PER_GROUP = 2
 MAX_STACK_FRAMES = 12
@@ -767,3 +790,4 @@ async def health(_request):
 
 
 app = mcp.http_app(path="/mcp", transport="streamable-http", stateless_http=False)
+app.add_middleware(PolicyReloadMiddleware, reload_policy=_reload_policy)

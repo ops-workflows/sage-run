@@ -17,7 +17,13 @@ from fastmcp import FastMCP
 from fastmcp.dependencies import CurrentHeaders
 from starlette.responses import JSONResponse
 
-from mcps.common import bootstrap_platform_env, extract_bearer_token, require_header, validate_base_url
+from mcps.common import (
+    PolicyReloadMiddleware,
+    bootstrap_platform_env,
+    extract_bearer_token,
+    require_header,
+    validate_base_url,
+)
 from mcps.evidence import (
     compile_redaction_patterns,
     fit_evidence_budget,
@@ -39,14 +45,32 @@ MAX_STACK_FRAMES = 12
 MAX_STACK_CHARS = 4_096
 MAX_RESPONSE_BYTES = 2_000_000
 _CONFIG_PATH = os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml")
-_POLICY = load_mcp_server_config(_CONFIG_PATH, "splunk")
-_EVIDENCE_POLICY = load_mcp_server_config(_CONFIG_PATH, "evidence")
-_REDACTION_PATTERNS = compile_redaction_patterns(_EVIDENCE_POLICY.get("redaction_patterns"))
-SESSION_COOKIE_NAME = str(_POLICY.get("session_cookie_name") or "").strip()
-MAX_QUERY_RESULTS = min(int(_POLICY.get("max_results") or 500), 500)
-MAX_QUERY_CHARS = min(int(_POLICY.get("max_query_chars") or 4_096), 8_192)
-MAX_WINDOW_SECONDS = min(int(_POLICY.get("max_window_hours") or 24), 168) * 3_600
-MAX_EVIDENCE_BYTES = max(8_192, min(int(_POLICY.get("max_evidence_bytes") or 65_536), 262_144))
+
+
+def _reload_policy() -> None:
+    global _REDACTION_PATTERNS, SESSION_COOKIE_NAME, MAX_QUERY_RESULTS, MAX_QUERY_CHARS
+    global MAX_WINDOW_SECONDS, MAX_EVIDENCE_BYTES
+    policy = load_mcp_server_config(_CONFIG_PATH, "splunk", strict=True)
+    evidence = load_mcp_server_config(_CONFIG_PATH, "evidence", strict=True)
+    values = (
+        compile_redaction_patterns(evidence.get("redaction_patterns")),
+        str(policy.get("session_cookie_name") or "").strip(),
+        min(int(policy.get("max_results") or 500), 500),
+        min(int(policy.get("max_query_chars") or 4_096), 8_192),
+        min(int(policy.get("max_window_hours") or 24), 168) * 3_600,
+        max(8_192, min(int(policy.get("max_evidence_bytes") or 65_536), 262_144)),
+    )
+    (
+        _REDACTION_PATTERNS,
+        SESSION_COOKIE_NAME,
+        MAX_QUERY_RESULTS,
+        MAX_QUERY_CHARS,
+        MAX_WINDOW_SECONDS,
+        MAX_EVIDENCE_BYTES,
+    ) = values
+
+
+_reload_policy()
 _CHECKPOINT_RE = re.compile(
     r"(?P<operation>[\w.:-]+)__checkpoint\s*=>\s*HTTP\s+"
     r"(?P<method>[A-Z]+)\s+[\"'](?P<path>[^\"']+)",
@@ -462,3 +486,4 @@ async def health(_request):
 
 
 app = mcp.http_app(path="/mcp", transport="streamable-http", stateless_http=False)
+app.add_middleware(PolicyReloadMiddleware, reload_policy=_reload_policy)

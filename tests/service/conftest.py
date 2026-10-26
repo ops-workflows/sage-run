@@ -113,6 +113,7 @@ async def async_engine(database_dsn: str):
         await conn.execute(
             text(
                 "TRUNCATE "
+                "control_plane.workflow_repo_state, "
                 "control_plane.background_job_runs, "
                 "control_plane.knowledge_source_versions, "
                 "control_plane.knowledge_sources, "
@@ -145,6 +146,7 @@ async def async_engine(database_dsn: str):
         "gateway.message",
         "gateway.api",
         "gateway.event_collector",
+        "shared.lib.config_reload",
     ):
         mod = sys.modules.get(modname)
         if mod is not None and hasattr(mod, "async_session_factory"):

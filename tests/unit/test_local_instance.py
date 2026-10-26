@@ -88,7 +88,12 @@ def test_source_and_config_checksums_change_pod_templates_not_deployment_metadat
     source.write_text("app = first\n")
     (tmp_path / "workflows/test").mkdir(parents=True)
     (tmp_path / "workflows/test/.mcp.json").write_text('{"url": "http://mcp-smoke:8112/mcp"}')
-    config = {"mcps": {"enabled": ["smoke"]}}
+    agent = tmp_path / "workflows/test/agent.yaml"
+    agent.write_text("name: test\nconnections: [old]\n")
+    config = {
+        "mcps": {"enabled": ["smoke", "salesforce"]},
+        "connections": {"old": {"env": {"SALESFORCE_INSTANCE_URL": "https://test.invalid"}}},
+    }
 
     def templates(config):
         values = render_values(Instance(tmp_path, "checksum-test"), config)
@@ -111,8 +116,77 @@ def test_source_and_config_checksums_change_pod_templates_not_deployment_metadat
     after = templates(config)
     assert {name for name in before if before[name] != after[name]} == {"mcp-smoke"}
     changed = templates({**config, "runtime_env": {"TEST": "changed"}})
-    assert {"gateway", "session-manager", "knowledge-indexer", "mcp-message", "mcp-smoke"} <= {
-        name for name in after if after[name] != changed[name]
+    assert changed == after
+    agent.write_text("name: test\nconnections: [salesforce]\n")
+    renamed = {**config, "connections": {"salesforce": config["connections"]["old"]}}
+    assert templates(renamed) == after
+    policy = {"salesforce": {"allowed_objects": ["Case"]}}
+    assert templates({**renamed, "mcps": {**config["mcps"], "config": policy}}) == after
+    policy["smoke"] = {"startup_policy": "new"}
+    custom = templates({**renamed, "mcps": {**config["mcps"], "config": policy}})
+    assert {name for name in after if after[name] != custom[name]} == {"mcp-smoke"}
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+@pytest.mark.parametrize(
+    ("component", "affected"),
+    [
+        ("agent-runtime", {("ConfigMap", "sage-run-runtime")}),
+        ("gateway", {("Deployment", "gateway")}),
+    ],
+)
+def test_image_change_updates_only_its_consumers(tmp_path, component, affected):
+    def manifests(image):
+        values = render_values(Instance(tmp_path, "runtime-test"), CONFIG)
+        values["images"] = {"overrides": {component: image}}
+        path = tmp_path / "values.json"
+        path.write_text(json.dumps(values))
+        output = subprocess.run(  # noqa: S603 - fixed Helm invocation with test-owned values
+            [shutil.which("helm") or "helm", "template", "sage-run", str(CHART), "-f", str(path)],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout
+        return {(doc["kind"], doc["metadata"]["name"]): doc for doc in yaml.safe_load_all(output) if doc}
+
+    before = manifests("registry/runtime@sha256:first")
+    after = manifests("registry/runtime@sha256:second")
+    assert {key for key in before if before[key] != after[key]} == affected
+    for (kind, name), manifest in after.items():
+        if kind != "Deployment":
+            continue
+        if name.startswith("mcp-"):
+            assert manifest["spec"]["strategy"] == {
+                "type": "RollingUpdate",
+                "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1},
+            }
+            assert manifest["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]["tcpSocket"]
+        elif name in {"session-manager", "servicenow-connector", "knowledge-indexer"}:
+            assert manifest["spec"]["strategy"] == {"type": "Recreate", "rollingUpdate": None}
+
+
+def test_restart_checksums_ignore_task_config_and_scope_startup_settings(tmp_path):
+    import copy
+
+    from sage_run.deployment import configuration_checksums
+
+    config = {
+        "mcps": {"enabled": ["salesforce"]},
+        "connections": {"salesforce": {"env": {"SALESFORCE_INSTANCE_URL": "https://test.invalid"}}},
+    }
+    workloads = ["gateway", "session-manager", "knowledge-indexer", "mcp-message", "mcp-salesforce"]
+    before = configuration_checksums(config, workloads=workloads, workflow_mcps={})
+    changed = copy.deepcopy(config)
+    changed["connections"]["salesforce"]["env"]["SALESFORCE_INSTANCE_URL"] = "https://prod.invalid"
+    changed["runtime_env"] = {"TEST": "new"}
+    changed["model_profiles"] = {"test": {"ANTHROPIC_MODEL": "new"}}
+    assert configuration_checksums(changed, workloads=workloads, workflow_mcps={}) == before
+    changed["message_bus"] = {"provider": "slack"}
+    after = configuration_checksums(changed, workloads=workloads, workflow_mcps={})
+    assert {name for name in before if before[name] != after[name]} == {
+        "gateway",
+        "session-manager",
+        "mcp-message",
     }
 
 
@@ -213,7 +287,12 @@ def test_chart_renders_local_instance_with_compose_service_names(tmp_path):
     session_manager = deployments["session-manager"]["spec"]["template"]["spec"]
     env = {item["name"]: item.get("value") for item in session_manager["containers"][0]["env"]}
     assert env["SANDBOX_MODE"] == "local"
-    assert env["RUNTIME_IMAGE"] == "sage-run-agent-runtime:dev-abc"
+    assert "RUNTIME_IMAGE" not in env
+    assert env["KUBERNETES_RUNTIME_CONFIG_MAP"] == "sage-run-runtime"
+    runtime_config = next(
+        doc for doc in documents if doc["kind"] == "ConfigMap" and doc["metadata"]["name"] == "sage-run-runtime"
+    )
+    assert runtime_config["data"]["image"] == "sage-run-agent-runtime:dev-abc"
     assert env["PLATFORM_CONFIG_FILE"] == "/app/workflows/platform-config.yaml"
     assert session_manager["volumes"][0]["hostPath"]["path"] == str(tmp_path)
     assert deployments["gateway"]["spec"]["strategy"]["type"] == "Recreate"

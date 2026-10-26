@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
-from sage_run.deployment import checkout_lock
+from sage_run.deployment import checkout_lock, configuration_checksums, deployment_plan
 from shared.lib.crypto import decrypt_named_secrets
 from shared.lib.platform_config import load_platform_config as load_merged_platform_config
 
@@ -203,8 +203,20 @@ def render_values(instance: Instance, config: dict) -> dict:
         env["CONTROL_PLANE_UI_URL"] = public_url
         env["GATEWAY_PUBLIC_BASE_URL"] = public_url
     sandbox_profile = instance.sandbox_profile or str(deployment.get("sandbox_profile") or "gvisor")
+    custom_mcps = workflow_mcps(instance.workflow_repo, config)
+    mcp_names = INTEGRATION_MCPS | set(CORE_MCPS) | custom_mcps.keys()
     return {
-        "configChecksum": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest(),
+        "configChecksums": configuration_checksums(
+            config,
+            workloads=[
+                "gateway",
+                "session-manager",
+                "knowledge-indexer",
+                *(f"mcp-{name}" for name in sorted(mcp_names)),
+                *CONNECTOR_COMPONENTS.values(),
+            ],
+            workflow_mcps=custom_mcps,
+        ),
         "deployer": {"enabled": True},
         "images": instance.images,
         "workflowRepo": {"hostPath": str(instance.workflow_repo), "source": "local"},
@@ -219,7 +231,7 @@ def render_values(instance: Instance, config: dict) -> dict:
             str(name): _string_map(values) for name, values in (deployment.get("service_env") or {}).items()
         },
         "infrastructure": _infrastructure_values(deployment),
-        "workflowMcps": workflow_mcps(instance.workflow_repo, config),
+        "workflowMcps": custom_mcps,
         "mcps": {name: {"enabled": name in mcps} for name in INTEGRATION_MCPS | set(CORE_MCPS)},
         "connectors": {name: {"enabled": name in connectors} for name in CONNECTOR_COMPONENTS},
     }
@@ -422,24 +434,49 @@ def _apply_local_instance(instance: Instance, config: dict, identity: str, sourc
         json.dump(values, handle)
         values_file = handle.name
     try:
-        _run(
+        flags = ["--kube-context", instance.context, "--namespace", instance.name]
+        installed = json.loads(
+            _run(["helm", "list", *flags, "--filter", f"^{RELEASE_NAME}$", "-o", "json"], capture=True)
+        )
+        previous = _run(["helm", "get", "manifest", RELEASE_NAME, *flags], capture=True) if installed else ""
+        desired = _run(
             [
                 "helm",
-                "upgrade",
-                "--install",
+                "template",
                 RELEASE_NAME,
                 str(_chart_path(source)),
-                "--kube-context",
-                instance.context,
-                "--namespace",
-                instance.name,
+                *flags,
                 "-f",
                 values_file,
-                "--wait",
-                "--timeout",
-                "15m",
-            ]
+                *(["--is-upgrade"] if installed else []),
+            ],
+            capture=True,
         )
+        plan = deployment_plan(previous, desired)
+        print("Helm resource plan: " + json.dumps(plan, sort_keys=True), flush=True)
+        previous_values = (
+            json.loads(_run(["helm", "get", "values", RELEASE_NAME, *flags, "-o", "json"], capture=True))
+            if installed
+            else None
+        )
+        if any(plan.values()) or previous_values != values:
+            _run(
+                [
+                    "helm",
+                    "upgrade",
+                    "--install",
+                    RELEASE_NAME,
+                    str(_chart_path(source)),
+                    *flags,
+                    "-f",
+                    values_file,
+                    "--wait",
+                    "--timeout",
+                    "15m",
+                ]
+            )
+        else:
+            print("No Helm changes; activating bundles/configuration in place", flush=True)
     finally:
         Path(values_file).unlink(missing_ok=True)
     selector = f"app.kubernetes.io/component in ({','.join(PLATFORM_COMPONENTS)})"

@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from shared.lib.config_reload import active_config_revision
 from shared.lib.connections import connection_environment, resolve_workflow_connections
 from shared.lib.crypto import decrypt_agent_secrets
 from shared.lib.platform_config import load_platform_config
@@ -178,51 +179,54 @@ async def _create_task_from_record(parsed: dict, config: dict) -> None:
         logger.info("Submitted ServiceNow record to task %s", submission.task.id)
 
 
-async def run_polling_consumer(config: dict) -> None:
-    """Poll the configured ServiceNow Table API for new records."""
-    source = config.get("source", {})
+async def run_polling_consumer(config: dict | None = None) -> None:
+    """Poll ServiceNow, reloading configuration after successful activation."""
+    revision = await active_config_revision()
+    config = config if config is not None else _load_instance_config()
     workflow_env = _load_target_workflow_env(config)
-    instance_url = workflow_env.get("SERVICENOW_INSTANCE_URL", "")
-    table = str(source["table"])
-    query = str(source.get("query") or "")
-    fields = source.get("fields", [])
-    interval = source.get("interval_sec", 60)
-
-    username = workflow_env.get("SERVICENOW_USERNAME", "")
-    password = workflow_env.get("SERVICENOW_PASSWORD", "")
-
-    if not instance_url:
-        logger.error("SERVICENOW_INSTANCE_URL must be configured")
-        return
-    if not username or not password:
-        logger.error("SERVICENOW_USERNAME and SERVICENOW_PASSWORD must be configured")
-        return
-
-    # Track already-processed records to avoid duplicates
     seen_sys_ids: set[str] = set()
-
-    api_url = f"{instance_url.rstrip('/')}/api/now/table/{table}"
-    params: dict[str, str] = {
-        "sysparm_query": query,
-        "sysparm_display_value": "true",
-        "sysparm_limit": "50",
-    }
-    if fields:
-        params["sysparm_fields"] = ",".join(fields)
-
-    logger.info("Starting ServiceNow poller: %s (table=%s, interval=%ss)", instance_url, table, interval)
-
-    async with httpx.AsyncClient(
-        auth=(username, password),
-        headers={"Accept": "application/json"},
-        timeout=30.0,
-    ) as client:
+    next_poll = 0.0
+    source_identity = None
+    async with httpx.AsyncClient(headers={"Accept": "application/json"}, timeout=30.0) as client:
         while not _shutdown:
-            if await _connector_is_paused(str(config.get("_instance_id") or "")):
-                await asyncio.sleep(interval)
+            latest = await active_config_revision()
+            if latest is not None and latest != revision:
+                config = _load_instance_config()
+                workflow_env = _load_target_workflow_env(config)
+                revision = latest
+                next_poll = 0.0
+                logger.info("Reloaded ServiceNow configuration after workflow activation")
+            source = config.get("source", {})
+            instance_url = workflow_env.get("SERVICENOW_INSTANCE_URL", "")
+            username = workflow_env.get("SERVICENOW_USERNAME", "")
+            password = workflow_env.get("SERVICENOW_PASSWORD", "")
+            if not instance_url or not username or not password:
+                raise RuntimeError("ServiceNow connection requires INSTANCE_URL, USERNAME and PASSWORD")
+            table = str(source["table"])
+            interval = float(source.get("interval_sec", 60))
+            if interval <= 0:
+                raise ValueError("ServiceNow source.interval_sec must be positive")
+            identity = (instance_url, table, (config.get("target") or {}).get("workflow"))
+            if identity != source_identity:
+                seen_sys_ids.clear()
+                source_identity = identity
+            now = asyncio.get_running_loop().time()
+            if now < next_poll or await _connector_is_paused(str(config.get("_instance_id") or "")):
+                await asyncio.sleep(1)
                 continue
+            next_poll = now + interval
+            api_url = f"{instance_url.rstrip('/')}/api/now/table/{table}"
+            query = str(source.get("query") or "")
+            params = {
+                "sysparm_query": query,
+                "sysparm_display_value": "true",
+                "sysparm_limit": "50",
+            }
+            fields = source.get("fields", [])
+            if fields:
+                params["sysparm_fields"] = ",".join(fields)
             try:
-                resp = await client.get(api_url, params=params)
+                resp = await client.get(api_url, params=params, auth=(username, password))
                 resp.raise_for_status()
                 data = resp.json()
 
@@ -258,7 +262,7 @@ async def run_polling_consumer(config: dict) -> None:
             except Exception:
                 logger.exception("Error polling ServiceNow")
 
-            await asyncio.sleep(interval)
+            await asyncio.sleep(1)
 
 
 async def main_async() -> None:
@@ -268,7 +272,7 @@ async def main_async() -> None:
     _bootstrap_platform_env()
     config = _load_instance_config()
     logger.info("ServiceNow Connector starting (config: %s)", config.get("name", "unknown"))
-    await run_polling_consumer(config)
+    await run_polling_consumer()
 
 
 def main() -> None:

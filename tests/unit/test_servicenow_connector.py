@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -161,7 +162,7 @@ async def test_poll_logs_fetched_count_on_every_pass(monkeypatch, caplog, record
         async def __aexit__(self, *_args):
             return None
 
-        async def get(self, url, *, params):
+        async def get(self, url, *, params, auth):
             return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"result": records})
 
     async def is_paused(connector_id):
@@ -175,6 +176,13 @@ async def test_poll_logs_fetched_count_on_every_pass(monkeypatch, caplog, record
         passes += 1
         if passes == 2:
             connector._shutdown = True
+        else:
+            await original_sleep(0.01)
+
+    async def revision():
+        return None
+
+    original_sleep = connector.asyncio.sleep
 
     monkeypatch.setattr(
         connector,
@@ -187,12 +195,13 @@ async def test_poll_logs_fetched_count_on_every_pass(monkeypatch, caplog, record
     )
     monkeypatch.setattr(connector.httpx, "AsyncClient", Client)
     monkeypatch.setattr(connector, "_connector_is_paused", is_paused)
+    monkeypatch.setattr(connector, "active_config_revision", revision)
     monkeypatch.setattr(connector, "_create_task_from_record", submit)
     monkeypatch.setattr(connector.asyncio, "sleep", next_pass)
     caplog.set_level("INFO", logger=connector.logger.name)
 
     await connector.run_polling_consumer(
-        {"_instance_id": "test-intake", "source": {"table": "incident", "query": "active=true"}}
+        {"_instance_id": "test-intake", "source": {"table": "incident", "query": "active=true", "interval_sec": 0.001}}
     )
 
     poll_logs = [record.getMessage() for record in caplog.records if "ServiceNow poll:" in record.getMessage()]
@@ -205,3 +214,67 @@ async def test_poll_logs_fetched_count_on_every_pass(monkeypatch, caplog, record
     )
     assert len(submitted) == record_count
     assert "test-password" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("paused", [False, True])
+async def test_polling_reloads_credentials_without_restarting_or_reprocessing_seen_records(monkeypatch, paused):
+    from unittest.mock import AsyncMock
+
+    connector = _load_connector_module()
+    old = {
+        "_instance_id": "intake",
+        "source": {"table": "incident", "interval_sec": 3600},
+        "target": {"workflow": "triage"},
+        "password": "old",
+    }
+    new = {**old, "password": "new"}
+    submitted, calls = [], []
+    polls = 0
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, *, params, auth):
+            calls.append(auth)
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"result": [{"sys_id": "same-record"}]},
+            )
+
+    async def sleep(seconds):
+        nonlocal polls
+        polls += 1
+        if polls == 2:
+            connector._shutdown = True
+
+    async def submit(record, config):
+        submitted.append(record)
+
+    revision = datetime.now(UTC)
+    monkeypatch.setattr(
+        connector,
+        "active_config_revision",
+        AsyncMock(side_effect=[revision, revision, revision + timedelta(seconds=1)]),
+    )
+    monkeypatch.setattr(connector, "_load_instance_config", lambda: new)
+    monkeypatch.setattr(
+        connector,
+        "_load_target_workflow_env",
+        lambda config: {
+            "SERVICENOW_INSTANCE_URL": "https://test.invalid",
+            "SERVICENOW_USERNAME": "user",
+            "SERVICENOW_PASSWORD": config["password"],
+        },
+    )
+    monkeypatch.setattr(connector, "_connector_is_paused", AsyncMock(return_value=paused))
+    monkeypatch.setattr(connector, "_create_task_from_record", submit)
+    monkeypatch.setattr(connector.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(connector.asyncio, "sleep", sleep)
+    await connector.run_polling_consumer(old)
+    assert calls == ([] if paused else [("user", "old"), ("user", "new")])
+    assert len(submitted) == (0 if paused else 1)

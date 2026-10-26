@@ -14,7 +14,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from sage_run.backups import create_backup
-from sage_run.deployment import EXTRA_KINDS, checkout_lock, extra_manifests, owned_extras, validate_ref
+from sage_run.deployment import EXTRA_KINDS, checkout_lock, deployment_plan, extra_manifests, owned_extras, validate_ref
 from sage_run.local import BOOTSTRAP_SECRET, RELEASE_NAME, Instance, _chart_path, bootstrap_secret_data, render_values
 from sage_run.remote import materialise
 from shared.lib.config import settings
@@ -107,10 +107,28 @@ async def activate_checkout(ref: str) -> None:
     await run_provisioner_scan()
 
 
-def _helm_values(values: dict) -> None:
+def _helm_values(values: dict, *, previous_values: dict | None = None) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "values.json"
         path.write_text(json.dumps(values), encoding="utf-8")
+        previous = _run("helm", "get", "manifest", RELEASE_NAME, "-n", settings.kubernetes_namespace, capture=True)
+        desired = _run(
+            "helm",
+            "template",
+            RELEASE_NAME,
+            str(_chart_path(None)),
+            "-n",
+            settings.kubernetes_namespace,
+            "-f",
+            str(path),
+            "--is-upgrade",
+            capture=True,
+        )
+        plan = deployment_plan(previous, desired)
+        print("Helm resource plan: " + json.dumps(plan, sort_keys=True), flush=True)
+        if not any(plan.values()) and values == previous_values:
+            print("No Helm changes; activating bundles/configuration in place", flush=True)
+            return
         _run(
             "helm",
             "upgrade",
@@ -185,7 +203,7 @@ def deploy_in_cluster(ref: str) -> int:
         changes["ingress"] = current.get("ingress", {"enabled": False})
         values = merge_values(current, changes)
         # Explicit enable maps must replace old maps, otherwise removed MCPs survive a recursive merge.
-        for key in ("mcps", "connectors", "workflowMcps", "env", "serviceEnv", "hostAliases"):
+        for key in ("mcps", "connectors", "workflowMcps", "env", "serviceEnv", "hostAliases", "configChecksums"):
             values[key] = changes[key]
         values["deployer"] = current["deployer"]
         if remote:
@@ -220,7 +238,7 @@ def deploy_in_cluster(ref: str) -> int:
                 _git(checkout, "checkout", "--detach", commit)
             if new_data != old_data:
                 _run("kubectl", "-n", namespace, "apply", "-f", "-", stdin=json.dumps(wanted_secret), capture=True)
-            _helm_values(values)
+            _helm_values(values, previous_values=current)
             for document in wanted_extras.values():
                 _run("kubectl", "-n", namespace, "apply", "-f", "-", stdin=json.dumps(document), capture=True)
             for kind, name in old_extras.keys() - wanted_extras.keys():

@@ -129,6 +129,7 @@ class Settings(
     agent_memory_versions_to_keep: int = 10
     agent_memory_retention_days: int = 90
     kubernetes_namespace: str = "default"
+    kubernetes_runtime_config_map: str = ""
 
     # ── Secret management ─────────────────────────────────────────
     # Age public key — used by gateway API to encrypt new secrets.

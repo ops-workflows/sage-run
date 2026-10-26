@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from session_manager.runtime_launchers import (
+    KubernetesRuntimeLauncher,
     RuntimeHandle,
     RuntimeLaunchSpec,
     get_runtime_launcher,
@@ -270,6 +271,11 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
         if not isinstance(reminder_config, dict):
             reminder_config = {}
         container_image = runtime.get("container_image") or settings.runtime_image
+        if not runtime.get("container_image") and settings.kubernetes_runtime_config_map:
+            launcher = get_runtime_launcher()
+            if not isinstance(launcher, KubernetesRuntimeLauncher):
+                raise RuntimeError("Runtime ConfigMap requires the Kubernetes launcher")
+            container_image = launcher.runtime_image()
         release = _load_active_release()
         platform_file = _active_platform_config_file(release)
         platform_config_env = _get_platform_config_env(platform_file=platform_file)

@@ -12,11 +12,13 @@ import re
 import signal
 import tempfile
 from collections import UserDict
+from datetime import datetime
 from email import policy
 from email.message import Message
 from html import unescape
 from typing import Any
 
+from shared.lib.config_reload import active_config_revision
 from shared.lib.platform_secrets import (
     apply_platform_env_defaults,
     load_connector_instance,
@@ -359,29 +361,42 @@ def _subscriber_callback(loop: asyncio.AbstractEventLoop, config: dict[str, Any]
     return callback
 
 
-async def _wait_for_subscriber(future, connector_id: str) -> None:
+async def _wait_for_subscriber(
+    future, connector_id: str, *, config: dict[str, Any] | None = None, revision: datetime | None = None
+) -> None:
     while not _shutdown:
         if future.done():
             future.result()
             raise RuntimeError("Pub/Sub subscriber stopped unexpectedly")
         if await _connector_is_paused(connector_id):
             return
+        if config is not None:
+            latest = await active_config_revision()
+            if latest is not None and latest != revision:
+                if _load_instance_config() != config:
+                    logger.info("Reconnecting Pub/Sub after activated connector configuration changed")
+                    return
+                revision = latest
         await asyncio.sleep(1)
 
 
-async def run_subscriber(config: dict[str, Any]) -> None:
+async def run_subscriber(config: dict[str, Any] | None = None) -> None:
     from google.cloud import pubsub_v1
 
-    source = config.get("source", {}) if isinstance(config.get("source"), dict) else {}
-    subscription = str(source.get("subscription") or os.environ.get("GCP_PUBSUB_SUBSCRIPTION") or "").strip()
-    if not subscription:
-        logger.error("GCP_PUBSUB_SUBSCRIPTION or source.subscription must be configured")
-        return
-    _gcs_payload_allowed({}, config)
-
-    project = str(source.get("project") or os.environ.get("GCP_PROJECT") or "").strip()
-    connector_id = str(config.get("_instance_id") or "")
+    revision = await active_config_revision()
+    config = config if config is not None else _load_instance_config()
     while not _shutdown:
+        latest = await active_config_revision()
+        if latest is not None and latest != revision:
+            config = _load_instance_config()
+            revision = latest
+        source = config.get("source", {}) if isinstance(config.get("source"), dict) else {}
+        subscription = str(source.get("subscription") or os.environ.get("GCP_PUBSUB_SUBSCRIPTION") or "").strip()
+        if not subscription:
+            raise RuntimeError("GCP_PUBSUB_SUBSCRIPTION or source.subscription must be configured")
+        _gcs_payload_allowed({}, config)
+        project = str(source.get("project") or os.environ.get("GCP_PROJECT") or "").strip()
+        connector_id = str(config.get("_instance_id") or "")
         if await _connector_is_paused(connector_id):
             await asyncio.sleep(1)
             continue
@@ -397,7 +412,7 @@ async def run_subscriber(config: dict[str, Any]) -> None:
             callback=_subscriber_callback(asyncio.get_running_loop(), config),
         )
         try:
-            await _wait_for_subscriber(future, connector_id)
+            await _wait_for_subscriber(future, connector_id, config=config, revision=revision)
         finally:
             future.cancel()
             subscriber.close()
@@ -411,8 +426,7 @@ def main() -> None:
     start_health_server()
     _bootstrap_platform_env()
     _configure_google_application_credentials()
-    config = _load_instance_config()
-    asyncio.run(run_subscriber(config))
+    asyncio.run(run_subscriber())
 
 
 if __name__ == "__main__":
