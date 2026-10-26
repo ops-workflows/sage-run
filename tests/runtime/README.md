@@ -3,6 +3,8 @@
 These tests spawn real Docker containers running the session entrypoint
 against fake services (mock LLM, fake Message, fake Hindsight, FastMCP
 test server) and assert on the end-to-end session outcome.
+`docker_support.py` is injected by the fixtures; production uses Kubernetes
+Jobs and does not import this Docker-only test implementation.
 
 ## Prerequisites
 

@@ -1,7 +1,8 @@
 # Kubernetes deployment
 
-Use the workflow checkout as the instance. No committed/generated Compose env
-file, separate Helm values file or combined MCP image is needed.
+Use the workflow checkout as the instance. Configuration and encrypted secrets
+live in its platform-config files; no separate values file or combined MCP
+image is needed.
 
 Follow [Deployment and operations](../../../docs/deployment.md) before running
 these commands: replace template values, configure models/integrations and

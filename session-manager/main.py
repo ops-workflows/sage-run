@@ -1,7 +1,7 @@
 """Session Manager — queue consumer loop.
 
-Background worker (no HTTP). Polls the Postgres task queue, spawns Docker
-containers for agent sessions, monitors their lifecycle, and syncs memory to MinIO.
+Background worker (no HTTP). Polls the Postgres task queue, spawns Kubernetes
+session Jobs, and monitors their lifecycle. Job helpers persist project memory.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import time
 from session_manager.container_lifecycle import monitor_containers
 from session_manager.heartbeat import heartbeat_monitor
 from session_manager.housekeeping import housekeeping_loop
-from session_manager.memory_sync import restore_memory
 from sqlalchemy import select
 
 from gateway.plugin_dir import discover_all_plugin_configs
@@ -128,9 +127,6 @@ async def queue_consumer_loop() -> None:
                             ),
                         )
                     continue
-
-                # Restore agent memory from MinIO if volume is empty
-                await restore_memory(task.workflow)
 
                 # Spawn agent container
                 from session_manager.container_lifecycle import spawn_agent_session

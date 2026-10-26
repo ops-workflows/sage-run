@@ -3216,6 +3216,7 @@ connectors = [
     { name = "google-cloud-storage" },
 ]
 dev = [
+    { name = "docker" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -3234,7 +3235,6 @@ server = [
     { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "claude-agent-sdk" },
-    { name = "docker" },
     { name = "fastapi" },
     { name = "fastmcp" },
     { name = "graphifyy" },
@@ -3256,7 +3256,7 @@ requires-dist = [
     { name = "beautifulsoup4", marker = "extra == 'server'", specifier = ">=4.12.3" },
     { name = "boto3", marker = "extra == 'server'", specifier = ">=1.35.0" },
     { name = "claude-agent-sdk", marker = "extra == 'server'", specifier = "==0.2.110" },
-    { name = "docker", marker = "extra == 'server'", specifier = ">=7.1.0" },
+    { name = "docker", marker = "extra == 'dev'", specifier = ">=7.1.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115.0" },
     { name = "fastmcp", marker = "extra == 'server'", specifier = ">=3.0.0" },
     { name = "google-cloud-pubsub", marker = "extra == 'connectors'", specifier = ">=2.23.0" },

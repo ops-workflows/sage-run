@@ -11,5 +11,5 @@ COPY mcps/ ./mcps/
 
 ENV PYTHONPATH=/app
 
-# Entrypoint set per-service via docker-compose command
+# The chart sets each MCP service's command.
 CMD ["python", "-m", "uvicorn", "mcps.core.mcp_message:app", "--host", "0.0.0.0", "--port", "8100"]

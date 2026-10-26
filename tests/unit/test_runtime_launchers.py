@@ -5,17 +5,17 @@ from unittest.mock import MagicMock
 import docker.errors
 import pytest
 from session_manager.runtime_launchers import (
-    DockerRuntimeLauncher,
-    RuntimeLaunchSpec,
     get_runtime_launcher,
     reset_runtime_launcher_for_tests,
 )
+
+from tests.runtime.docker_support import DockerRuntimeLauncher, RuntimeLaunchSpec
 
 pytestmark = pytest.mark.unit
 
 
 def test_docker_launcher_translates_spec_to_container_run(monkeypatch):
-    monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "linux")
+    monkeypatch.setattr("tests.runtime.docker_support.sys.platform", "linux")
     monkeypatch.delenv("SANDBOX_MODE", raising=False)
     monkeypatch.setenv("DOCKER_NETWORK", "test-network")
     client = MagicMock()
@@ -102,7 +102,7 @@ def test_docker_launcher_uses_gha_sandbox_mode(monkeypatch):
 
 
 def test_docker_launcher_uses_gvisor_compatibility_runtime_without_native_relaxations(monkeypatch):
-    monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "linux")
+    monkeypatch.setattr("tests.runtime.docker_support.sys.platform", "linux")
     monkeypatch.setenv("SANDBOX_MODE", "gvisor")
     monkeypatch.setenv("DOCKER_NETWORK", "sage-run-network")
     client = MagicMock()
@@ -135,7 +135,7 @@ def test_docker_launcher_uses_gvisor_compatibility_runtime_without_native_relaxa
     )
 
     kwargs = client.containers.run.call_args.kwargs
-    assert kwargs["runtime"] == "runsc-pr13532"
+    assert kwargs["runtime"] == "runsc"
     assert "security_opt" not in kwargs
     assert "cap_add" not in kwargs
     assert "CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED" not in kwargs["environment"]
@@ -148,7 +148,7 @@ def test_docker_launcher_uses_gvisor_compatibility_runtime_without_native_relaxa
 
 
 def test_docker_launcher_preserves_docker_desktop_host_routing(monkeypatch):
-    monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "darwin")
+    monkeypatch.setattr("tests.runtime.docker_support.sys.platform", "darwin")
     client = MagicMock()
     client.containers.get.side_effect = docker.errors.NotFound("missing")
     container = MagicMock()
@@ -202,14 +202,15 @@ def test_docker_launcher_mounts_workflow_bundle_instead_of_source_dirs():
     assert kwargs["environment"]["WORKFLOW_BUNDLE_CHECKSUM"] == "sha256:abc"
 
 
-def test_runtime_launcher_defaults_to_docker(monkeypatch):
+def test_runtime_launcher_defaults_to_kubernetes(monkeypatch):
     from shared.lib.config import settings
 
     reset_runtime_launcher_for_tests()
-    monkeypatch.setattr(settings, "runtime_launcher", "docker")
-    monkeypatch.setattr("session_manager.runtime_launchers._get_docker_client", lambda: MagicMock())
+    monkeypatch.setattr(settings, "runtime_launcher", "kubernetes")
+    launcher = _kubernetes_launcher()
+    monkeypatch.setattr("session_manager.runtime_launchers.KubernetesRuntimeLauncher", lambda: launcher)
 
-    assert get_runtime_launcher().provider == "docker"
+    assert get_runtime_launcher().provider == "kubernetes"
     reset_runtime_launcher_for_tests()
 
 
@@ -294,7 +295,7 @@ def test_kubernetes_launcher_local_profile_relaxes_seccomp_only(monkeypatch, mod
 
 
 @pytest.mark.parametrize("mode", ["ci", "gha"])
-def test_kubernetes_launcher_ci_profile_mirrors_docker_gha_mode(monkeypatch, mode):
+def test_kubernetes_launcher_ci_profile_allows_nested_sandbox(monkeypatch, mode):
     monkeypatch.setenv("SANDBOX_MODE", mode)
 
     job = _launch_kubernetes_job()
@@ -330,11 +331,9 @@ def test_unknown_sandbox_mode_fails_closed(monkeypatch):
 
 
 def test_docker_launcher_uses_configured_gvisor_runtime(monkeypatch):
-    from shared.lib.config import settings
-
-    monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "linux")
+    monkeypatch.setattr("tests.runtime.docker_support.sys.platform", "linux")
     monkeypatch.setenv("SANDBOX_MODE", "gvisor")
-    monkeypatch.setattr(settings, "gvisor_docker_runtime", "runsc-pr15008")
+    monkeypatch.setenv("TEST_GVISOR_DOCKER_RUNTIME", "runsc-pr15008")
     client = MagicMock()
     client.containers.get.side_effect = docker.errors.NotFound("missing")
     client.networks.get.return_value.containers = []
@@ -350,7 +349,7 @@ def test_docker_launcher_uses_configured_gvisor_runtime(monkeypatch):
     ("mode", "security_opt"), [("local", ["seccomp=unconfined"]), ("ci", ["seccomp=unconfined", "apparmor=unconfined"])]
 )
 def test_docker_launcher_accepts_profile_names(monkeypatch, mode, security_opt):
-    monkeypatch.setattr("session_manager.runtime_launchers.sys.platform", "linux")
+    monkeypatch.setattr("tests.runtime.docker_support.sys.platform", "linux")
     monkeypatch.setenv("SANDBOX_MODE", mode)
     client = MagicMock()
     client.containers.get.side_effect = docker.errors.NotFound("missing")

@@ -71,8 +71,9 @@ Production deploy targets single-node k3s over SSH. Version 1.0.2 adds UI
 Deploy now, deployment Jobs and 7-nightly/3-deployment backup rotation. See
 [deployment Jobs](docs/deployment.md#deployment-jobs-and-backups) for
 their scope and safety limits. In-place configuration reload and ordered
-database migrations remain unfinished. Legacy Compose tooling remains for
-unmigrated instances and is not the recommended new-instance path.
+database migrations remain unfinished. Serving is Kubernetes-only. Docker
+launch/memory helpers and the isolated Postgres fixture exist only under
+`tests/` for runtime scenarios, not as an alternative serving stack.
 
 ## Documentation
 

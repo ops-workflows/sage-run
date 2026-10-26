@@ -30,7 +30,7 @@ class ObjectStoreSettings(BaseSettings):
     # provider: "s3" (MinIO, AWS S3, or any S3-compatible endpoint) or "gcs"
     # (Google Cloud Storage). The same provider selection is used uniformly
     # for agent-memory backups and workflow bundles across every deployment
-    # target (compose or kubernetes).
+    # instance.
     object_store_provider: str = "s3"
     object_store_endpoint: str = "minio:9000"
     object_store_access_key: str = "sage_run"
@@ -56,7 +56,6 @@ class Settings(
     platform_max_running_tasks: int = 3
     workflow_root: str = "/app/workflows"
     repo_path: str = ""
-    host_repo_root: str = ""
     gateway_event_url: str = "http://gateway:8080/events"
     gateway_public_base_url: str = ""
     control_plane_ui_url: str = ""
@@ -76,11 +75,9 @@ class Settings(
     workflow_repo_managed: bool = False
 
     # ── Runtime launcher and memory sync ─────────────────────────
-    runtime_launcher: str = "docker"
+    runtime_launcher: str = "kubernetes"
     # Default agent-runtime image; a workflow's runtime.container_image overrides it.
     runtime_image: str = "sage-run-agent-runtime:latest"
-    memory_sync_mode: str = "docker_volume"
-    memory_filesystem_root: str = "/memory"
     runtime_bundle_root: str = ""
     runtime_bundle_uri_template: str = ""
     # When set, session-manager tars and uploads freshly built bundles to this
@@ -116,8 +113,6 @@ class Settings(
     knowledge_source_request_retries: int = Field(default=3, ge=0)
     kubernetes_memory_helper_image: str = ""
     kubernetes_bootstrap_secret: str = ""
-    # Docker runtime name registered for the patched gVisor build (SANDBOX_MODE=gvisor).
-    gvisor_docker_runtime: str = "runsc-pr13532"
     # Kubernetes runtime Jobs: RuntimeClass for the gvisor sandbox profile and the
     # non-root user (group 0) that Claude Code's Bubblewrap sandbox requires.
     kubernetes_runtime_class: str = "gvisor"

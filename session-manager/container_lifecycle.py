@@ -1,6 +1,6 @@
-"""Container Lifecycle — Docker API for agent session containers.
+"""Runtime lifecycle for agent-session Kubernetes Jobs.
 
-Spawns a Docker container per main agent task. Subagents run INSIDE the
+Spawns a Job per main agent task. Subagents run INSIDE the
 same container (Agent SDK handles this). Monitors container exit, updates
 task status, posts final summary to the configured message provider.
 """
@@ -11,21 +11,18 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import tempfile
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from session_manager.memory_sync import backup_memory
 from session_manager.runtime_launchers import (
-    DockerRuntimeLauncher,
     RuntimeHandle,
     RuntimeLaunchSpec,
     get_runtime_launcher,
 )
-from session_manager.workflow_config import load_agent_yaml, workflow_package_path
+from session_manager.workflow_config import load_agent_yaml
 
 from shared.lib.config import settings
 from shared.lib.connections import connection_environment, connection_secret_names, resolve_workflow_connections
@@ -178,25 +175,6 @@ def _get_platform_config_env(*, platform_file: str | None = None) -> dict[str, s
     return load_platform_env(platform_file, identity=settings.age_identity)
 
 
-def _get_host_repo_root() -> str:
-    if settings.host_repo_root:
-        return settings.host_repo_root.rstrip("/")
-    return os.path.dirname(settings.workflow_root.rstrip("/"))
-
-
-def _resolve_plugin_mount(workflow: str) -> str | None:
-    """Return the host-visible workflow path to bind into runtime containers."""
-    host_workflow_dir = os.path.join(_get_host_repo_root(), "workflows", workflow)
-    if settings.host_repo_root:
-        return host_workflow_dir
-
-    resolved_workflow_dir = workflow_package_path(workflow)
-    if resolved_workflow_dir and os.path.isdir(resolved_workflow_dir):
-        return str(resolved_workflow_dir)
-
-    return host_workflow_dir if os.path.isdir(host_workflow_dir) else None
-
-
 def _runtime_bundle_checksum(bundle_dir: Path) -> str:
     manifest = bundle_dir / "manifest.yaml"
     if not manifest.exists():
@@ -276,11 +254,6 @@ def _object_store_bundle_uri(bundle_dir: Path, workflow: str, *, bucket: str, fr
     if freshly_built:
         key = upload_bundle_archive(bundle_dir, workflow, bucket=bucket)
     return presigned_get_url(bucket, key, expires_sec=settings.runtime_bundle_presigned_url_expires_sec)
-
-
-def _cleanup_stale_container_name(client, container_name: str) -> None:
-    """Remove an exited or never-started container that blocks a retry by name."""
-    DockerRuntimeLauncher(client)._cleanup_stale_container_name(container_name)
 
 
 async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
@@ -367,16 +340,6 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
         secret_names = set(secrets if isinstance(secrets, dict) else {}) | connection_secret_names(connections)
         environment[SECRET_ENV_NAMES_VAR] = ",".join(sorted(secret_names))
 
-        # Build runtime mount inputs. Docker consumes these as volumes; Cloud
-        # Run/Kubernetes launchers consume the same spec as deployment metadata.
-        # Mount the workflow directory READ-ONLY — the runtime stages a
-        # writable workspace copy under /workspace at startup so the
-        # host checkout is never mutated by session side-effects.
-        host_repo_root = _get_host_repo_root()
-        workflow_mount = _resolve_plugin_mount(task.workflow)
-
-        shared_dir = os.path.join(host_repo_root, "shared")
-        shared_mount = shared_dir if settings.host_repo_root or os.path.isdir(shared_dir) else None
         bundle_path, bundle_uri, bundle_checksum = _resolve_workflow_bundle(task.workflow, release=release)
 
         # Per-agent memory mounted separately — the runtime symlinks it
@@ -391,13 +354,6 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
                 workflow=task.workflow,
                 image=container_image,
                 environment=environment,
-                plugin_dir=None if bundle_path or bundle_uri else workflow_mount,
-                # shared/lib is always baked into the runtime image (see
-                # runtime/Dockerfile); this optional host bind-mount only
-                # overrides it for local development, and only makes sense
-                # when there is no local bundle_path occupying the mount
-                # namespace the launcher would otherwise use for it.
-                shared_dir=None if bundle_path else shared_mount,
                 workflow_bundle_path=bundle_path,
                 workflow_bundle_uri=bundle_uri,
                 workflow_bundle_checksum=bundle_checksum,
@@ -447,8 +403,8 @@ async def monitor_containers() -> None:
     Completion routing model (uniform for all task sources):
       1. Session manager updates task status in Postgres (exit 0 → succeeded, else → failed)
     2. Session manager posts completion/failure to the message channel (if configured)
-      3. Session manager backs up agent memory to MinIO
-            4. Runtime streams telemetry during the session; plugin hooks may retain hindsight or trigger reflection
+      3. The Job's memory-upload helper persists memory before the Job exits
+      4. Runtime streams telemetry; hooks may retain hindsight or trigger reflection
 
     Mid-flight communication (approvals, progress, RCA summaries) is handled by the
     agent itself via explicit MCP tool calls (mcp_message.post_message, etc.).
@@ -582,10 +538,7 @@ async def monitor_containers() -> None:
                     # Post completion to the originating message thread
                     await _post_completion_to_message_thread(task_id, workflow, final_status, error_msg)
 
-                    # Backup memory to MinIO
-                    await backup_memory(workflow)
-
-                    # Remove runtime handle / local container
+                    # Remove the completed runtime Job
                     try:
                         launcher.cleanup_session(runtime_status)
                         _running_containers.pop(task_id, None)

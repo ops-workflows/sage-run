@@ -39,14 +39,10 @@ def test_release_event_and_publication_permissions(release_workflow):
     assert "with" not in publisher
 
 
-def test_release_images_cover_compose_and_runtime(release_workflow):
-    compose = yaml.safe_load((REPO_ROOT / "deploy/docker-compose.yml").read_text())
-    expected = {
-        (REPO_ROOT / "deploy" / service["build"]["context"] / service["build"]["dockerfile"]).resolve()
-        for service in compose["services"].values()
-        if "build" in service
-    }
-    expected.add(REPO_ROOT / "runtime/Dockerfile")
+def test_release_images_cover_platform_and_runtime(release_workflow):
+    from sage_run.local import IMAGE_BUILDS
+
+    expected = {REPO_ROOT / dockerfile for dockerfile, _ in IMAGE_BUILDS.values()}
     images = release_workflow["jobs"]["images"]
     targets = images["strategy"]["matrix"]["include"]
     assert {REPO_ROOT / target["dockerfile"] for target in targets} == expected

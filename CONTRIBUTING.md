@@ -47,8 +47,10 @@ helm template sage-run sage_run/chart \
 For an actual local instance, run `sage-run up` from the workflow checkout,
 optionally with `--source /path/to/sage-run`. See
 [Deployment](docs/deployment.md) for Rancher Desktop prerequisites and current
-portability limits. Platform-root Compose targets remain for legacy/test use,
-not as the new Kubernetes operator path.
+portability limits. The platform Makefile manages tests and builds, not a
+serving stack. Its only Compose manifest is the isolated Postgres fixture at
+`tests/compose.yaml`; Docker runtime helpers live in
+`tests/runtime/docker_support.py` and are injected by test fixtures.
 
 ## Workflow Bundle Checks
 

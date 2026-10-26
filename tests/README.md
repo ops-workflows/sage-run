@@ -142,9 +142,12 @@ Runtime tests already use:
   the test ports
 - a local object-store harness for project-memory backup/restore tests
 
-Set `COMPOSE_PROJECT_NAME=sage-run-test` (the Make default) to ensure any
-compose state created by the run is namespaced apart from the
-developer's normal `docker compose` services.
+The only Compose manifest is `tests/compose.yaml`, a Postgres-only fixture.
+Set `COMPOSE_PROJECT_NAME=sage-run-test` (the Make default) to isolate its
+network/database container from other Docker workloads.
+`tests/runtime/docker_support.py` supplies direct Docker launch and volume
+backup/restore helpers, injected by the runtime fixtures. Neither the Docker
+SDK nor these helpers are part of the production serving dependency set.
 
 ## Markers
 

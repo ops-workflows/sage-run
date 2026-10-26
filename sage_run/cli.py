@@ -20,14 +20,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     backup.add_argument("--kind", required=True, choices=("nightly", "deployment"))
     activate = commands.add_parser("activate", help="Activate the already prepared workflow checkout")
     activate.add_argument("--ref", required=True)
-    bootstrap = commands.add_parser("bootstrap", help="Generate private operator bootstrap configuration")
-    bootstrap.add_argument(
-        "--output-dir", type=Path, required=True, help="Private instance state directory outside Git"
-    )
     validate = commands.add_parser("validate", help="Validate an existing workflow repository")
     validate.add_argument("workflow_repo", type=Path, nargs="?", default=Path.cwd())
-    profiles = commands.add_parser("profiles", help="Print optional Compose profiles for a workflow repository")
-    profiles.add_argument("workflow_repo", type=Path, nargs="?", default=Path.cwd())
     for action, description in (
         ("up", "Create or update the local Kubernetes instance from the working tree"),
         ("down", "Remove the local instance's workloads (volumes are kept)"),
@@ -89,10 +83,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         return 0
-    if args.command == "bootstrap":
-        from sage_run.bootstrap import main as bootstrap_main
-
-        return bootstrap_main(output_dir=args.output_dir.expanduser().resolve())
     if args.command == "validate":
         from sage_run.validation import validate_workflow_repo_report
 
@@ -102,15 +92,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         for error in report.errors:
             print(error)
         return int(bool(report.errors))
-    if args.command == "profiles":
-        from sage_run.profiles import workflow_profiles
-
-        try:
-            print(",".join(workflow_profiles(args.workflow_repo.expanduser())))
-        except (OSError, ValueError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-        return 0
     if args.command == "deploy":
         from sage_run.remote import deploy as remote_deploy
 

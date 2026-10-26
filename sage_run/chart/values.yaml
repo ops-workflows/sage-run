@@ -1,6 +1,5 @@
-# SAGE Run instance chart. One release per namespace; Services use the same
-# names as the Compose stack (gateway, postgres, minio, hindsight, mcp-<id>),
-# so workflow .mcp.json URLs and platform defaults work unchanged.
+# SAGE Run instance chart. One release per namespace; stable Service names
+# (gateway, postgres, minio, hindsight, mcp-<id>) match workflow MCP URLs.
 
 images:
   # Image reference: <registry>/<prefix><component>:<tag>. Local builds use an

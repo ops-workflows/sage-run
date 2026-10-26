@@ -1,27 +1,22 @@
 """Unit tests for container-lifecycle helpers.
 
 Tests pure helper functions from ``session_manager.container_lifecycle``:
-env merging, selector resolution, stale-name cleanup logic. Mocks the
-Docker client.
+env merging, selector resolution, and workflow bundle selection.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
-import docker.errors
 import pytest
 from session_manager.container_lifecycle import (
     _active_platform_config_file,
     _apply_runtime_env_overrides,
-    _cleanup_stale_container_name,
     _get_agent_env_vars,
     _get_session_model_selector,
     _lifecycle_cost_usd,
     _load_active_release,
-    _resolve_plugin_mount,
     _resolve_workflow_bundle,
 )
 
@@ -154,45 +149,6 @@ def test_active_release_selects_matching_config_and_bundle(monkeypatch, tmp_path
 
 
 # ── stale container cleanup ──────────────────────────────────────────
-
-
-def test_cleanup_stale_container_removes_exited():
-    client = MagicMock()
-    existing = MagicMock()
-    existing.status = "exited"
-    client.containers.get.return_value = existing
-
-    _cleanup_stale_container_name(client, "session-abc-test")
-
-    existing.remove.assert_called_once_with(force=True)
-
-
-def test_cleanup_stale_container_is_noop_when_not_found():
-    client = MagicMock()
-    client.containers.get.side_effect = docker.errors.NotFound("missing")
-
-    # Should not raise
-    _cleanup_stale_container_name(client, "session-abc-test")
-
-
-def test_cleanup_stale_container_refuses_running():
-    client = MagicMock()
-    running = MagicMock()
-    running.status = "running"
-    client.containers.get.return_value = running
-
-    from docker.errors import DockerException
-
-    with pytest.raises(DockerException):
-        _cleanup_stale_container_name(client, "session-running")
-
-    running.remove.assert_not_called()
-
-
-def test_resolve_plugin_mount_prefers_host_repo_root(monkeypatch):
-    monkeypatch.setattr(settings, "host_repo_root", "/host/repo")
-
-    assert _resolve_plugin_mount("platform-test") == "/host/repo/workflows/platform-test"
 
 
 def test_resolve_workflow_bundle_returns_configured_uri_without_local_root(monkeypatch):

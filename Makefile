@@ -14,90 +14,26 @@ RUNTIME_BUILD ?= docker build
 SANDBOX_MODE ?= macos
 COMPOSE_PROJECT_NAME ?= sage-run-test
 TEST_DOCKER_NETWORK ?= $(COMPOSE_PROJECT_NAME)-network
-BOOTSTRAP_OUTPUT_DIR ?= $(HOME)/.local/state/sage-run/local
-COMPOSE_BOOTSTRAP_ENV_FILE ?= $(BOOTSTRAP_OUTPUT_DIR)/compose.env
-HOST_WORKFLOW_REPO_PATH ?= $(shell sed -n 's/^HOST_WORKFLOW_REPO_PATH=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
-HOST_WORKFLOW_REPO_PATH := $(or $(HOST_WORKFLOW_REPO_PATH),$(CURDIR)/examples/workflow-repo)
-WORKFLOW_PLATFORM_CONFIG_FILE := $(HOST_WORKFLOW_REPO_PATH)/platform-config.yaml
-WORKFLOW_COMPOSE_ENV_FILE := $(HOST_WORKFLOW_REPO_PATH)/deploy/compose.env
-WORKFLOW_COMPOSE_OVERRIDE_FILE := $(HOST_WORKFLOW_REPO_PATH)/deploy/docker-compose.override.yml
-export HOST_WORKFLOW_REPO_PATH
-AGE_IDENTITY ?= $(shell sed -n 's/^AGE_IDENTITY=//p' "$(COMPOSE_BOOTSTRAP_ENV_FILE)" 2>/dev/null | tail -1)
-GATEWAY_URL ?= http://localhost:8080
-COMPOSE_ENV_FILES := $(if $(wildcard $(WORKFLOW_COMPOSE_ENV_FILE)),--env-file "$(WORKFLOW_COMPOSE_ENV_FILE)") $(if $(wildcard $(COMPOSE_BOOTSTRAP_ENV_FILE)),--env-file "$(COMPOSE_BOOTSTRAP_ENV_FILE)")
-COMPOSE_FILES := -f deploy/docker-compose.yml $(if $(wildcard $(WORKFLOW_COMPOSE_OVERRIDE_FILE)),-f "$(WORKFLOW_COMPOSE_OVERRIDE_FILE)")
-COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) $(COMPOSE_FILES)
-# Compose interpolates every service before starting the requested one. The test
-# database only starts Postgres, so provide inert values for runtime-only secrets.
-TEST_COMPOSE ?= AGE_IDENTITY=test-only-not-a-real-age-key LLM_API_KEY=test-only-not-a-real-llm-key PG_PORT=$(TEST_PG_PORT) DOCKER_NETWORK=$(TEST_DOCKER_NETWORK) docker compose --project-name $(COMPOSE_PROJECT_NAME) -f deploy/docker-compose.yml
+TEST_COMPOSE ?= PGUSER=$(PGUSER) PGPASSWORD=$(PGPASSWORD) PG_PORT=$(TEST_PG_PORT) DOCKER_NETWORK=$(TEST_DOCKER_NETWORK) docker compose --project-name $(COMPOSE_PROJECT_NAME) -f tests/compose.yaml
 
 .PHONY: help unit-tests service-tests runtime-tests tests \
-	ensure-test-db up compose-build runtime-build mcp-build clean-test-containers \
-	init bootstrap create-github-app sync set-platform-secret set-workflow-secret
+	ensure-test-db runtime-build mcp-build clean-test-containers \
+	init create-github-app lint format
 
 init: ## Install Python dependencies
 	uv sync --extra dev --extra server --extra kubernetes
 
-bootstrap: ## Guided operator bootstrap (workflow-repo pointer, AGE identity, model key)
-	$(PYTHON) -m sage_run bootstrap --output-dir "$(BOOTSTRAP_OUTPUT_DIR)"
-
 create-github-app: ## Register an organization GitHub App and save its credentials privately
 	$(PYTHON) scripts/create_github_app.py $(GITHUB_APP_ARGS)
 
-sync: ## Sync platform config and workflows through the running gateway
-	@curl --fail --silent --show-error --request POST "$(GATEWAY_URL)/api/platform/workflow-repo/sync" | \
-		$(PYTHON) -c 'import json, sys; payload = json.load(sys.stdin); status = payload.get("last_sync_status"); message = "Workflow sync completed." if status == "ok" else "Workflow sync failed: " + str(payload.get("last_sync_error") or "unknown error"); print(message, file=sys.stdout if status == "ok" else sys.stderr); raise SystemExit(status != "ok")'
-
-set-platform-secret: ## Encrypt a secret in the configured platform-config.yaml
-	@test -f "$(WORKFLOW_PLATFORM_CONFIG_FILE)" || (echo "Platform config not found: $(WORKFLOW_PLATFORM_CONFIG_FILE)" >&2; exit 1)
-	@AGE_IDENTITY="$(AGE_IDENTITY)" $(PYTHON) scripts/set_secret.py \
-		--scope shared \
-		--platform-file "$(WORKFLOW_PLATFORM_CONFIG_FILE)" \
-		$(if $(SECRET_NAME),--name "$(SECRET_NAME)") \
-		$(if $(SECRET_VALUE_FILE),--value-file "$(SECRET_VALUE_FILE)")
-	@$(MAKE) sync
-
-set-workflow-secret: ## Encrypt a secret in WORKFLOW=<workflow>/agent.yaml
-	@test -n "$(WORKFLOW)" || (echo "Set WORKFLOW, for example: make set-workflow-secret WORKFLOW=example-workflow" >&2; exit 1)
-	@test -n "$(HOST_WORKFLOW_REPO_PATH)" || (echo "HOST_WORKFLOW_REPO_PATH is not configured; run make bootstrap." >&2; exit 1)
-	@test -f "$(HOST_WORKFLOW_REPO_PATH)/workflows/$(WORKFLOW)/agent.yaml" || (echo "Workflow not found: $(HOST_WORKFLOW_REPO_PATH)/workflows/$(WORKFLOW)/agent.yaml" >&2; exit 1)
-	@AGE_IDENTITY="$(AGE_IDENTITY)" $(PYTHON) scripts/set_secret.py \
-		--scope plugin \
-		--plugin "$(WORKFLOW)" \
-		--plugins-dir "$(HOST_WORKFLOW_REPO_PATH)/workflows" \
-		$(if $(SECRET_NAME),--name "$(SECRET_NAME)") \
-		$(if $(SECRET_VALUE_FILE),--value-file "$(SECRET_VALUE_FILE)")
-	@$(MAKE) sync
-
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "%-28s %s\n", $$1, $$2}'
-
-compose-build: ## Build all docker compose services
-	@profiles="$$($(PYTHON) -m sage_run profiles "$(HOST_WORKFLOW_REPO_PATH)")"; \
-	echo "Computed COMPOSE_PROFILES=$$profiles"; \
-	COMPOSE_PROFILES="$$profiles" $(COMPOSE) build
 
 runtime-build: ## Build the runtime container image
 	$(RUNTIME_BUILD) -t $(RUNTIME_IMAGE) -f runtime/Dockerfile .
 
 mcp-build: ## Build the shared MCP server container image used by runtime smoke tests
 	docker build -t $(MCP_IMAGE) -f mcps/Dockerfile .
-
-build: runtime-build compose-build ## Build all docker images
-
-up: ## Start the local Compose stack with profiles derived from platform-config.yaml
-	@profiles="$$($(PYTHON) -m sage_run profiles "$(HOST_WORKFLOW_REPO_PATH)")"; \
-	echo "Computed COMPOSE_PROFILES=$$profiles"; \
-	COMPOSE_PROFILES="$$profiles" $(COMPOSE) up -d
-
-down: ## Stop the local docker compose stack
-	$(COMPOSE) down
-
-restart: down build up ## Restart the local docker compose stack
-
-restart-%: ## Restart a specific service (e.g. `make restart-postgres` or `make restart-runtime`)
-	$(COMPOSE) build $*
-	$(COMPOSE) up -d $* --force-recreate
 
 ensure-test-db: ## Create the dedicated Postgres test database if needed
 	$(TEST_COMPOSE) up -d --wait postgres

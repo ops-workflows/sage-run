@@ -1,7 +1,7 @@
 # Configuration
 
 SAGE Run's Kubernetes operator reads configuration from the workflow checkout.
-It does not require a generated `compose.env` or a platform source clone on
+It does not require a generated environment file or a platform source clone on
 the production host.
 
 | Layer | Owner | Committed? | Holds |
@@ -36,7 +36,6 @@ repo-owned config.
 | `WORKFLOW_REPO_LOCAL_PATH` | `/app/workflows` | Container-side workflow checkout mount. |
 | `WORKFLOW_REPO_PATHS` | `""` | Advanced, `os.pathsep`-separated additional workflow roots, primarily for Kubernetes deployments with separately mounted storage. |
 | `REPO_PATH` | `""` | Path to a checked-out/mounted workflow repo root. |
-| `HOST_REPO_ROOT` | `""` | Legacy Docker bind-mount setting, not required by the Kubernetes operator. |
 
 The Kubernetes operator mounts the single checkout at `/app/workflows`.
 Local `up` derives its host path from the current workflow directory; remote
@@ -148,15 +147,12 @@ workflow bundles and agent-memory backups across supported deployment targets.
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `RUNTIME_LAUNCHER` | `docker` | `docker` or `kubernetes`. |
-| `MEMORY_SYNC_MODE` | `docker_volume` | `docker_volume` for Compose or `filesystem` for a mounted memory path. Kubernetes Jobs use task-local `/memory` plus object-store restore/upload. |
-| `MEMORY_FILESYSTEM_ROOT` | `/memory` | Container path agent memory volumes mount at. |
+| `RUNTIME_LAUNCHER` | `kubernetes` | Kubernetes Jobs; `k8s` is an alias. Other values fail launch. |
 | `CLAUDE_CODE_THINKING_MODE` | `default` | `default`/`on` leaves provider thinking behavior unchanged; `off`/`disabled` passes Claude Code's explicit thinking-disable switch. Provider support varies. |
 | `KUBERNETES_MEMORY_HELPER_IMAGE` | `""` | Image containing `session_manager.memory_sync`; Helm defaults it to the session-manager image. |
 | `KUBERNETES_BOOTSTRAP_SECRET` | `""` | Bootstrap Secret name referenced by Kubernetes memory helper Jobs for object-store credentials. Helm sets it from `bootstrap.existingSecret`. |
 | `KUBERNETES_NAMESPACE` | `default` | Kubernetes launcher namespace. |
 | `SANDBOX_MODE` | `""` | Sandbox profile for agent sessions: `local` (alias `macos`), `ci` (alias `gha`) or `gvisor`. Unknown values fail task launch. |
-| `GVISOR_DOCKER_RUNTIME` | `runsc-pr13532` | Docker runtime name used by the `gvisor` profile. |
 | `KUBERNETES_RUNTIME_CLASS` | `gvisor` | RuntimeClass used by the `gvisor` profile for Kubernetes session Jobs. |
 | `KUBERNETES_RUNTIME_UID` | `1000` | Non-root UID (group 0) for Kubernetes session pods, including memory helpers. |
 | `KUBERNETES_RUNTIME_TTL_SEC` | `86400` | `ttlSecondsAfterFinished` for session Jobs; `0` disables it. |
@@ -526,11 +522,9 @@ usage tooltip. This cache is an
 undocumented Claude Code internal, so re-check cost reporting after CLI
 upgrades. The model gateway's own spend log remains the billing source.
 
-### Legacy environment files
+### Deployment configuration
 
-Generated Compose/bootstrap env files belong only to unmigrated installations.
-The Kubernetes operator does not read `deploy/compose.env` or a generated
-Compose env file. Non-secret deployment options now live under `deployment:`;
+Non-secret deployment options live under `deployment:`;
 infrastructure credentials live encrypted under `secrets:`. The operator
 decrypts them into a Secret for services that cannot decrypt age themselves.
 

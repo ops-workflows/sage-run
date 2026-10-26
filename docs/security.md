@@ -110,9 +110,8 @@ Claude Code's Bubblewrap sandbox cannot create namespaces when the session runs
 as root in an unprivileged container (`bwrap: Creating new namespace failed:
 Operation not permitted`), under Docker and Kubernetes alike. The runtime image
 includes a non-root `sage` user (UID 1000, group 0); Kubernetes session pods run
-as that user. Docker sessions still run as root, so workflows that enable Bash
-under the Docker `gvisor` profile are affected until the Docker launcher also
-runs sessions as a non-root user.
+as that user. Production has no Docker session launcher or Docker socket
+dependency. Direct Docker execution is confined to the runtime test harness.
 
 **Other Kubernetes distributions.** A plain Pod is not an agent-sandbox
 product by itself. On GKE,
@@ -174,12 +173,6 @@ The `local` and `ci` profiles relax host-kernel restrictions for nested
 Bubblewrap; they are not production substitutes for gVisor. OpenShift UID/SCC
 policies and GKE-managed runtimes need separate qualification and deployment
 adaptation even after the gVisor fix merges.
-
-**Legacy Docker launcher.** It remains for unmigrated instances and selects
-the runtime from `GVISOR_DOCKER_RUNTIME`. It still starts sessions as root,
-which breaks the qualified Bubblewrap setup. Its peer-IP `/etc/hosts`
-workaround handles gVisor's inability to use Docker bridge DNS redirection
-for `127.0.0.11`; do not replace isolation with host networking to bypass DNS.
 
 **Cloud Run.**
 [Cloud Run sandboxes](https://cloud.google.com/blog/topics/developers-practitioners/google-cloud-run-sandboxes-are-in-public-preview)

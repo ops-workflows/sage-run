@@ -13,7 +13,7 @@ injected into every ephemeral runtime container:
         secrets:
 
 All keys are env-style names so services can reuse their existing settings
-without Docker Compose needing to decrypt or template secret values.
+without deployment manifests needing to decrypt or template secret values.
 """
 
 from __future__ import annotations
@@ -363,7 +363,7 @@ def load_message_bus_config(path: str, *, identity: str | None = None) -> Messag
     """Load message provider settings from the native ``message_bus`` section.
 
     The returned configuration is never translated into environment variables;
-    Compose and Kubernetes both consume the same mounted YAML file.
+    All services consume the same mounted YAML file.
     """
     data = _read_platform_file(path)
     if not data:

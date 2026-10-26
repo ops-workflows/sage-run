@@ -23,7 +23,6 @@ from importlib.metadata import version
 from pathlib import Path
 
 from sage_run.deployment import checkout_lock
-from sage_run.profiles import CONNECTOR_PROFILES, MCP_PROFILES
 from shared.lib.crypto import decrypt_named_secrets
 from shared.lib.platform_config import load_platform_config as load_merged_platform_config
 
@@ -46,6 +45,7 @@ DEPLOYMENT_KEYS = {
 RELEASE_NAME = "sage-run"
 BOOTSTRAP_SECRET = "sage-run-bootstrap"  # noqa: S105 - Secret resource name, not a credential
 CORE_MCPS = ("message", "memory", "knowledge", "platform")
+INTEGRATION_MCPS = {"salesforce", "splunk", "cloudwatch", "gcp-logging", "jira", "github"}
 # component -> (Dockerfile, build context), relative to the sage-run checkout
 IMAGE_BUILDS = {
     "gateway": ("gateway/Dockerfile", "."),
@@ -93,14 +93,14 @@ def enabled_components(config: dict) -> tuple[set[str], set[str]]:
     """Return (platform MCP ids, connector ids) the instance needs."""
     mcps = set(CORE_MCPS)
     for server_id in (config.get("mcps") or {}).get("enabled") or []:
-        if server_id in MCP_PROFILES:
+        if server_id in INTEGRATION_MCPS:
             mcps.add(server_id)
     connectors: set[str] = set()
     section = config.get("connectors") or {}
     instances = section.get("instances") or {}
     for instance_id in section.get("enabled") or []:
         connector_type = (instances.get(instance_id) or {}).get("type")
-        if connector_type in CONNECTOR_PROFILES:
+        if connector_type in CONNECTOR_COMPONENTS:
             connectors.add(connector_type)
     return mcps, connectors
 
@@ -152,7 +152,7 @@ def workflow_mcps(workflow_repo: Path, config: dict) -> dict[str, dict]:
         server_id = source.stem.removeprefix("mcp_").replace("_", "-")
         if server_id not in enabled:
             continue
-        if server_id in MCP_PROFILES or server_id in CORE_MCPS:
+        if server_id in INTEGRATION_MCPS or server_id in CORE_MCPS:
             raise ValueError(f"Workflow MCP {server_id} conflicts with a platform MCP")
         found = ports.get(server_id, set())
         if len(found) != 1:
@@ -220,7 +220,7 @@ def render_values(instance: Instance, config: dict) -> dict:
         },
         "infrastructure": _infrastructure_values(deployment),
         "workflowMcps": workflow_mcps(instance.workflow_repo, config),
-        "mcps": {name: {"enabled": name in mcps} for name in MCP_PROFILES.keys() | set(CORE_MCPS)},
+        "mcps": {name: {"enabled": name in mcps} for name in INTEGRATION_MCPS | set(CORE_MCPS)},
         "connectors": {name: {"enabled": name in connectors} for name in CONNECTOR_COMPONENTS},
     }
 

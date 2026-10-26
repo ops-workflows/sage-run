@@ -13,16 +13,12 @@ import tarfile
 import pytest
 from session_manager.memory_sync import (
     _extract_archive_to_directory,
-    _get_volume_name,
-    _memory_filesystem_path,
-    _normalize_archive,
-    _stream_to_bytes,
     _tar_directory,
-    backup_memory,
     backup_memory_from_path,
-    restore_memory,
     restore_memory_to_path,
 )
+
+from tests.runtime.docker_support import _get_volume_name, _normalize_archive, _stream_to_bytes
 
 pytestmark = pytest.mark.unit
 
@@ -91,13 +87,6 @@ def test_normalize_archive_empty_input_returns_empty_archive():
         assert tar.getmembers() == []
 
 
-def test_filesystem_memory_path_supports_agent_placeholder(monkeypatch, tmp_path):
-    from shared.lib.config import settings
-
-    monkeypatch.setattr(settings, "memory_filesystem_root", str(tmp_path / "{agent}"))
-    assert _memory_filesystem_path("platform-test") == tmp_path / "platform-test"
-
-
 def test_tar_and_extract_directory_round_trip(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
@@ -123,40 +112,6 @@ def test_extract_directory_rejects_path_traversal(tmp_path):
 
     with pytest.raises(ValueError, match="Unsafe path"):
         _extract_archive_to_directory(buffer.getvalue(), tmp_path / "target")
-
-
-@pytest.mark.asyncio
-async def test_filesystem_backup_and_restore_uses_object_storage(monkeypatch, tmp_path):
-    from shared.lib.config import settings
-
-    object_store: dict[str, bytes] = {}
-
-    def fake_upload(bucket, key, data, *, content_type="application/octet-stream"):
-        object_store[f"{bucket}/{key}"] = data
-        return key
-
-    def fake_download(bucket, key):
-        return object_store.get(f"{bucket}/{key}")
-
-    monkeypatch.setattr(settings, "memory_sync_mode", "filesystem")
-    monkeypatch.setattr(settings, "memory_filesystem_root", str(tmp_path / "memory"))
-    monkeypatch.setattr("session_manager.memory_sync.upload_bytes", fake_upload)
-    monkeypatch.setattr("session_manager.memory_sync.download_bytes", fake_download)
-
-    memory_dir = tmp_path / "memory" / "platform-test"
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "notes.md").write_text("persist me")
-
-    assert await backup_memory("platform-test") is True
-    assert "agent-memory/platform-test/latest.tar.gz" in object_store
-
-    for path in sorted(memory_dir.rglob("*"), reverse=True):
-        if path.is_file():
-            path.unlink()
-        elif path.is_dir():
-            path.rmdir()
-    assert await restore_memory("platform-test") is True
-    assert (memory_dir / "notes.md").read_text() == "persist me"
 
 
 @pytest.mark.asyncio

@@ -93,15 +93,12 @@ sessions:
   directory; agents discover and update it with standard file tools (`Glob`,
   `Grep`, `Read`, `Write`) rather than a special memory tool. `MEMORY.md` is a
   convention, not a magic file — other note files can live beside it.
-- session-manager backs project memory up to object storage after each session
+- The session Job backs project memory up to object storage after each session
   (`agent-memory/{agent}/latest.tar.gz` plus a timestamped version) and
   restores it before the next session. Kubernetes Jobs use a task-local
   `emptyDir` at `/memory`, restored by
   an init helper and uploaded by a completion helper, so no Kubernetes memory
   PVC is required.
-- `MEMORY_SYNC_MODE` controls the local service path (`docker_volume` or
-  `filesystem`). Kubernetes runtime Jobs always use the object-store helper
-  flow described above — see [Configuration](configuration.md).
 
 Housekeeping prunes old agent-memory versions and expired learning-memory per
 the retention settings in [Configuration](configuration.md), while leaving
@@ -111,8 +108,9 @@ These snapshots protect project-memory history, not the whole instance.
 Hindsight memory is stored in the `hindsight` Postgres schema; task history and
 session output are in platform schemas. A recovery backup must cover those
 schemas, object storage and any Hindsight filesystem assets together.
-Scheduled full backups and automatic cleanup of operator backup directories
-are not implemented in 1.0.1; see [Deployment](deployment.md#backups-and-recovery).
+Managed full backups independently retain seven nightly and three deployment
+copies. Manual recovery archives are not automatically removed; see
+[Deployment](deployment.md#backups-and-recovery).
 
 ## Prompt/context
 

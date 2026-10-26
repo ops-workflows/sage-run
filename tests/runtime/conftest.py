@@ -13,7 +13,7 @@ Requirements for running:
 - Docker daemon must be running
 - ``sage-run-agent-runtime:latest`` image must be built
 - ``TEST_RUNTIME_ENABLED=1`` and ``TEST_DATABASE_URL`` must be set
-- Postgres (from docker-compose) must be reachable
+- Postgres (from the isolated tests/compose.yaml fixture) must be reachable
 """
 
 from __future__ import annotations
@@ -293,9 +293,8 @@ def _event_collector(_event_store: list[dict[str, Any]]) -> _UvicornServer:
 def local_memory_store(tmp_path):
     store = LocalMemoryStore(tmp_path / "object-store")
 
-    import session_manager.memory_sync as memory_sync_mod
-
     import shared.lib.object_store as object_store_mod
+    import tests.runtime.docker_support as memory_sync_mod
 
     original_upload_storage = object_store_mod.upload_file
     original_download_storage = object_store_mod.download_file
@@ -323,7 +322,8 @@ def local_memory_store(tmp_path):
 def reset_agent_memory_state(local_memory_store):
     def _reset(agent_name: str = "platform-test") -> None:
         from docker.errors import APIError, NotFound
-        from session_manager.memory_sync import _get_docker_client, _get_volume_name
+
+        from tests.runtime.docker_support import _get_docker_client, _get_volume_name
 
         local_memory_store.clear_agent(agent_name)
         client = _get_docker_client()
@@ -528,15 +528,21 @@ def patched_settings(
     _fake_services: dict[str, _UvicornServer],
     _event_collector: _UvicornServer,
     merged_repo_root: Path,
+    monkeypatch,
 ):
     """Temporarily patch shared.lib.config.settings for runtime tests."""
     from shared.lib.config import settings
+    from tests.runtime.docker_support import DockerRuntimeLauncher
+
+    monkeypatch.setattr(
+        "session_manager.runtime_launchers._launcher",
+        DockerRuntimeLauncher(workflow_root=merged_repo_root),
+    )
 
     originals = {}
     patches = {
         "platform_config_file": str(test_platform_config),
         "repo_path": str(merged_repo_root / "workflows"),
-        "host_repo_root": str(merged_repo_root),
         "workflow_root": str(merged_repo_root / "workflows"),
         "workflow_repo_paths": str(merged_repo_root / "workflows"),
         "gateway_event_url": f"http://host.docker.internal:{_event_collector.port}/events",
@@ -712,7 +718,8 @@ def spawn_and_wait(
         settings.gateway_event_url = ev_url
 
         from session_manager.container_lifecycle import spawn_agent_session
-        from session_manager.memory_sync import backup_memory, restore_memory
+
+        from tests.runtime.docker_support import backup_memory, restore_memory
 
         await restore_memory(task.workflow)
 

@@ -69,8 +69,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/sage-run-workflows/workflows"
           cp -R "$GITHUB_WORKSPACE/tests/fixtures/repo-root/workflows/platform-test" "$RUNNER_TEMP/sage-run-workflows/workflows/platform-test"
           "$RUNNER_TEMP/sage-run-operator/bin/python" -I -m sage_run validate "$RUNNER_TEMP/sage-run-workflows"
-          printf 'mcps: {enabled: [github]}\n' > "$RUNNER_TEMP/sage-run-workflows/platform-config.yaml"
-          test "$("$RUNNER_TEMP/sage-run-operator/bin/python" -I -m sage_run profiles "$RUNNER_TEMP/sage-run-workflows")" = github
           "$RUNNER_TEMP/sage-run-operator/bin/python" -I -c "from importlib.util import find_spec; assert find_spec('claude_agent_sdk') is None; assert find_spec('gateway') is None"
 
       - name: Lint

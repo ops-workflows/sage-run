@@ -2,8 +2,8 @@
 
 On startup and on GitHub webhook, scans configured workflow roots for
 agent.yaml files.
-Registers agents in the control_plane.agents table, creates Docker volumes
-for memory, registers schedules, and validates workflow directory structure.
+Registers agents in the control_plane.agents table, registers schedules,
+and validates workflow directory structure.
 
 Workflows use the flat layout convention (agents/, skills/, hooks/hooks.json,
 settings.json at root). The provisioner validates they exist but does not

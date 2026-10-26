@@ -122,10 +122,10 @@ production; an old 1.0.1 image does not contain these commands.
 | Reconciliation | Helm topology/image updates, config checksums, per-workflow MCP source checksums, namespace-owned extra pruning | In-place config reload, deploy diff planning and active-session drain |
 | Recovery | Pre-deploy and nightly backups, independent 3/7 copy rotation, isolated SQL/object/Git/Hindsight recovery qualification | Ordered schema migrations, coordinated cross-service snapshots and off-host backup |
 
-The legacy Compose Makefile/bootstrap commands remain in the platform for
-instances not yet migrated. They are not the setup path in this guide.
-Do not confuse platform-root `make up` (legacy Compose) with a workflow
-repository's `make up` (Kubernetes). Use the explicit CLI when in doubt.
+Serving is Kubernetes-only. Run `up`/`deploy` from the workflow repository;
+the platform-root Makefile manages dependency installation, tests and builds.
+The isolated `tests/compose.yaml` Postgres fixture and Docker runtime helpers
+are test infrastructure only, not a supported deployment mode.
 
 ## Prerequisites
 
@@ -134,6 +134,9 @@ repository's `make up` (Kubernetes). Use the explicit CLI when in doubt.
 - A checkout of the workflow repository, Git, Python 3.11+ and `uv`.
 - For production: SSH access to the host, passwordless noninteractive `sudo`,
   and a pushed branch or tag at the exact commit being deployed.
+- Use an HTTPS Git origin for GitHub App-authenticated production fetches.
+  The operator carries the workstation's origin into the serving checkout;
+  an SSH origin cannot use the App's HTTPS installation token.
 - For local Kubernetes: `kubectl`, Helm, Rancher Desktop with Kubernetes and
   the Moby engine enabled. Its Docker images must be visible to the cluster.
 - For platform development only: a SAGE Run checkout, its development
