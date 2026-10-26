@@ -155,6 +155,33 @@ def test_read_identity_extracts_key_lines(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+@pytest.mark.parametrize("host_port", [0, 80])
+def test_host_bound_ui_releases_port_before_replacement(host_port):
+    rendered = subprocess.run(  # noqa: S603 - fixed Helm invocation
+        [
+            shutil.which("helm") or "helm",
+            "template",
+            "sage-run",
+            str(CHART),
+            "--set",
+            "workflowRepo.hostPath=/workflows",
+            "--set",
+            f"controlPlaneUi.hostPort={host_port}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    ui = next(
+        doc
+        for doc in yaml.safe_load_all(rendered)
+        if doc and doc["kind"] == "Deployment" and doc["metadata"]["name"] == "control-plane-ui"
+    )
+    strategy = ui["spec"].get("strategy", {}).get("type", "RollingUpdate")
+    assert strategy == ("Recreate" if host_port else "RollingUpdate")
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
 def test_chart_renders_local_instance_with_compose_service_names(tmp_path):
     values = render_values(Instance(tmp_path, "corp-dev", images={"registry": "", "tag": "dev-abc"}), CONFIG)
     values_file = tmp_path / "values.json"
