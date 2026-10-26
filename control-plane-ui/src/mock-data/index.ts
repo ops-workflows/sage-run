@@ -21,10 +21,16 @@ import {
   MOCK_CONFLUENCE_CONNECTIONS,
   mockKnowledgeSourceWrite,
 } from './knowledge-sources';
-import type { KnowledgeSource, BackgroundJobRun } from '@/lib/api';
+import type {
+  KnowledgeSource,
+  BackgroundJobRun,
+  DeploymentStatus,
+} from '@/lib/api';
 import { MOCK_SCHEDULES } from './schedules';
 import { getMockBackgroundJobs, MOCK_BACKGROUND_JOBS } from './background-jobs';
 import { getMockAnalytics } from './analytics';
+
+let mockDeployment: DeploymentStatus | null = null;
 
 export async function handleMockApiRequest(
   method: string,
@@ -86,19 +92,24 @@ export async function handleMockApiRequest(
   if (path === 'platform/workflow-repo/versions' && method === 'GET') {
     return { status: 200, data: MOCK_WORKFLOW_REPO_VERSIONS };
   }
-  if (path === 'platform/workflow-repo/sync' && method === 'POST') {
-    return {
-      status: 200,
-      data: {
-        ...MOCK_WORKFLOW_REPO_STATUS,
-        last_synced_at: new Date().toISOString(),
-      },
-    };
+  if (path === 'platform/deployments' && method === 'GET') {
+    return { status: 200, data: { deployment: mockDeployment } };
   }
-  if (path === 'platform/workflow-repo/pin' && method === 'POST') {
+  if (path === 'platform/deployments' && method === 'POST') {
     const ref = (body as { ref?: string })?.ref || 'main';
-    MOCK_WORKFLOW_REPO_STATUS.pinned_ref = ref;
-    return { status: 200, data: MOCK_WORKFLOW_REPO_STATUS };
+    mockDeployment = {
+      id: `sage-run-deploy-${Date.now()}`,
+      ref,
+      commit: MOCK_WORKFLOW_REPO_STATUS.last_synced_commit,
+      status: 'succeeded',
+      phase: 'complete',
+      started_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      error: null,
+      logs: 'MOCK: backup verified; Helm reconciled; workflow bundles activated.',
+    };
+    MOCK_WORKFLOW_REPO_STATUS.last_synced_ref = ref;
+    return { status: 202, data: mockDeployment };
   }
 
   // ── Tasks ──

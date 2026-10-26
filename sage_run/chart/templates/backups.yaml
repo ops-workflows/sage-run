@@ -1,0 +1,71 @@
+{{- if .Values.backups.enabled }}
+{{- if not .Values.deployer.enabled }}
+{{- fail "backups.enabled requires deployer.enabled for backup service-account/RBAC" }}
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sage-run-nightly-backup
+spec:
+  schedule: {{ .Values.backups.schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          serviceAccountName: sage-run-deployer
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/component: gateway
+                  topologyKey: kubernetes.io/hostname
+          {{- with .Values.hostAliases }}
+          hostAliases:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.images.pullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: backup
+              image: {{ include "sage-run.image" (dict "root" . "component" "gateway") }}
+              imagePullPolicy: {{ .Values.images.pullPolicy }}
+              command: ["python", "-m", "sage_run", "backup", "--kind", "nightly"]
+              env:
+                {{- include "sage-run.commonEnv" . | nindent 16 }}
+                - name: SAGE_RUN_BACKUP_HINDSIGHT
+                  value: {{ .Values.infrastructure.hindsight.enabled | quote }}
+              envFrom:
+                {{- include "sage-run.bootstrapEnvFrom" . | nindent 16 }}
+              volumeMounts:
+                {{- include "sage-run.workflowRepoMount" (dict "writable" true) | nindent 16 }}
+                - name: backups
+                  mountPath: /var/backups/sage-run/managed
+                {{- if .Values.infrastructure.hindsight.enabled }}
+                - name: hindsight
+                  mountPath: /var/lib/sage-run/backup-hindsight
+                  readOnly: true
+                {{- end }}
+          volumes:
+            {{- include "sage-run.workflowRepoVolume" . | nindent 12 }}
+            - name: backups
+              hostPath:
+                path: {{ required "backups.hostPath is required" .Values.backups.hostPath | quote }}
+                type: DirectoryOrCreate
+            {{- if .Values.infrastructure.hindsight.enabled }}
+            - name: hindsight
+              persistentVolumeClaim:
+                claimName: hindsight-data
+                readOnly: true
+            {{- end }}
+{{- end }}

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
+from unittest.mock import MagicMock
 
 import pytest
 
 from sage_run import remote
+from sage_run.deployment import checkout_lock
 from sage_run.local import Instance
 
 pytestmark = pytest.mark.unit
@@ -79,3 +82,26 @@ def test_materialise_extracts_the_committed_tree(tmp_path):
     remote.materialise(repo, "HEAD", tmp_path / "tree")
 
     assert (tmp_path / "tree/platform-config.yaml").read_text(encoding="utf-8") == "config: {}\n"
+
+
+def test_ssh_lock_script_and_python_writer_use_the_same_atomic_guard(tmp_path, monkeypatch):
+    repo = tmp_path / "workflow repo"
+    (repo / ".git").mkdir(parents=True)
+    process = MagicMock()
+    process.stdout.readline.return_value = "locked\n"
+    factory = MagicMock(return_value=process)
+    with monkeypatch.context() as patch:
+        patch.setattr(remote.subprocess, "Popen", factory)
+        with remote.remote_deploy_lock("test-host", str(repo), plan_only=False):
+            pass
+    command = factory.call_args.args[0][-1]
+    holder = shlex.split(command.split("sudo sh -c ", 1)[1])[0]
+    shell = shutil.which("sh") or "sh"
+    result = subprocess.run([shell, "-c", holder], input="", capture_output=True, text=True, check=True)  # noqa: S603
+    assert result.stdout.strip() == "locked"
+    assert not (repo / ".git/sage-run-deploy.lock.d").exists()
+    with checkout_lock(repo):
+        result = subprocess.run([shell, "-c", holder], input="", capture_output=True, text=True)  # noqa: S603
+        assert result.returncode != 0
+        assert "lock exists" in result.stderr
+        assert (repo / ".git/sage-run-deploy.lock.d").is_dir()

@@ -289,6 +289,8 @@ class ConnectorResponse(BaseModel):
 
 
 class WorkflowRepoResponse(BaseModel):
+    deployment_enabled: bool = False
+    platform_version: str = ""
     source_url: str | None
     source_path: str | None
     source_mode: str
@@ -2124,9 +2126,13 @@ async def _fetch_github_tags(repo_url: str) -> list[WorkflowRepoVersionResponse]
 
 
 def _workflow_repo_response(state: Any | None) -> WorkflowRepoResponse:
+    from importlib.metadata import version
+
     source_is_remote = settings.workflow_repo_source.strip().lower() != "local"
     remote_source_url = settings.workflow_repo_url.strip() or None
     return WorkflowRepoResponse(
+        deployment_enabled=settings.workflow_repo_managed,
+        platform_version=version("sage-run"),
         source_url=remote_source_url if source_is_remote else None,
         source_path=None if source_is_remote else settings.workflow_repo_display_path.strip() or None,
         source_mode="remote" if source_is_remote else "local",
@@ -2153,6 +2159,8 @@ async def get_workflow_repo_status():
 
 @router.post("/platform/workflow-repo/sync", response_model=WorkflowRepoResponse)
 async def trigger_workflow_repo_sync():
+    if settings.workflow_repo_managed:
+        raise HTTPException(410, "Sync was replaced by deployment Jobs; use Deploy now")
     from gateway.provisioner import run_provisioner_scan
     from shared.lib.workflow_repo_sync import sync_workflow_repo
 
@@ -2165,6 +2173,8 @@ async def trigger_workflow_repo_sync():
 
 @router.post("/platform/workflow-repo/pin", response_model=WorkflowRepoResponse)
 async def pin_workflow_repo_version(payload: WorkflowRepoPinRequest):
+    if settings.workflow_repo_managed:
+        raise HTTPException(410, "Pin was replaced by the deployment ref; use Deploy now")
     from shared.lib.workflow_repo_sync import pin_workflow_repo_ref
 
     ref = payload.ref.strip()

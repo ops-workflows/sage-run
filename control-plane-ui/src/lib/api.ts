@@ -267,6 +267,8 @@ export interface Connector {
 }
 
 export interface WorkflowRepoStatus {
+  deployment_enabled: boolean;
+  platform_version: string;
   source_url: string | null;
   source_path: string | null;
   source_mode: 'remote' | 'local';
@@ -284,6 +286,18 @@ export interface WorkflowRepoStatus {
 export interface WorkflowRepoVersion {
   name: string;
   commit_sha: string | null;
+}
+
+export interface DeploymentStatus {
+  id: string;
+  ref: string;
+  commit: string | null;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  phase: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  logs?: string;
 }
 
 export interface HindsightBank {

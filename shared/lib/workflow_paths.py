@@ -53,6 +53,10 @@ def _sync_configured_workflow_repo(*, ref_override: str | None = None, raise_on_
     repo_url = settings.workflow_repo_url.strip()
     if not repo_url or settings.workflow_repo_source.strip().lower() == "local":
         return None
+    if settings.workflow_repo_managed:
+        if ref_override is not None:
+            raise RuntimeError("This checkout is deployment-managed; use Deploy instead of Sync")
+        return Path(settings.workflow_repo_local_path).expanduser()
 
     git_binary = shutil.which("git")
     if not git_binary:

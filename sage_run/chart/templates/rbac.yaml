@@ -9,6 +9,10 @@ kind: Role
 metadata:
   name: sage-run-sessions
 rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["gateway"]
+    verbs: ["get"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]

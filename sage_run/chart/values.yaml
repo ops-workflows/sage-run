@@ -34,6 +34,19 @@ workflowRepo:
 # platform-config-prod.yaml and needs that environment's key.
 environment: ""
 
+deployer:
+  # Remote CLI enables this once the serving checkout is deployment-managed.
+  enabled: false
+
+backups:
+  enabled: false
+  # Root-owned directory on the single serving node; never the legacy archive parent.
+  hostPath: ""
+  schedule: "0 2 * * *"
+
+# Config changes roll config consumers; workflow-only edits leave this unchanged.
+configChecksum: ""
+
 # Extra non-secret environment for every platform workload.
 env: {}
 

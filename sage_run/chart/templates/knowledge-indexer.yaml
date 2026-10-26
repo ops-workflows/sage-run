@@ -12,6 +12,8 @@ spec:
       app.kubernetes.io/component: knowledge-indexer
   template:
     metadata:
+      annotations:
+        sage-run/config-checksum: {{ .Values.configChecksum | quote }}
       labels:
         app.kubernetes.io/component: knowledge-indexer
     spec:

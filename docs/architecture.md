@@ -15,7 +15,10 @@ platform repository.
 For the qualified single-node k3s deployment, the workstation CLI transfers a
 committed workflow revision over SSH into
 `/var/lib/sage-run/<instance>/workflow-repo`. Gateway mounts this **same**
-checkout read/write, and consumers mount it read-only at `/app/workflows`.
+checkout read/write in published 1.0.1, and consumers mount it read-only at `/app/workflows`.
+In the unreleased deployment-managed mode Gateway is also read-only; an
+independent namespace-scoped Job fetches, reconciles and activates the release.
+Discovery never fetches into a deployment-managed checkout.
 There is no second serving workflow clone. Local development mounts the
 workstation working tree instead, in a separate namespace per instance.
 
@@ -26,9 +29,10 @@ volumes; session Jobs and their workspace/memory volumes are ephemeral.
 
 The source tree also retains legacy Docker support for unmigrated instances.
 The supported operator paths and portability limits are documented in
-[Deployment](deployment.md). UI Deploy now, selective restart/reload, full
-backup automation and shared-checkout distribution for managed multi-node
-clusters are not implemented in 1.0.1.
+[Deployment](deployment.md). Published 1.0.1 does not have UI deployment Jobs or
+backup rotation. Those are implemented in unreleased source; configuration
+hot reload, ordered migrations and managed multi-node checkout distribution
+remain unfinished.
 
 ## Components
 

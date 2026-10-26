@@ -14,6 +14,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sage-run")
     parser.add_argument("--version", action="store_true", help="Show the installed package version")
     commands = parser.add_subparsers(dest="command")
+    in_cluster = commands.add_parser("deploy-in-cluster", help="Run the namespace deployment Job")
+    in_cluster.add_argument("--ref", required=True)
+    backup = commands.add_parser("backup", help="Create and rotate namespace recovery sets")
+    backup.add_argument("--kind", required=True, choices=("nightly", "deployment"))
+    activate = commands.add_parser("activate", help="Activate the already prepared workflow checkout")
+    activate.add_argument("--ref", required=True)
     bootstrap = commands.add_parser("bootstrap", help="Generate private operator bootstrap configuration")
     bootstrap.add_argument(
         "--output-dir", type=Path, required=True, help="Private instance state directory outside Git"
@@ -61,6 +67,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.version:
         print(f"sage-run {version('sage-run')}")
+        return 0
+    if args.command in {"deploy-in-cluster", "backup", "activate"}:
+        from sage_run.backups import create_backup
+        from sage_run.deployment import checkout_lock
+        from sage_run.incluster import activate_checkout, deploy_in_cluster
+        from shared.lib.config import settings
+
+        try:
+            if args.command == "deploy-in-cluster":
+                return deploy_in_cluster(args.ref)
+            if args.command == "activate":
+                import asyncio
+
+                asyncio.run(activate_checkout(args.ref))
+            else:
+                checkout = Path(settings.workflow_repo_local_path)
+                with checkout_lock(checkout):
+                    create_backup(namespace=settings.kubernetes_namespace, kind=args.kind, checkout=checkout)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         return 0
     if args.command == "bootstrap":
         from sage_run.bootstrap import main as bootstrap_main

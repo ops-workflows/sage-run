@@ -8,6 +8,7 @@ images from a sage-run checkout for platform development.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -16,14 +17,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
-import httpx
-
+from sage_run.deployment import checkout_lock
 from sage_run.profiles import CONNECTOR_PROFILES, MCP_PROFILES
 from shared.lib.crypto import decrypt_named_secrets
 from shared.lib.platform_config import load_platform_config as load_merged_platform_config
@@ -162,6 +161,13 @@ def workflow_mcps(workflow_repo: Path, config: dict) -> dict[str, dict]:
             "dir": source.parent.relative_to(workflow_repo).as_posix(),
             "module": source.stem,
             "port": found.pop(),
+            "checksum": hashlib.sha256(
+                b"".join(
+                    path.relative_to(source.parent).as_posix().encode() + b"\0" + path.read_bytes()
+                    for path in sorted(source.parent.rglob("*"))
+                    if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+                )
+            ).hexdigest(),
         }
     return servers
 
@@ -198,6 +204,8 @@ def render_values(instance: Instance, config: dict) -> dict:
         env["GATEWAY_PUBLIC_BASE_URL"] = public_url
     sandbox_profile = instance.sandbox_profile or str(deployment.get("sandbox_profile") or "gvisor")
     return {
+        "configChecksum": hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest(),
+        "deployer": {"enabled": True},
         "images": instance.images,
         "workflowRepo": {"hostPath": str(instance.workflow_repo), "source": "local"},
         "env": env,
@@ -338,23 +346,24 @@ def _chart_path(source: Path | None) -> Path:
     raise ValueError("Helm chart not found; pass --source with a sage-run checkout")
 
 
-def sync_workflows(instance: Instance, timeout_sec: float = 120) -> None:
-    # *.localhost may not resolve for every client; Traefik routes on the Host header.
-    url = "http://127.0.0.1/api/platform/workflow-repo/sync"
-    deadline = time.monotonic() + timeout_sec
-    while True:
-        try:
-            response = httpx.post(url, headers={"Host": instance.host}, timeout=60)
-            if response.status_code < 500:
-                response.raise_for_status()
-                print("Workflows synced", flush=True)
-                return
-        except httpx.HTTPError as exc:
-            if time.monotonic() > deadline:
-                raise ValueError(f"Workflow sync failed: {exc}") from exc
-        if time.monotonic() > deadline:
-            raise ValueError(f"Workflow sync failed with HTTP {response.status_code}")
-        time.sleep(3)
+def sync_workflows(instance: Instance) -> None:
+    _kubectl(
+        instance,
+        "-n",
+        instance.name,
+        "exec",
+        "deployment/gateway",
+        "-c",
+        "gateway",
+        "--",
+        "python",
+        "-m",
+        "sage_run",
+        "activate",
+        "--ref",
+        "working-tree",
+    )
+    print("Workflows activated", flush=True)
 
 
 def up(
@@ -391,9 +400,14 @@ def up(
         instance.images = release_images(version("sage-run"))
 
     identity = read_identity(identity_file or Path(os.environ.get(IDENTITY_ENV, DEFAULT_DEV_IDENTITY)))
+    with checkout_lock(workflow_repo):
+        return _apply_local_instance(instance, config, identity, source)
+
+
+def _apply_local_instance(instance: Instance, config: dict, identity: str, source: Path | None) -> int:
     values = render_values(instance, config)
 
-    print(f"Instance {instance.name} (context {context}) from {workflow_repo}", flush=True)
+    print(f"Instance {instance.name} (context {instance.context}) from {instance.workflow_repo}", flush=True)
     _kubectl(
         instance,
         "apply",
@@ -416,7 +430,7 @@ def up(
                 RELEASE_NAME,
                 str(_chart_path(source)),
                 "--kube-context",
-                context,
+                instance.context,
                 "--namespace",
                 instance.name,
                 "-f",
@@ -428,10 +442,7 @@ def up(
         )
     finally:
         Path(values_file).unlink(missing_ok=True)
-    # Platform services read configuration at startup; restart them so working-tree
-    # config changes apply. Infrastructure (Postgres, MinIO, Hindsight) keeps running.
     selector = f"app.kubernetes.io/component in ({','.join(PLATFORM_COMPONENTS)})"
-    _kubectl(instance, "-n", instance.name, "rollout", "restart", "deployment", "-l", selector, capture=True)
     _kubectl(instance, "-n", instance.name, "rollout", "status", "deployment", "-l", selector, "--timeout=10m")
     sync_workflows(instance)
     print(f"Ready: http://{instance.host}", flush=True)

@@ -14,6 +14,8 @@ spec:
       app.kubernetes.io/component: gateway
   template:
     metadata:
+      annotations:
+        sage-run/config-checksum: {{ .Values.configChecksum | quote }}
       labels:
         app.kubernetes.io/component: gateway
     spec:
@@ -29,6 +31,10 @@ spec:
             {{- include "sage-run.commonEnv" . | nindent 12 }}
             - name: WORKFLOW_REPO_DISPLAY_PATH
               value: {{ .Values.workflowRepo.hostPath | quote }}
+            - name: SAGE_RUN_BACKUP_HOST_PATH
+              value: {{ .Values.backups.hostPath | quote }}
+            - name: SAGE_RUN_BACKUP_HINDSIGHT
+              value: {{ and .Values.backups.enabled .Values.infrastructure.hindsight.enabled | quote }}
             - name: RUNTIME_BUNDLE_ROOT
               value: {{ .Values.runtimeBundles.root | quote }}
             - name: RUNTIME_BUNDLE_OBJECT_STORE_BUCKET
@@ -41,7 +47,7 @@ spec:
               port: http
             periodSeconds: 5
           volumeMounts:
-            {{- include "sage-run.workflowRepoMount" (dict "writable" true) | nindent 12 }}
+            {{- include "sage-run.workflowRepoMount" (dict "writable" (not .Values.deployer.enabled)) | nindent 12 }}
             - name: release-cache
               mountPath: {{ .Values.runtimeBundles.root }}
       volumes:

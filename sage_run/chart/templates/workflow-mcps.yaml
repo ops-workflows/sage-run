@@ -17,6 +17,9 @@ spec:
       app.kubernetes.io/name: {{ $name }}
   template:
     metadata:
+      annotations:
+        sage-run/config-checksum: {{ $.Values.configChecksum | quote }}
+        sage-run/source-checksum: {{ $mcp.checksum | default "" | quote }}
       labels:
         app.kubernetes.io/component: mcp
         app.kubernetes.io/name: {{ $name }}
@@ -31,6 +34,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ $mcp.port }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 2
           env:
             {{- include "sage-run.commonEnv" $ | nindent 12 }}
             - name: PYTHONPATH

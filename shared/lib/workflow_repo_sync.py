@@ -183,10 +183,12 @@ def _publish_object_store_release(
     )
 
 
-async def sync_workflow_repo(session: AsyncSession) -> WorkflowSyncResult:
+async def sync_workflow_repo(session: AsyncSession, *, prepared_ref: str | None = None) -> WorkflowSyncResult:
     """Run the full sync pipeline and persist the outcome to workflow_repo_state."""
     state = await _load_state(session)
-    effective_ref = _effective_ref(state.pinned_ref)
+    effective_ref = prepared_ref if prepared_ref is not None else _effective_ref(state.pinned_ref)
+    if prepared_ref is not None:
+        state.pinned_ref = None
 
     try:
         result = await _run_sync_pipeline(effective_ref)
@@ -210,7 +212,11 @@ async def _run_sync_pipeline(effective_ref: str | None) -> WorkflowSyncResult:
     import asyncio
 
     def _sync_blocking() -> WorkflowSyncResult:
-        if settings.workflow_repo_url.strip() and settings.workflow_repo_source.strip().lower() != "local":
+        if (
+            settings.workflow_repo_url.strip()
+            and settings.workflow_repo_source.strip().lower() != "local"
+            and not settings.workflow_repo_managed
+        ):
             sync_workflow_repo_to_ref(effective_ref)  # raises RuntimeError on failure
 
         packages = discover_workflow_packages()

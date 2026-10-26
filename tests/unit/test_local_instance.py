@@ -81,6 +81,41 @@ def test_render_values_mounts_working_tree_and_reads_deployment_settings(tmp_pat
     assert remote["env"]["CONTROL_PLANE_UI_URL"] == "https://corp.example"
 
 
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+def test_source_and_config_checksums_change_pod_templates_not_deployment_metadata(tmp_path):
+    (tmp_path / "mcps/smoke").mkdir(parents=True)
+    source = tmp_path / "mcps/smoke/mcp_smoke.py"
+    source.write_text("app = first\n")
+    (tmp_path / "workflows/test").mkdir(parents=True)
+    (tmp_path / "workflows/test/.mcp.json").write_text('{"url": "http://mcp-smoke:8112/mcp"}')
+    config = {"mcps": {"enabled": ["smoke"]}}
+
+    def templates(config):
+        values = render_values(Instance(tmp_path, "checksum-test"), config)
+        path = tmp_path / "values.json"
+        path.write_text(json.dumps(values))
+        output = subprocess.run(  # noqa: S603 - fixed Helm template command
+            [shutil.which("helm") or "helm", "template", "sage-run", str(CHART), "-f", str(path)],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout
+        return {
+            doc["metadata"]["name"]: doc["spec"]["template"]
+            for doc in yaml.safe_load_all(output)
+            if doc and doc["kind"] == "Deployment"
+        }
+
+    before = templates(config)
+    source.write_text("app = second\n")
+    after = templates(config)
+    assert {name for name in before if before[name] != after[name]} == {"mcp-smoke"}
+    changed = templates({**config, "runtime_env": {"TEST": "changed"}})
+    assert {"gateway", "session-manager", "knowledge-indexer", "mcp-message", "mcp-smoke"} <= {
+        name for name in after if after[name] != changed[name]
+    }
+
+
 @pytest.mark.parametrize(
     "deployment",
     [{"unknown": 1}, {"env": []}, {"sandbox_profile": "none"}, {"hindsight": {"env": "x"}}],
@@ -153,7 +188,7 @@ def test_chart_renders_local_instance_with_compose_service_names(tmp_path):
     assert session_manager["volumes"][0]["hostPath"]["path"] == str(tmp_path)
     assert deployments["gateway"]["spec"]["strategy"]["type"] == "Recreate"
     assert all(doc["spec"]["template"]["spec"]["enableServiceLinks"] is False for doc in deployments.values())
-    role = next(doc for doc in documents if doc["kind"] == "Role")
+    role = next(doc for doc in documents if doc["kind"] == "Role" and doc["metadata"]["name"] == "sage-run-sessions")
     assert {
         "apiGroups": ["batch"],
         "resources": ["jobs"],
@@ -171,9 +206,13 @@ def test_workflow_mcps_come_from_repo_sources_and_mcp_json_ports(tmp_path):
     (tmp_path / "workflows/triage/.mcp.json").write_text(json.dumps(mcp_json), encoding="utf-8")
     config = {"mcps": {"enabled": ["message", "ticket-triage"]}}
 
-    assert workflow_mcps(tmp_path, config) == {
-        "ticket-triage": {"dir": "mcps/ticket-triage", "module": "mcp_ticket_triage", "port": 8111}
-    }
+    server = workflow_mcps(tmp_path, config)["ticket-triage"]
+    checksum = server.pop("checksum")
+    assert len(checksum) == 64
+    assert server == {"dir": "mcps/ticket-triage", "module": "mcp_ticket_triage", "port": 8111}
+    source = tmp_path / "mcps/ticket-triage/mcp_ticket_triage.py"
+    source.write_text("app = changed\n", encoding="utf-8")
+    assert workflow_mcps(tmp_path, config)["ticket-triage"]["checksum"] != checksum
     (tmp_path / "workflows/triage/.mcp.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="must reference"):
         workflow_mcps(tmp_path, config)

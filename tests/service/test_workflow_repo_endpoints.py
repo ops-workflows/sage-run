@@ -142,3 +142,19 @@ async def test_workflow_repo_versions_returns_empty_for_non_github_or_missing_ur
         resp = await client.get("/api/platform/workflow-repo/versions")
         assert resp.status_code == 200, resp.text
         assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_managed_checkout_rejects_legacy_writers_and_reports_capability(
+    async_engine, fixture_workflows_dir: Path, monkeypatch
+) -> None:
+    from shared.lib.config import settings
+
+    monkeypatch.setattr(settings, "workflow_repo_managed", True)
+    async with await _make_client(fixture_workflows_dir) as client:
+        status = await client.get("/api/platform/workflow-repo")
+        assert status.status_code == 200, status.text
+        assert status.json()["deployment_enabled"] is True
+        for endpoint, body in (("sync", {}), ("pin", {"ref": "main"})):
+            response = await client.post(f"/api/platform/workflow-repo/{endpoint}", json=body)
+            assert response.status_code == 410, response.text

@@ -197,6 +197,8 @@ export const MOCK_AGENTS: Agent[] = [
 ];
 
 export const MOCK_WORKFLOW_REPO_STATUS: WorkflowRepoStatus = {
+  deployment_enabled: true,
+  platform_version: '1.0.1',
   source_url: 'https://github.corp.internal/cloud-ops/agentic-workflows.git',
   source_path: null,
   source_mode: 'remote',

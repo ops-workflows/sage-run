@@ -39,7 +39,9 @@ imagePullSecrets:
 - name: WORKFLOW_REPO_URL
   value: {{ .Values.workflowRepo.url | quote }}
 - name: WORKFLOW_REPO_REF
-  value: {{ .Values.workflowRepo.ref | quote }}
+  value: {{ ternary "" .Values.workflowRepo.ref .Values.deployer.enabled | quote }}
+- name: WORKFLOW_REPO_MANAGED
+  value: {{ .Values.deployer.enabled | quote }}
 - name: PG_DB
   value: {{ .Values.infrastructure.postgres.database | quote }}
 - name: PG_USER

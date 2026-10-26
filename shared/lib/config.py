@@ -72,6 +72,8 @@ class Settings(
     workflow_repo_ref: str = ""
     workflow_repo_local_path: str = "/app/workflows"
     workflow_repo_display_path: str = ""
+    # Managed checkouts are changed only by serialized deploy/backup operators.
+    workflow_repo_managed: bool = False
 
     # ── Runtime launcher and memory sync ─────────────────────────
     runtime_launcher: str = "docker"

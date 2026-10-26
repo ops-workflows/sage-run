@@ -5,6 +5,105 @@ Use the workflow repository as the instance, the published `sage-run` CLI as
 the operator tool, and Kubernetes as the serving environment. No platform
 source checkout or platform image build is required on a production server.
 
+The [unreleased deployment Job changes](#unreleased-deployment-jobs-and-backups)
+are described separately below. They are not available by installing
+`sage-run==1.0.1` and have not been rolled out to the production instances.
+
+## Unreleased deployment Jobs and backups
+
+Current source adds the first workflow/config deployment milestone:
+
+- **Deploy now** replaces Sync/pin in the UI. Production selects `main` or a
+  `v`-prefixed tag; local deployment uses the uncommitted working tree.
+- Gateway creates a Job from its running, pinned Gateway image with its own
+  namespace-scoped deployer service account. The Job survives Gateway restarts.
+  The role has trusted operator access to namespace resources and Secrets,
+  not cluster-admin or per-Secret isolation.
+  The API exposes the latest Job's phase, requested commit, failure and bounded
+  decoded logs; reloading the page recovers the Job state. Completed Job/log
+  retention is seven days, **not** backup expiry.
+- The Job fetches production refs using the named GitHub App connection,
+  validates the candidate and keeps the running platform images. An incompatible
+  `sage-run` dependency pin, infrastructure changes or database/object-store
+  credential rotation are refused; use a reviewed CLI upgrade/migration.
+- An atomic directory lock at `.git/sage-run-deploy.lock.d` serializes
+  deployment and backup writers. SSH CLI holds the same host lock. Gateway
+  mounts the managed checkout read-only; periodic discovery never fetches.
+  Existing unmanaged instances retain their old APIs; managed `/sync` and
+  `/pin` requests return 410 rather than bypass deployment safety.
+  Directory creation, unlike `flock`, coordinates macOS with Rancher's Linux
+  shared mount. Forced termination may leave a stale guard: verify all
+  deployment/backup Jobs and CLI writers have stopped, then remove only that
+  empty lock directory. Never clear a live writer's lock.
+- Prompt/skill-only changes rebuild and activate bundles with **no pod
+  restarts**. A workflow MCP source checksum rolls only that MCP. Config
+  changes currently roll config consumers through pod-template checksums;
+  this is **not** in-place hot reload. Image/env/topology changes follow Helm
+  reconciliation; the CLI no longer blanket-restarts every Deployment.
+- Extra namespace-scoped manifests receive an ownership label. Only owned
+  removed resources are pruned; removing a PVC requires explicit migration.
+  Name collisions with unowned resources fail before apply. Review and
+  explicitly label existing manually applied ingress resources with
+  `sage-run/extra=<instance>` before their first managed adoption.
+  Checkout-backed `subPath` files, such as Caddy's config, contribute a pod
+  checksum so their changes restart the consuming Deployment.
+- On apply/activation failure the Job attempts to restore the prior checkout,
+  Secret, Helm values and owned extra manifests, then reactivate old bundles.
+  It reports failure, not success, if recovery fails. Local deployment cannot
+  undo the developer's uncommitted working-tree edits.
+
+Managed production installs enable a nightly Kubernetes CronJob at **02:00 UTC**
+and backup before **every** production deployment, including bundle-only
+updates. Both use the same implementation:
+
+| Category | Creation and cleanup owner | Retained successful copies |
+| --- | --- | --- |
+| Deployment | Deployer Job; direct SSH CLI uses an independent pre-deployment backup Job | 3 |
+| Nightly | Kubernetes CronJob | 7 |
+
+Each rotates only its own category, only after a verified replacement succeeds.
+Failed, incomplete, protected, foreign-instance and legacy directories are not
+eligible for successful-set rotation. Cleanup errors are visible and block
+deployment rather than silently accepting an unverified backup. Protected or
+partial sets need operator attention and may consume additional disk space.
+
+The root-only managed directory is
+`/var/backups/sage-run/<instance>/managed`. Backups contain a validated Postgres
+dump (including Hindsight schema), checked S3 object exports and inventory,
+Hindsight filesystem assets when enabled, encrypted config, a verified Git
+bundle, Helm values and a checksum/completion manifest. The private age key
+must be secured separately. Backup failure prevents apply and preserves older
+good copies. A genuine first install has no existing data to back up; existing
+PVCs without a serving Gateway require explicit recovery instead of that bypass.
+
+The backup is an **online** Postgres dump plus an object export that rejects
+detected concurrent object changes, not an atomic transaction across Postgres,
+MinIO and Hindsight files. Verify restoration against your workloads and pause
+writers when a coordinated recovery point is required. Same-disk backup does
+not protect against node/disk loss. A manual Compose archive stays outside
+`managed/` and is never automatically enrolled or deleted.
+
+Chart controls (Helm values, **not** `platform-config.yaml` fields):
+`deployer.enabled`, `backups.enabled`, `backups.hostPath`, `backups.schedule`.
+The CLI sets managed mode and production paths; local `up` enables deployment
+Jobs but does not schedule backups. No new deployment endpoint supplies
+browser authentication: preserve corp IAP and do not expose deployment control
+on an unauthenticated network. Active-session drain, full configuration hot
+reload, ordered schema migrations and UI platform-version handover remain
+unfinished. Avoid service-changing deploys while tasks are active.
+
+| New endpoint | Purpose |
+| --- | --- |
+| `POST /api/platform/deployments` with `{"ref":"main"}` | Start a Job; 202 means accepted, not deployed |
+| `GET /api/platform/deployments` | Latest Job state, requested commit and logs |
+| `GET /api/platform/workflow-repo` | Active bundle commit, platform version and deployment capability |
+
+CLI recovery remains independent of the Gateway process. The updated SSH CLI
+uses the target release's Gateway image for its backup Job before updating
+the serving checkout, then reconciles and activates using the installed CLI's
+chart. Publish the new package/images before using this path in production;
+an old 1.0.1 image does not contain these commands.
+
 ## Current support and unfinished work
 
 | Surface | Works today | Not yet implemented or qualified |

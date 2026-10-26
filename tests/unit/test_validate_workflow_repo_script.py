@@ -82,12 +82,10 @@ def test_example_overlay_replaces_all_secrets_and_discovers_workflow_mcp(repo_ro
     assert base["config"]["AGE_PUBLIC_KEY"] != overlay["config"]["AGE_PUBLIC_KEY"]
     merged = deep_merge(base, overlay)
     assert merged["deployment"]["sandbox_profile"] == "gvisor"
-    assert workflow_mcps(repo, merged) == {
-        "custom-example": {
-            "dir": "mcps/custom-mcp-example",
-            "module": "mcp_custom_example",
-            "port": 8110,
-        }
+    servers = workflow_mcps(repo, merged)
+    assert len(servers["custom-example"].pop("checksum")) == 64
+    assert servers == {
+        "custom-example": {"dir": "mcps/custom-mcp-example", "module": "mcp_custom_example", "port": 8110}
     }
     headers = json.loads((repo / "workflows/example-workflow/.mcp.json").read_text(encoding="utf-8"))
     assert headers["mcpServers"]["custom-example"]["headers"]["Authorization"] == "Bearer ${CUSTOM_EXAMPLE_TOKEN}"

@@ -68,8 +68,11 @@ uvx --from 'sage-run==1.0.1' sage-run deploy . \
 See [Deployment and operations](docs/deployment.md) for first-time keys,
 server preparation, local platform development, updates and recovery.
 Production deploy currently targets single-node k3s over SSH. UI Deploy now,
-selective service reload and scheduled full backups are **not implemented yet**;
-the UI still offers workflow Sync. Legacy Compose tooling remains for
+deployment Jobs and 7-nightly/3-deployment backup rotation are implemented in
+the **unreleased source**, not published 1.0.1. See
+[deployment Jobs](docs/deployment.md#unreleased-deployment-jobs-and-backups) for
+their scope and safety limits. In-place configuration reload and ordered
+database migrations remain unfinished. Legacy Compose tooling remains for
 unmigrated instances and is not the recommended new-instance path.
 
 ## Documentation

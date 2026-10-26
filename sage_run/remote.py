@@ -15,8 +15,12 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
+from sage_run.deployment import EXTRA_KINDS, extra_manifests, job_manifest, owned_extras, validate_ref
 from sage_run.local import (
     BOOTSTRAP_SECRET,
     INFRASTRUCTURE_SECRETS,
@@ -68,7 +72,10 @@ print("instance secret updated:", ", ".join(sorted(data)))
 
 def _git(repo: Path, *args: str, capture: bool = True, binary: bool = False) -> str | bytes:
     result = subprocess.run(  # noqa: S603 - fixed git invocation
-        [shutil.which("git") or "git", "-C", str(repo), *args], check=True, capture_output=capture, text=not binary
+        [shutil.which("git") or "git", "-c", f"safe.directory={repo}", "-C", str(repo), *args],
+        check=True,
+        capture_output=capture,
+        text=not binary,
     )
     return result.stdout
 
@@ -111,6 +118,11 @@ def remote_values(instance: Instance, config: dict, *, checkout: str, repo_url: 
         "ref": ref,
     }
     values["ingress"] = {"enabled": False}
+    values["deployer"] = {"enabled": True}
+    values["backups"] = {
+        "enabled": True,
+        "hostPath": f"/var/backups/sage-run/{instance.name}/managed",
+    }
     ui = (config.get("deployment") or {}).get("ui") or {}
     if ui:
         values["controlPlaneUi"] = {"hostIP": str(ui.get("host_ip") or ""), "hostPort": int(ui.get("host_port") or 0)}
@@ -133,6 +145,120 @@ rm -rf $tmp
     _ssh(host, script)
 
 
+@contextmanager
+def remote_deploy_lock(host: str, checkout: str, *, plan_only: bool) -> Iterator[None]:
+    if plan_only:
+        yield
+        return
+    path = shlex.quote(checkout)
+    guard = shlex.quote(f"{checkout}/.git/sage-run-deploy.lock.d")
+    holder = (
+        f"lock={guard}; "
+        'mkdir "$lock" || { echo "Deployment/backup lock exists; if stale, stop all writers before removing it" >&2; '
+        "exit 1; }; "
+        """trap 'rmdir "$lock"' EXIT; trap 'exit 1' HUP INT TERM; echo locked; cat >/dev/null"""
+    )
+    script = (
+        f"set -e; sudo mkdir -p {path}; "
+        f"if ! sudo test -d {path}/.git; then sudo git -C {path} init -q; fi; "
+        f"sudo sh -c {shlex.quote(holder)}"
+    )
+    process = subprocess.Popen(  # noqa: S603 - fixed SSH command, quoted host checkout
+        [shutil.which("ssh") or "ssh", "-o", "BatchMode=yes", host, script],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        if process.stdout is None or process.stdout.readline().strip() != "locked":
+            raise ValueError("Cannot acquire deployment lock; another deployment/backup may be running")
+        yield
+    finally:
+        if process.stdin:
+            process.stdin.close()
+        process.wait(timeout=30)
+        if process.stdout:
+            process.stdout.close()
+
+
+def pre_deploy_backup(host: str, namespace: str, values: dict, *, remote_tmp: str) -> None:
+    kubectl = f"sudo k3s kubectl -n {shlex.quote(namespace)}"
+    raw = _ssh(host, f"{kubectl} get deployment gateway -o json --ignore-not-found", capture=True)
+    if not raw.strip():
+        claims = json.loads(_ssh(host, f"{kubectl} get pvc -o json", capture=True))["items"]
+        if claims:
+            raise ValueError("Existing PVCs without a Gateway need explicit recovery, not an unbacked first install")
+        print("First install: no existing Gateway/data to back up", flush=True)
+        return
+    gateway = json.loads(raw)
+    pods = json.loads(_ssh(host, f"{kubectl} get pods -l app.kubernetes.io/component=gateway -o json", capture=True))[
+        "items"
+    ]
+    nodes = {pod["spec"].get("nodeName") for pod in pods if not pod["metadata"].get("deletionTimestamp")}
+    if len(nodes) != 1 or None in nodes:
+        raise ValueError("Cannot identify the serving node for the deployment backup")
+    gateway["metadata"].setdefault("annotations", {})["sage-run/node"] = nodes.pop()
+    current = json.loads(
+        _ssh(
+            host,
+            f"sudo helm get values {RELEASE_NAME} -n {shlex.quote(namespace)} --kubeconfig {KUBECONFIG} --all -o json",
+            capture=True,
+        )
+    )
+    hindsight_enabled = current["infrastructure"]["hindsight"]["enabled"]
+    container = gateway["spec"]["template"]["spec"]["containers"][0]
+    container["env"] = [
+        item
+        for item in container.get("env", [])
+        if item["name"] not in {"SAGE_RUN_BACKUP_HOST_PATH", "SAGE_RUN_BACKUP_HINDSIGHT"}
+    ] + [
+        {"name": "SAGE_RUN_BACKUP_HOST_PATH", "value": values["backups"]["hostPath"]},
+        {"name": "SAGE_RUN_BACKUP_HINDSIGHT", "value": str(hindsight_enabled).lower()},
+    ]
+    job = job_manifest(gateway, namespace=namespace, ref="main")
+    job["metadata"]["labels"] = {"sage-run/backup": "deployment"}
+    name = job["metadata"]["name"]
+    desired_images = values["images"]
+    image = (desired_images.get("overrides") or {}).get("gateway")
+    if not image:
+        registry = desired_images.get("registry", "ghcr.io/ops-workflows")
+        prefix = desired_images.get("prefix", "sage-run-")
+        image = f"{registry + '/' if registry else ''}{prefix}gateway:{desired_images['tag']}"
+    backup = job["spec"]["template"]["spec"]["containers"][0]
+    backup["image"] = image
+    backup["imagePullPolicy"] = desired_images.get("pullPolicy", "IfNotPresent")
+    backup["command"] = [
+        "python",
+        "-c",
+        "from pathlib import Path; from shared.lib.config import settings; "
+        "from sage_run.backups import create_backup; "
+        "create_backup(namespace=settings.kubernetes_namespace, kind='deployment', "
+        "checkout=Path(settings.workflow_repo_local_path))",
+    ]
+    # Install only namespace RBAC before backup; no serving state is changed.
+    _ssh(
+        host,
+        f"set -e; sudo helm template {RELEASE_NAME} {shlex.quote(remote_tmp)}/chart "
+        f"-n {shlex.quote(namespace)} -f {shlex.quote(remote_tmp)}/values.json "
+        f"--show-only templates/deployer-rbac.yaml | {kubectl} apply -f -",
+    )
+    _ssh(host, f"{kubectl} create -f -", stdin=json.dumps(job))
+    print(f"Verifying pre-deployment backup Job {name}", flush=True)
+    deadline = time.monotonic() + 3600
+    while time.monotonic() < deadline:
+        state = json.loads(_ssh(host, f"{kubectl} get job {name} -o json", capture=True)).get("status") or {}
+        conditions = state.get("conditions") or []
+        failed = any(item["type"] == "Failed" and item["status"] == "True" for item in conditions)
+        complete = any(item["type"] == "Complete" and item["status"] == "True" for item in conditions)
+        if failed or complete:
+            _ssh(host, f"{kubectl} logs job/{name} --tail=100")
+            if failed:
+                raise ValueError("Pre-deployment backup failed; serving checkout and release were not changed")
+            return
+        time.sleep(3)
+    raise ValueError(f"Backup Job {name} did not finish; inspect it before retrying")
+
+
 def deploy(
     workflow_repo: Path,
     *,
@@ -144,6 +270,7 @@ def deploy(
     version: str,
     plan_only: bool = False,
 ) -> int:
+    ref = validate_ref(ref, remote=True)
     workflow_repo = workflow_repo.expanduser().resolve()
     commit = str(_git(workflow_repo, "rev-parse", "--verify", f"{ref}^{{commit}}")).strip()
     repo_url = str(_git(workflow_repo, "remote", "get-url", "origin")).strip() if _has_origin(workflow_repo) else ""
@@ -160,7 +287,7 @@ def deploy(
     key_file = f"{KEY_DIR}/{instance.name}/age.key"
     checkout = f"{STATE_DIR}/{instance.name}/workflow-repo"
 
-    with tempfile.TemporaryDirectory() as temporary:
+    with tempfile.TemporaryDirectory() as temporary, remote_deploy_lock(host, checkout, plan_only=plan_only):
         tree = Path(temporary) / "tree"
         materialise(workflow_repo, commit, tree)
         config = load_platform_config(tree / "platform-config.yaml", environment=environment)
@@ -180,8 +307,6 @@ def deploy(
 
         _ssh(host, f"sudo test -f {key_file} || {{ echo 'missing host key {key_file}' >&2; exit 1; }}")
         ensure_helm(host)
-        sync_checkout(workflow_repo, host, commit, checkout, repo_url)
-
         remote_tmp = _ssh(host, "mktemp -d", capture=True).strip()
         bundle = io.BytesIO()
         with tarfile.open(fileobj=bundle, mode="w:gz") as tar:
@@ -198,6 +323,13 @@ def deploy(
             host,
             f"sudo k3s kubectl create namespace {namespace} --dry-run=client -o yaml | sudo k3s kubectl apply -f -",
         )
+        extras = extra_manifests(tree, host_checkout=checkout, namespace=instance.name)
+        live = json.loads(_ssh(host, f"{kubectl} get {','.join(EXTRA_KINDS)} -o json", capture=True))
+        old_extras = owned_extras(live["items"], instance.name, desired=extras)
+        if any(kind == "PersistentVolumeClaim" for kind, _ in old_extras.keys() - extras.keys()):
+            raise ValueError("Removing an extra PVC requires an explicit storage migration")
+        pre_deploy_backup(host, instance.name, values, remote_tmp=remote_tmp)
+        sync_checkout(workflow_repo, host, commit, checkout, repo_url)
         request = json.dumps(
             {"namespace": instance.name, "key": key_file, "secret": BOOTSTRAP_SECRET, "ciphertexts": ciphertexts}
         )
@@ -208,22 +340,22 @@ def deploy(
         )
         _ssh(
             host,
-            f"sudo helm upgrade --install {RELEASE_NAME} {remote_tmp}/chart --kubeconfig {KUBECONFIG} "
+            f"set -e; sudo helm upgrade --install {RELEASE_NAME} {remote_tmp}/chart --kubeconfig {KUBECONFIG} "
             f"--namespace {namespace} -f {remote_tmp}/values.json --wait --timeout 15m; rm -rf {remote_tmp}",
         )
-        for manifest in sorted((tree / "deploy/k8s").glob("*.yaml")):
-            rendered = manifest.read_text(encoding="utf-8").replace("${WORKFLOW_REPO_PATH}", checkout)
-            _ssh(host, f"{kubectl} apply -f -", stdin=rendered)
-            print(f"  applied {manifest.name}", flush=True)
+        for kind, extra_name in old_extras.keys() - extras.keys():
+            _ssh(host, f"{kubectl} delete {kind} {shlex.quote(extra_name)}")
+        for key, document in extras.items():
+            _ssh(host, f"{kubectl} apply -f -", stdin=json.dumps(document))
+            print(f"  applied {key[0]}/{key[1]}", flush=True)
         selector = f"app.kubernetes.io/component in ({','.join(PLATFORM_COMPONENTS)})"
-        _ssh(host, f"{kubectl} rollout restart deployment -l {shlex.quote(selector)} >/dev/null")
         _ssh(host, f"{kubectl} rollout status deployment -l {shlex.quote(selector)} --timeout=10m")
         _ssh(
             host,
             f"{kubectl} exec deploy/gateway -- python -c "
             + shlex.quote(
-                "import httpx; r = httpx.post('http://127.0.0.1:8080/api/platform/workflow-repo/sync', timeout=300); "
-                "r.raise_for_status(); print('workflows synced')"
+                "import asyncio; from sage_run.incluster import activate_checkout; "
+                f"asyncio.run(activate_checkout({ref!r})); print('workflows activated')"
             ),
         )
     print(f"Deployed {commit[:12]} to {instance.name} on {host}", flush=True)

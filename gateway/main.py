@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from gateway.api import router as api_router
+from gateway.deployments import router as deployment_router
 from gateway.event_collector import router as event_router
 from gateway.message import router as message_router
 from gateway.message_ingress import GatewayMessageIngress
@@ -80,6 +81,7 @@ app.add_middleware(
 app.include_router(message_router, prefix="/webhooks", tags=["webhooks"])
 app.include_router(event_router, tags=["events"])
 app.include_router(api_router, prefix="/api", tags=["control-plane"])
+app.include_router(deployment_router, prefix="/api", tags=["deployments"])
 
 
 @app.get("/health")

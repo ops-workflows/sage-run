@@ -11,6 +11,8 @@ spec:
       app.kubernetes.io/component: session-manager
   template:
     metadata:
+      annotations:
+        sage-run/config-checksum: {{ .Values.configChecksum | quote }}
       labels:
         app.kubernetes.io/component: session-manager
     spec:
