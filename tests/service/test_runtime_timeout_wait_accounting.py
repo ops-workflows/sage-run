@@ -34,6 +34,36 @@ async def _reload(db_session, task_id) -> Task:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "data", "timeout"),
+    [
+        ("approval_requested", {"tool_name": "Bash", "request_id": "test"}, 120),
+        ("user_question_requested", {"questions": [{"question": "Proceed?"}]}, 240),
+    ],
+)
+async def test_custom_wait_deadline_matches_runtime_budget_and_retries_do_not_extend_it(
+    db_session, event_type, data, timeout
+) -> None:
+    task = await create_task(db_session, workflow="platform-test", prompt="custom wait")
+    await dequeue_task(db_session, workflow="platform-test")
+    event = EventPayload(task_id=str(task.id), event_type=event_type, data=data, wait_timeout_sec=timeout)
+    await receive_event(event)
+    waiting = await _reload(db_session, task.id)
+    assert waiting.wait_deadline - waiting.wait_started == timedelta(seconds=timeout)
+    first_deadline = waiting.wait_deadline
+    await receive_event(event)
+    assert (await _reload(db_session, task.id)).wait_deadline == first_deadline
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, 604801, "120"])
+def test_invalid_wait_budget_is_rejected(timeout):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        EventPayload(event_type="user_question_requested", wait_timeout_sec=timeout)
+
+
+@pytest.mark.asyncio
 async def test_clarification_wait_is_tracked_once_and_closed_on_resolution(db_session) -> None:
     task = await create_task(db_session, workflow="platform-test", prompt="ask then continue")
     await dequeue_task(db_session, workflow="platform-test")

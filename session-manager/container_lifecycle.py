@@ -288,6 +288,7 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
             "MAX_TURNS": str(agent_config.get("session", {}).get("max_turns", 50)),
             "RUNTIME_TIMEOUT_SEC": str(runtime.get("runtime_timeout_sec", 300)),
             "OPERATOR_APPROVAL_TIMEOUT_SEC": str(runtime.get("approval_timeout_sec", 3600)),
+            "CLARIFICATION_TIMEOUT_SEC": str(runtime.get("clarification_timeout_sec", 3600)),
             "ASK_USER_QUESTION_REMINDER_ENABLED": str(reminder_config.get("enabled", bool(reminder_config))).lower(),
             "ASK_USER_QUESTION_REMINDER_MIN_TURNS": str(reminder_config.get("min_turns", 10)),
             "ASK_USER_QUESTION_REMINDER_TURN_RATIO": str(reminder_config.get("turn_budget_ratio", 0.7)),

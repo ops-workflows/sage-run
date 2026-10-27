@@ -290,6 +290,23 @@ provider inbound message arrives in the same provider/thread, gateway ingress
 persists a `user_question_reply` session event. The runtime polls the Gateway
 reply API for that event; it never polls Mattermost or Slack threads directly.
 
+### Human-wait deadlines (unreleased source)
+
+Set `runtime.approval_timeout_sec` and `runtime.clarification_timeout_sec` in
+`agent.yaml`. Both default to 3,600 seconds and accept integers from 1 to 604,800.
+The approval limit applies to each approval request. The clarification limit is
+one total human-reply budget for an `AskUserQuestion` call, including all its
+questions, rather than a fresh budget per question.
+
+The Session Manager injects these settings into each new runtime. The runtime
+reports its selected budget with wait events; Gateway persists the corresponding
+deadline from the beginning of that wait. Retries/delivery-failure events do not
+extend it, and later workflow edits do not change a running task's launch budget.
+Older runtimes that omit a budget retain the 3,600-second default.
+Approval/clarification time remains excluded from `runtime.runtime_timeout_sec`
+and running-task concurrency; this does not add a wall-clock Kubernetes Job
+deadline. These settings are not shipped in 1.0.4.
+
 Each workflow declares `messaging.channels` and `messaging.trigger_words` in
 its `agent.yaml`. A channel may be its provider name (for example,
 `operations`) or its provider ID. At gateway startup, configured names are

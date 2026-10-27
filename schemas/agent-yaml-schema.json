@@ -99,6 +99,20 @@
           "default": 300,
           "description": "Active runtime ceiling for a session attempt, excluding time spent waiting for approvals or clarifications (those waits have their own deadlines). Prevents long-running misdirected sessions from burning tokens indefinitely."
         },
+        "approval_timeout_sec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800,
+          "default": 3600,
+          "description": "Maximum wait for each operator approval, independent of active runtime."
+        },
+        "clarification_timeout_sec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800,
+          "default": 3600,
+          "description": "Total human-reply budget for one AskUserQuestion call, including all its questions, independent of active runtime."
+        },
         "ask_user_question_reminder": {
           "type": "object",
           "description": "Late-session reminder policy for prompting the agent to use AskUserQuestion when it may be stuck.",

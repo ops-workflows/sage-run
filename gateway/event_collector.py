@@ -37,6 +37,7 @@ class EventPayload(BaseModel):
     event_type: str
     timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     data: dict[str, Any] = Field(default_factory=dict)
+    wait_timeout_sec: int = Field(default=3600, strict=True, ge=1, le=604800)
 
 
 def _coerce_total_tokens(usage: Any) -> int | None:
@@ -151,6 +152,7 @@ async def receive_event(event: EventPayload):
 
         if task_uuid:
             now = datetime.now(UTC)
+            wait_started = task.wait_started if task is not None else None
             task_updates: dict[str, Any] = {
                 "heartbeat": now,
             }
@@ -172,7 +174,7 @@ async def receive_event(event: EventPayload):
                         {
                             "status": "waiting_approval",
                             "wait_reason": "operator_approval",
-                            "wait_deadline": now + timedelta(seconds=3600),
+                            "wait_deadline": (wait_started or now) + timedelta(seconds=event.wait_timeout_sec),
                             **wait_started_updates(task, now),
                         }
                     )
@@ -186,7 +188,7 @@ async def receive_event(event: EventPayload):
                             if event.event_type == "user_question_delivery_failed"
                             else "ask_user_question"
                         ),
-                        "wait_deadline": now + timedelta(seconds=3600),
+                        "wait_deadline": (wait_started or now) + timedelta(seconds=event.wait_timeout_sec),
                         **wait_started_updates(task, now),
                     }
                 )

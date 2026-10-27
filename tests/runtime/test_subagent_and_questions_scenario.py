@@ -260,6 +260,14 @@ async def test_ask_user_question_approve(
     from session_manager import container_lifecycle
 
     original_runtime_env = container_lifecycle._get_platform_runtime_env
+    original_agent_config = container_lifecycle.load_agent_yaml
+
+    def agent_with_clarification_budget(workflow):
+        config = original_agent_config(workflow)
+        config["runtime"] = {**config.get("runtime", {}), "clarification_timeout_sec": 90}
+        return config
+
+    monkeypatch.setattr(container_lifecycle, "load_agent_yaml", agent_with_clarification_budget)
 
     def runtime_env_with_short_progress_timeout(**kwargs):
         runtime_env = original_runtime_env(**kwargs)
@@ -322,6 +330,12 @@ async def test_ask_user_question_approve(
     assert "user_question_requested" in event_types
     assert "user_question_resolved" in event_types
     assert "session_timeout" not in event_types
+    assert (
+        next(event for event in collected_events if event.get("event_type") == "user_question_requested")[
+            "wait_timeout_sec"
+        ]
+        == 90
+    )
 
     factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
     from shared.lib.models import TaskEvent
@@ -528,6 +542,10 @@ async def test_approval_timeout_no_reply(
 
     exit_code, logs = await spawn_and_wait(task, timeout_sec=45)
     assert exit_code == 0, f"Approval timeout did not resolve cleanly.\nLogs:\n{logs}"
+    assert (
+        next(event for event in collected_events if event.get("event_type") == "approval_requested")["wait_timeout_sec"]
+        == 20
+    )
 
 
 # ─── §2.3.4 Late-session question reminder ───────────────────────

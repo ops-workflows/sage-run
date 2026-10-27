@@ -89,6 +89,9 @@ CONVERSATION_BATCH_MAX_AGE_SEC = float(os.environ.get("CONVERSATION_BATCH_MAX_AG
 CONTROL_REQUEST_TIMEOUT_SEC = float(os.environ.get("CLAUDE_CONTROL_TIMEOUT_SEC", "180"))
 QUERY_PROGRESS_TIMEOUT_SEC = float(os.environ.get("CLAUDE_QUERY_PROGRESS_TIMEOUT_SEC", "240"))
 OPERATOR_APPROVAL_TIMEOUT_SEC = float(os.environ.get("OPERATOR_APPROVAL_TIMEOUT_SEC", "3600"))
+CLARIFICATION_TIMEOUT_SEC = int(os.environ.get("CLARIFICATION_TIMEOUT_SEC", "3600"))
+if not 1 <= OPERATOR_APPROVAL_TIMEOUT_SEC <= 604800 or not 1 <= CLARIFICATION_TIMEOUT_SEC <= 604800:
+    raise ValueError("Approval and clarification timeouts must be between 1 and 604800 seconds")
 
 # The Agent SDK's control-protocol `initialize` handshake can be slow when the
 # `claude` CLI cold-starts (esp. while MCP servers boot). The SDK derives its
@@ -132,6 +135,7 @@ ASK_USER_QUESTION_REMINDER_RECENT_QUESTION_TURN_WINDOW = max(
 # does not cancel the hook mid-wait.
 ASK_USER_QUESTION_HOOK_TIMEOUT_SEC = max(
     60,
+    CLARIFICATION_TIMEOUT_SEC + 60,
     int(os.environ.get("ASK_USER_QUESTION_HOOK_TIMEOUT_SEC", "3600") or "3600"),
 )
 
@@ -479,12 +483,18 @@ async def report_event(event_type: str, data: dict[str, Any]) -> None:
     """Report an event to the Gateway event collector."""
     client = await _get_client()
     try:
+        wait_timeout = {}
+        if event_type == "approval_requested":
+            wait_timeout["wait_timeout_sec"] = int(OPERATOR_APPROVAL_TIMEOUT_SEC)
+        elif event_type in {"user_question_requested", "user_question_delivery_failed"}:
+            wait_timeout["wait_timeout_sec"] = CLARIFICATION_TIMEOUT_SEC
         response = await client.post(
             f"{GATEWAY_URL}/events",
             json={
                 "task_id": TASK_ID,
                 "event_type": event_type,
                 "data": dict(data),
+                **wait_timeout,
             },
         )
         response.raise_for_status()
@@ -948,18 +958,18 @@ async def _wait_for_thread_reply(
     *,
     started_after_ms: int,
     ignore_post_ids: set[str] | None = None,
-    timeout_sec: int = 3600,
+    timeout_sec: float = 3600,
 ) -> dict[str, str] | None:
     """Poll the Gateway for a WebSocket-ingested reply to the current question."""
     del secret_env, ignore_post_ids
-    deadline = time.time() + timeout_sec
+    deadline = time.monotonic() + timeout_sec
     client = await _get_client()
-    while time.time() < deadline:
+    while (remaining := deadline - time.monotonic()) > 0:
         try:
             response = await client.get(
                 f"{GATEWAY_URL}/api/tasks/{TASK_ID}/message-reply",
                 params={"after_ms": started_after_ms},
-                timeout=30,
+                timeout=min(30, remaining),
             )
             response.raise_for_status()
             reply = response.json()
@@ -971,7 +981,7 @@ async def _wait_for_thread_reply(
                 }
         except httpx.HTTPError as exc:
             logger.warning("Failed to read question reply from Gateway: %s", exc)
-        await asyncio.sleep(2)
+        await asyncio.sleep(min(2, max(0, deadline - time.monotonic())))
     return None
 
 
@@ -1161,6 +1171,7 @@ async def _handle_ask_user_question(
     )
 
     answers: dict[str, str] = {}
+    deadline = time.monotonic() + CLARIFICATION_TIMEOUT_SEC
     progress_state["last_ask_user_question_turn"] = _estimated_turns(progress_state)
     for question in tool_input.get("questions", []):
         lines = [
@@ -1224,6 +1235,7 @@ async def _handle_ask_user_question(
             secret_env,
             started_after_ms=started_at_ms,
             ignore_post_ids={str(posted.get("id") or "")},
+            timeout_sec=max(0, deadline - time.monotonic()),
         )
         if reply is None:
             return PermissionResultDeny(
@@ -1274,32 +1286,32 @@ async def _request_operator_approval(
     )
 
     client = await _get_client()
-    deadline = time.time() + OPERATOR_APPROVAL_TIMEOUT_SEC
+    deadline = time.monotonic() + OPERATOR_APPROVAL_TIMEOUT_SEC
     params = {
         "task_id": TASK_ID,
         "tool_name": tool_name,
         "request_id": request_id,
     }
-    while time.time() < deadline:
+    while (remaining := deadline - time.monotonic()) > 0:
         try:
             response = await client.get(
                 f"{GATEWAY_URL}/api/runtime/approvals/status",
                 params=params,
-                timeout=30,
+                timeout=min(30, remaining),
             )
             if response.status_code == 404:
-                await asyncio.sleep(1)
+                await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
                 continue
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:
             logger.warning("Failed to poll approval status for %s: %s", tool_name, exc)
-            await asyncio.sleep(2)
+            await asyncio.sleep(min(2, max(0, deadline - time.monotonic())))
             continue
 
         status = str(payload.get("status") or "").strip().lower()
         if status == "pending":
-            await asyncio.sleep(2)
+            await asyncio.sleep(min(2, max(0, deadline - time.monotonic())))
             continue
 
         actor: dict[str, str] = {}

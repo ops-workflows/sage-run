@@ -28,6 +28,50 @@ import pytest  # noqa: E402
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "timeout"),
+    [("approval_requested", 120), ("user_question_requested", 240), ("user_question_delivery_failed", 240)],
+)
+async def test_wait_events_report_the_launch_configured_deadline(monkeypatch, event_type, timeout):
+    from unittest.mock import AsyncMock, MagicMock
+
+    sep = _get_sep()
+    client = AsyncMock()
+    client.post.return_value = MagicMock()
+    monkeypatch.setattr(sep, "_get_client", AsyncMock(return_value=client))
+    monkeypatch.setattr(sep, "OPERATOR_APPROVAL_TIMEOUT_SEC", 120)
+    monkeypatch.setattr(sep, "CLARIFICATION_TIMEOUT_SEC", 240)
+    await sep.report_event(event_type, {})
+    assert client.post.call_args.kwargs["json"]["wait_timeout_sec"] == timeout
+
+
+@pytest.mark.asyncio
+async def test_all_questions_share_one_clarification_budget(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    sep = _get_sep()
+    monkeypatch.setattr(sep, "CLARIFICATION_TIMEOUT_SEC", 240)
+    clock = {"now": time.monotonic()}
+    monkeypatch.setattr(sep.time, "monotonic", lambda: clock["now"])
+    budgets = []
+
+    async def reply(*args, **kwargs):
+        budgets.append(kwargs["timeout_sec"])
+        clock["now"] += 30
+        return {"message": "yes"}
+
+    monkeypatch.setattr(sep, "report_event", AsyncMock())
+    monkeypatch.setattr(sep, "_post_thread_message", AsyncMock(return_value={"id": "test"}))
+    monkeypatch.setattr(sep, "_wait_for_thread_reply", reply)
+    monkeypatch.setattr(sep, "_wait_for_resume_admission", AsyncMock())
+    result = await sep._handle_ask_user_question(
+        {"questions": [{"question": "first"}, {"question": "second"}]}, {}, {}, AsyncMock()
+    )
+    assert result.updated_input["answers"] == {"first": "yes", "second": "yes"}
+    assert budgets == [240, 210]
+
+
 @pytest.fixture(autouse=True)
 def _fresh_entrypoint():
     """Re-import the entrypoint so module-level env vars are picked up."""

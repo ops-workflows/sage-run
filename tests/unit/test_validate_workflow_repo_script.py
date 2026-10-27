@@ -54,6 +54,21 @@ def test_validate_workflow_repo_reports_package_schema_errors(tmp_path: Path, te
     assert any(error.startswith("platform-test: agent.yaml schema violation") for error in errors)
 
 
+@pytest.mark.parametrize("field", ["approval_timeout_sec", "clarification_timeout_sec"])
+@pytest.mark.parametrize("value", [1, 120, 604800, 0, 604801, True, "120"])
+def test_workflow_schema_validates_human_wait_limits(tmp_path, test_plugin_dir, field, value):
+    workflow = _copy_valid_workflow(tmp_path, test_plugin_dir)
+    path = workflow / "agent.yaml"
+    agent = yaml.safe_load(path.read_text())
+    agent.setdefault("runtime", {})[field] = value
+    path.write_text(yaml.safe_dump(agent))
+    errors = validate_workflow_repo(tmp_path)
+    if type(value) is int and 1 <= value <= 604800:
+        assert errors == []
+    else:
+        assert any("schema violation" in error for error in errors)
+
+
 def test_example_workflow_repo_makefile_has_lint_and_format_targets(repo_root: Path) -> None:
     makefile = (repo_root / "examples/workflow-repo/Makefile").read_text(encoding="utf-8")
 
