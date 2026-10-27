@@ -126,6 +126,27 @@ class UserInfoResponse(BaseModel):
     groups: list[str]
 
 
+class EncryptionKeyResponse(BaseModel):
+    public_key: str
+    environment: str
+
+
+@router.get("/platform/encryption-key", response_model=EncryptionKeyResponse)
+async def get_encryption_key() -> EncryptionKeyResponse:
+    import pyrage
+
+    from shared.lib.platform_config import selected_environment
+
+    if (Path(settings.workflow_repo_local_path) / ".git/sage-run-deploy.lock.d").exists():
+        raise HTTPException(status_code=409, detail="A checkout writer is active; retry encryption after it finishes")
+    public_key = settings.age_public_key
+    try:
+        pyrage.x25519.Recipient.from_str(public_key)
+    except pyrage.RecipientError:
+        raise HTTPException(status_code=503, detail="Active configuration has no valid age public key") from None
+    return EncryptionKeyResponse(public_key=public_key, environment=selected_environment() or "dev")
+
+
 class AgentFilesResponse(BaseModel):
     agent_yaml: str
     files: dict[str, str]

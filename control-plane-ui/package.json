@@ -3,6 +3,7 @@
   "version": "1.0.4",
   "private": true,
   "scripts": {
+    "test": "node --test tests/*.test.cjs tests/*.test.mjs",
     "dev": "USE_MOCKS=true next dev",
     "build": "next build",
     "export:singlefile": "vite build --config src/standalone/vite.config.mts",
@@ -12,6 +13,7 @@
     "format:check": "biome format ."
   },
   "dependencies": {
+    "age-encryption": "0.3.1",
     "@monaco-editor/react": "^4.6.0",
     "clsx": "^2.1.0",
     "date-fns": "^3.6.0",

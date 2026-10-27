@@ -8,9 +8,10 @@ import {
 } from '@/lib/agent-model';
 import { SyntaxCode } from '@/components/content-preview';
 import { PluginPreview } from '@/components/plugin-preview';
+import { SecretEncryption } from '@/components/secret-encryption';
 import { useParams } from 'next/navigation';
 
-type Tab = 'preview' | 'config' | 'schedules';
+type Tab = 'preview' | 'config' | 'schedules' | 'secrets';
 
 export default function AgentDetailPage() {
   const params = useParams();
@@ -99,7 +100,7 @@ export default function AgentDetailPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-8 border-b border-ops-border">
-        {(['preview', 'config', 'schedules'] as Tab[]).map((t) => (
+        {(['preview', 'config', 'schedules', 'secrets'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -115,6 +116,7 @@ export default function AgentDetailPage() {
       </div>
 
       {/* Tab Content */}
+      {tab === 'secrets' && <SecretEncryption key={name} />}
       {tab === 'preview' &&
         (pluginFilesLoading && !pluginFiles ? (
           <div className="bg-ops-surface border border-ops-border rounded-card p-5 text-sm text-[var(--color-text-tertiary)]">

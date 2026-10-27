@@ -74,6 +74,9 @@ jobs:
       - name: Lint
         run: make lint
 
+      - name: UI contract and encryption tests
+        run: npm --prefix control-plane-ui test
+
       - name: Build a service image
         run: docker buildx build --load -t sage-run-gateway:ci -f gateway/Dockerfile .
 

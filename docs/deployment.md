@@ -278,6 +278,30 @@ only separately managed plaintext credential file, **not** the only plaintext
 copy: Kubernetes Secrets and trusted service memory also contain credentials.
 Protect cluster-admin access, node storage and backups accordingly.
 
+### Copy-only browser encryption (unreleased source)
+
+Each workflow's **Secrets** tab loads the running Gateway's public recipient and active
+environment. `config.AGE_PUBLIC_KEY` comes from the merged base/environment
+configuration at startup, so production uses its production recipient rather
+than the development key. As with other Settings, an explicit environment
+override takes precedence. Confirm the displayed environment and recipient.
+
+Enter a string (including multiline credentials) and encrypt it locally in the
+browser. Plaintext is never submitted to an API, saved in browser storage or
+written to the repository. Copy the resulting `ENC[age,...]` into the appropriate
+`encrypted:` field, then review, commit and deploy normally. There is no secret
+save endpoint, Git write or pull-request creation. A missing/invalid active
+recipient is an explicit error. The tab rechecks the public recipient before
+each encryption and clears the input after success.
+During an active checkout writer/deployment, the key endpoint returns a retry
+error rather than advertising a possibly transitional recipient.
+
+Use trusted HTTPS or localhost: browser-local encryption does not protect
+against modified JavaScript delivered over an untrusted HTTP connection.
+On origins where clipboard access is unavailable, select and copy the output
+manually. This helper needs no private key; retain the CLI for first-time setup
+before an instance/UI exists. It is not shipped in 1.0.4.
+
 ### GitHub App access
 
 Initial deploy sends a Git bundle over SSH; no Git clone or PAT is needed on
@@ -479,18 +503,21 @@ uvx --from 'sage-run==1.0.4' sage-run down .  # keeps PVCs and Secrets
 # --purge deletes the namespace and its data; use only for disposable instances.
 ```
 
-### Other Kubernetes distributions
+## Kubernetes compatibility
 
 The workload chart and launcher use standard Deployments, StatefulSets,
 Services, Secrets, PVCs and Jobs, but the operator commands are more specific:
 
-| Target | Implemented / verified path | Remaining qualification or adaptation |
-| --- | --- | --- |
-| Single-node k3s on the production VMs | Qualified SSH/sudo deployment with a hostPath checkout and patched gVisor; Helm bootstrap assumes Linux amd64 | Preserve qualified storage, DNS, registry access and full-task sandbox behavior on each host |
-| Rancher Desktop Kubernetes/Moby | Qualified local working-tree hostPath, shared Docker image store/source builds and Traefik | Preserve checkout visibility, routing and local sandbox checks |
-| k3d / kind | Chart-level potential only; no turnkey or qualified CLI path | Node volume mapping, image import/registry, storage, ingress/ports and actual task tests; k3d `ci` gate remains planned |
-| GKE | Not an end-to-end supported operator target | Checkout distribution/storage, scheduling, identity/egress, ingress and managed-runtime/Bubblewrap qualification |
-| OpenShift | Not an end-to-end supported operator target | Runtime availability, SCC/arbitrary-UID compatibility, storage/scheduling, Routes/TLS and security-policy qualification |
+| Target | Current status |
+| --- | --- |
+| Single-node k3s | Qualified production path; remote `deploy` assumes k3s, SSH/sudo and a host checkout |
+| Rancher Desktop Kubernetes | Qualified local path |
+| k3d/kind | Plausible, but not turnkey or qualified; requires node volume mappings, image import/registry, ingress and port setup |
+| GKE/OpenShift | Standard Kubernetes workloads are reusable, but the current operator path needs adaptation and qualification |
+
+k3d/kind qualification and full GKE/OpenShift profiles or multi-node storage
+are not v2 completion requirements. This table documents boundaries rather than
+claiming unsupported distributions work end to end.
 
 - `deploy` assumes single-node k3s, SSH/sudo and a hostPath checkout.
 - `up --context <name>` selects another context, but still assumes a host

@@ -84,7 +84,7 @@ working-tree hostPath and optional Docker source builds. The chart's standard
 Kubernetes resources do **not** establish end-to-end support for k3d, kind,
 GKE (including Sandbox/Autopilot), or OpenShift. Those targets need storage,
 UID/security policy, RuntimeClass and network adaptation plus actual task
-qualification; see the [compatibility matrix](docs/deployment.md#other-kubernetes-distributions).
+qualification; see the [compatibility matrix](docs/deployment.md#kubernetes-compatibility).
 
 ## Documentation
 

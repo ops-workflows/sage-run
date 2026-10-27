@@ -40,6 +40,17 @@ export async function handleMockApiRequest(
 ): Promise<{ status: number; data: unknown }> {
   const path = pathSegments.join('/');
 
+  if (path === 'platform/encryption-key' && method === 'GET') {
+    return {
+      status: 200,
+      data: {
+        public_key:
+          'age1344lkgmzf3dqyxd6tv45tqlcjk4x9q0sasfr4hz4x628930e2c7svvywcc',
+        environment: 'demo (do not use for real secrets)',
+      },
+    };
+  }
+
   if (path === 'user-info' && method === 'GET') {
     return {
       status: 200,
