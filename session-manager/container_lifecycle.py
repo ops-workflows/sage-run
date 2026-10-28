@@ -159,13 +159,16 @@ def _load_active_release() -> dict | None:
 
 
 def _get_platform_runtime_env(
-    model_selector: str | None = None, *, platform_file: str | None = None
+    model_selector: str | None = None,
+    *,
+    platform_file: str | None = None,
+    environment: dict[str, str] | None = None,
 ) -> dict[str, str | None]:
     """Load platform-wide runtime env overrides for every session container."""
     platform_file = platform_file or _active_platform_config_file()
     if not platform_file:
         return {}
-    return load_platform_runtime_env(platform_file, model_selector=model_selector)
+    return load_platform_runtime_env(platform_file, model_selector=model_selector, environment=environment)
 
 
 def _get_platform_config_env(*, platform_file: str | None = None) -> dict[str, str]:
@@ -321,7 +324,9 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
         model_selector = _get_session_model_selector(agent_config)
         _apply_runtime_env_overrides(
             environment,
-            _get_platform_runtime_env(model_selector=model_selector, platform_file=platform_file),
+            _get_platform_runtime_env(
+                model_selector=model_selector, platform_file=platform_file, environment=platform_config_env
+            ),
         )
         environment.update(_get_agent_env_vars(agent_config))
 
@@ -339,7 +344,8 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
             environment.update(decrypted)
 
         # ── Named connections from platform config → env vars and secrets ──
-        connections = resolve_workflow_connections(load_platform_config(platform_file), task.workflow, agent_config)
+        platform_config = load_platform_config(platform_file)
+        connections = resolve_workflow_connections(platform_config, task.workflow, agent_config)
         connection_env, connection_secrets = connection_environment(connections, identity=settings.age_identity)
         environment.update(connection_env)
         environment.update(connection_secrets)
@@ -367,6 +373,7 @@ async def spawn_agent_session(task: Task) -> RuntimeHandle | None:
                 memory_volume_name=memory_vol_name,
                 container_name=container_name,
                 timeout_sec=int(runtime.get("runtime_timeout_sec", 300) or 300),
+                extra_hosts=platform_config.get("deployment", {}).get("extra_hosts"),
             )
         )
 

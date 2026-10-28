@@ -43,6 +43,7 @@ class RuntimeLaunchSpec:
     memory_volume_name: str | None = None
     container_name: str | None = None
     timeout_sec: int | None = None
+    extra_hosts: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +215,9 @@ class KubernetesRuntimeLauncher:
             enable_service_links=False,
             security_context=self._runtime_pod_security_context(sandbox_profile),
             runtime_class_name=settings.kubernetes_runtime_class if sandbox_profile == "gvisor" else None,
+            host_aliases=[self.client.V1HostAlias(ip=ip, hostnames=[host]) for host, ip in spec.extra_hosts.items()]
+            if spec.extra_hosts
+            else None,
         )
         template = self.client.V1PodTemplateSpec(
             metadata=self.client.V1ObjectMeta(

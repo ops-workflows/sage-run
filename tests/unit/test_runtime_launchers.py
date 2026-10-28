@@ -14,6 +14,36 @@ from tests.runtime.docker_support import DockerRuntimeLauncher, RuntimeLaunchSpe
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("extra_hosts", [None, {"model.example": "10.0.0.8"}])
+def test_kubernetes_runtime_uses_workflow_host_aliases(monkeypatch, extra_hosts):
+    from kubernetes import client
+    from session_manager.runtime_launchers import KubernetesRuntimeLauncher
+    from session_manager.runtime_launchers import RuntimeLaunchSpec as KubernetesLaunchSpec
+
+    monkeypatch.delenv("SANDBOX_MODE", raising=False)
+    launcher = object.__new__(KubernetesRuntimeLauncher)
+    launcher.client = client
+    launcher.batch = MagicMock()
+    launcher.namespace = "test"
+
+    launcher.launch(
+        KubernetesLaunchSpec(
+            task_id="task-12345678",
+            workflow="test",
+            image="runtime@sha256:test",
+            environment={},
+            extra_hosts=extra_hosts,
+        )
+    )
+
+    job = launcher.batch.create_namespaced_job.call_args.kwargs["body"]
+    aliases = job.spec.template.spec.host_aliases
+    if extra_hosts:
+        assert [(alias.ip, alias.hostnames) for alias in aliases] == [("10.0.0.8", ["model.example"])]
+    else:
+        assert aliases is None
+
+
 def test_runtime_image_is_read_for_each_new_task_and_missing_images_fail_explicitly(monkeypatch):
     from session_manager.runtime_launchers import KubernetesRuntimeLauncher
 

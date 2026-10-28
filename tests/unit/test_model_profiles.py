@@ -10,6 +10,7 @@ Validates that:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,48 @@ model_profiles:
     env = load_platform_runtime_env(str(config), model_selector="local")
     assert env["ANTHROPIC_BASE_URL"] == "http://local-llm:8000"
     assert env["ANTHROPIC_AUTH_TOKEN"] == "omlx-test-token"  # noqa: S105 - test fixture value.
+
+
+def test_profile_uses_decrypted_platform_env_without_mutating_process(tmp_path, monkeypatch):
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "existing-process-key")
+    config = tmp_path / "platform-config.yaml"
+    config.write_text(
+        """
+runtime_env:
+  FALLBACK_KEY: ${LLM_API_KEY}
+model_profiles:
+  custom:
+    ANTHROPIC_AUTH_TOKEN: ${CUSTOM_LLM_API_KEY}
+""".strip()
+    )
+
+    env = load_platform_runtime_env(
+        str(config), model_selector="custom", environment={"CUSTOM_LLM_API_KEY": "decrypted-profile-key"}
+    )
+
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "decrypted-profile-key"  # noqa: S105 - test fixture.
+    assert env["FALLBACK_KEY"] == "existing-process-key"
+    assert "CUSTOM_LLM_API_KEY" not in os.environ
+    assert "CUSTOM_LLM_API_KEY" not in env
+
+
+def test_profile_platform_env_takes_precedence_over_stale_process_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "old-key")
+    config = tmp_path / "platform-config.yaml"
+    config.write_text(
+        """
+model_profiles:
+  custom:
+    runtime_env:
+      ANTHROPIC_AUTH_TOKEN: ${CUSTOM_LLM_API_KEY}
+""".strip()
+    )
+
+    env = load_platform_runtime_env(str(config), model_selector="custom", environment={"CUSTOM_LLM_API_KEY": "new-key"})
+
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "new-key"  # noqa: S105 - test fixture.
+    assert os.environ["CUSTOM_LLM_API_KEY"] == "old-key"
 
 
 def test_model_costs_serialize_to_runtime_env(tmp_path):

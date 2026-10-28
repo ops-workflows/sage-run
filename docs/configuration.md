@@ -523,8 +523,12 @@ The operator decrypts it into the instance Secret. It is the model-access key
 passed to a model gateway or direct
 LiteLLM-compatible endpoint, Hindsight's LLM and embeddings clients, and
 referenced from `model_profiles` entries in `platform-config.yaml` as
-`${LLM_API_KEY}`. There is no per-provider key variable; a workflow
-selects a model via `session.model` in `agent.yaml`, which resolves to a
+`${LLM_API_KEY}`. A profile can reference its own top-level encrypted secret,
+for example `${CUSTOM_LLM_API_KEY}`. Session Manager resolves profile and runtime
+placeholders against the active configuration's decrypted platform values,
+then falls back to its process environment. It does not need a process restart
+just to expose a newly added profile key. A workflow selects a model via
+`session.model` in `agent.yaml`, which resolves to a
 `model_profiles` entry (or a raw model name). Hindsight can use that same
 endpoint for both clients, but its embedding model must still be an actual
 embedding model exposed by that endpoint; it is configured independently from
@@ -693,7 +697,7 @@ deployment:
   hindsight:
     env:                                   # HINDSIGHT_API_* settings for the Hindsight container
       HINDSIGHT_API_LLM_BASE_URL: http://llm.internal:8080/v1
-  extra_hosts:                             # /etc/hosts entries for every platform pod
+  extra_hosts:                             # /etc/hosts entries for platform and runtime pods
     logs.example.com: 10.0.0.5
   service_env:                             # extra environment per workload
     mcp-splunk:

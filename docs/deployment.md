@@ -1,8 +1,9 @@
 # Deployment and operations
 
-Unless explicitly marked **unreleased source**, this guide describes the
-**1.0.4 implementation**, not the target design. The unreleased section records
-source capabilities under test; it is not a release or production qualification.
+The historical behavior tables describe the **1.0.4 implementation**.
+Sections explicitly marked **1.0.5** describe the next patch's capabilities,
+not the remaining target design. Check publication and qualification status
+before upgrading.
 Use the workflow repository as the instance, the published `sage-run` CLI as
 the operator tool, and Kubernetes as the serving environment. No platform
 source checkout or platform image build is required on a production server.
@@ -278,7 +279,7 @@ only separately managed plaintext credential file, **not** the only plaintext
 copy: Kubernetes Secrets and trusted service memory also contain credentials.
 Protect cluster-admin access, node storage and backups accordingly.
 
-### Copy-only browser encryption (unreleased source)
+### Copy-only browser encryption (1.0.5)
 
 Each workflow's **Secrets** tab loads the running Gateway's public recipient and active
 environment. `config.AGE_PUBLIC_KEY` comes from the merged base/environment
@@ -403,11 +404,11 @@ Running tasks retain their launch environment and bundle. Avoid disruptive
 deploys during active work: the shared lock serializes deployment/backup
 writers, but there is no active-task drain yet.
 
-### Unreleased source: selective reload and deployment diffs
+### 1.0.5: selective reload and deployment diffs
 
-**Not published or deployed to production.** The following capabilities are
-implemented in the source tree and are under test. They do not change the
-behavior of an installed 1.0.3/1.0.4 CLI, image or production instance.
+The following capabilities require the 1.0.5 package, chart and images.
+They do not change the behavior of an installed 1.0.3/1.0.4 CLI, image or
+production instance until explicitly upgraded.
 
 The first upgrade from the released 1.0.3/1.0.4 chart can trigger a one-time
 consumer rollout as workload annotations, rollout strategies and environment
@@ -444,6 +445,20 @@ Atomic intake drain, general configuration hot reload, ordered migrations,
 runtime resource/network hardening and UI platform-version handover remain
 pending. Platform upgrades and migrations remain reviewed CLI/operator work;
 no UI upgrade capability is added by these source changes.
+
+### 1.0.5: per-profile credentials and runtime host aliases
+
+Session Manager resolves model-profile `${VAR}` references against the active
+configuration's decrypted platform values before falling back to process
+environment values. A newly added top-level profile secret does not need to
+be added to a Deployment's environment or the bootstrap Secret. Only the
+selected runtime overrides are passed to the task, not all platform secrets.
+
+`deployment.extra_hosts` is applied to ephemeral runtime Jobs as well as chart
+service pods. Kubernetes does not inherit the node's `/etc/hosts`; declare
+private model endpoint aliases in the workflow configuration when DNS is not
+available. New Jobs receive updated mappings; already-running Jobs keep their
+launch-time mapping.
 
 ## Local workflow and platform development
 

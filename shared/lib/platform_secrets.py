@@ -454,34 +454,42 @@ def _structured_secret_names(data: dict[str, Any]) -> set[str]:
     return _message_bus_secret_names(data) | _github_app_secret_names(data) | confluence_tokens | embedding_secrets
 
 
-def load_platform_runtime_env(path: str, *, model_selector: str | None = None) -> dict[str, str | None]:
+def load_platform_runtime_env(
+    path: str, *, model_selector: str | None = None, environment: Mapping[str, str] | None = None
+) -> dict[str, str | None]:
     """Load runtime-container env overrides from the repo config file.
 
     The top-level `runtime_env:` section is reserved for env vars that should be
     injected into every ephemeral runtime container. Scalar values are passed
     through as strings. `null` explicitly removes a variable from the runtime
-    environment so built-in defaults can be disabled.
+    environment so built-in defaults can be disabled. Decrypted platform values
+    override process values when resolving placeholders, without changing either.
     """
     data = _read_platform_file(path)
     if not data:
         return {}
 
+    source = dict(os.environ)
+    if environment is not None:
+        source.update(environment)
     runtime_values = data.get("runtime_env", {})
     normalized: dict[str, str | None] = {}
     if runtime_values:
         if not isinstance(runtime_values, dict):
             logger.warning("Platform config file has no valid 'runtime_env' mapping: %s", path)
             return {}
-        normalized.update(_normalize_runtime_env_values(runtime_values, path=path))
+        normalized.update(_normalize_runtime_env_values(runtime_values, path=path, environment=source))
 
     selector = (model_selector or str(data.get("default_model_profile") or "")).strip()
     if selector:
-        normalized.update(_resolve_model_runtime_env(data, selector=selector, path=path))
+        normalized.update(_resolve_model_runtime_env(data, selector=selector, path=path, environment=source))
 
     return normalized
 
 
-def _resolve_model_runtime_env(data: dict[str, Any], *, selector: str, path: str) -> dict[str, str | None]:
+def _resolve_model_runtime_env(
+    data: dict[str, Any], *, selector: str, path: str, environment: Mapping[str, str]
+) -> dict[str, str | None]:
     model_profiles = data.get("model_profiles", {})
     if model_profiles and not isinstance(model_profiles, dict):
         logger.warning("Platform config file has no valid 'model_profiles' mapping: %s", path)
@@ -496,10 +504,10 @@ def _resolve_model_runtime_env(data: dict[str, Any], *, selector: str, path: str
         return {}
 
     if isinstance(profile.get("runtime_env"), dict):
-        normalized = _normalize_runtime_env_values(profile["runtime_env"], path=path)
+        normalized = _normalize_runtime_env_values(profile["runtime_env"], path=path, environment=environment)
     else:
         env_values = {key: value for key, value in profile.items() if key != "model_costs"}
-        normalized = _normalize_runtime_env_values(env_values, path=path)
+        normalized = _normalize_runtime_env_values(env_values, path=path, environment=environment)
 
     model_costs = _normalize_model_costs(profile.get("model_costs"), selector=selector, path=path)
     if model_costs:
@@ -657,7 +665,9 @@ def _normalize_config_values(config_values: dict[str, Any], *, path: str) -> dic
     return normalized
 
 
-def _normalize_runtime_env_values(runtime_values: dict[str, Any], *, path: str) -> dict[str, str | None]:
+def _normalize_runtime_env_values(
+    runtime_values: dict[str, Any], *, path: str, environment: Mapping[str, str]
+) -> dict[str, str | None]:
     normalized: dict[str, str | None] = {}
     for env_var, value in runtime_values.items():
         env_key = MODEL_PROFILE_ENV_ALIASES.get(str(env_var), str(env_var))
@@ -665,13 +675,15 @@ def _normalize_runtime_env_values(runtime_values: dict[str, Any], *, path: str) 
             normalized[env_key] = None
             continue
         if isinstance(value, (str, int, float, bool)):
-            normalized[env_key] = _stringify_env_value(value, env_var=env_key, path=path)
+            normalized[env_key] = _stringify_env_value(value, env_var=env_key, path=path, environment=environment)
             continue
         logger.warning("Skipping non-scalar runtime_env value for %s in %s", env_var, path)
     return normalized
 
 
-def _stringify_env_value(value: str | int | float | bool, *, env_var: str, path: str) -> str:
+def _stringify_env_value(
+    value: str | int | float | bool, *, env_var: str, path: str, environment: Mapping[str, str] | None = None
+) -> str:
     if not isinstance(value, str):
         return str(value)
 
@@ -680,7 +692,7 @@ def _stringify_env_value(value: str | int | float | bool, *, env_var: str, path:
         return value
 
     placeholder = match.group(1)
-    resolved = os.environ.get(placeholder)
+    resolved = (os.environ if environment is None else environment).get(placeholder)
     if resolved is None:
         logger.warning("Environment placeholder %s for %s in %s is not set", placeholder, env_var, path)
         return ""

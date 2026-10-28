@@ -14,6 +14,7 @@ from session_manager.container_lifecycle import (
     _active_platform_config_file,
     _apply_runtime_env_overrides,
     _get_agent_env_vars,
+    _get_platform_runtime_env,
     _get_session_model_selector,
     _lifecycle_cost_usd,
     _load_active_release,
@@ -72,6 +73,33 @@ def test_apply_runtime_env_overrides_scalar_sets_value():
     env = {"FOO": "old"}
     _apply_runtime_env_overrides(env, {"FOO": "new", "BAR": "added"})
     assert env == {"FOO": "new", "BAR": "added"}
+
+
+def test_runtime_profile_resolves_platform_secret_without_process_env(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    from session_manager.container_lifecycle import _get_platform_config_env
+
+    monkeypatch.delenv("CUSTOM_LLM_API_KEY", raising=False)
+    monkeypatch.setattr(settings, "age_identity", "test-identity")
+    config = tmp_path / "platform-config.yaml"
+    config.write_text(
+        """
+secrets:
+  CUSTOM_LLM_API_KEY:
+    encrypted: ciphertext
+model_profiles:
+  custom:
+    ANTHROPIC_AUTH_TOKEN: ${CUSTOM_LLM_API_KEY}
+""".strip()
+    )
+    with patch("shared.lib.platform_secrets.decrypt_named_secrets", return_value={"CUSTOM_LLM_API_KEY": "profile-key"}):
+        platform_env = _get_platform_config_env(platform_file=str(config))
+    runtime_env = _get_platform_runtime_env(
+        model_selector="custom", platform_file=str(config), environment=platform_env
+    )
+
+    assert runtime_env["ANTHROPIC_AUTH_TOKEN"] == "profile-key"  # noqa: S105 - test fixture.
 
 
 # ── session model selector ──────────────────────────────────────────
