@@ -416,6 +416,29 @@ representation change, even without a reloadable configuration change.
 Restart-free config/runtime-only guarantees apply **after adoption of the new
 chart and runtime**, not to that initial upgrade.
 
+Helm 4 can reject the initial conversion of existing singleton Deployments with
+`spec.strategy.rollingUpdate: Forbidden` even though the chart renders
+`rollingUpdate: null`. If this occurs, the upgrade may be partially applied.
+Inspect workload health first and retain the verified pre-deployment backup.
+With no active tasks, remove the old strategy defaults atomically, then retry
+the same pinned deployment command:
+
+```sh
+kubectl --namespace "$INSTANCE" patch deployment \
+  session-manager knowledge-indexer servicenow-connector \
+  --type=merge \
+  -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
+```
+
+Use the target cluster explicitly (on a remote k3s host, run the command via
+SSH with `sudo k3s kubectl`, not a workstation's default context). Include only
+the affected, installed Deployments named in the error; a Pub/Sub instance
+uses `gcp-pubsub-connector` instead of `servicenow-connector`. This patch changes
+strategy only, not pod templates. Verify the retried release is `deployed` and
+all intended images have advanced; a failed Helm revision is not a completed
+upgrade. Automated strategy migration and partial-failure recovery remain
+deployment-engine follow-up work.
+
 | Change / consumer | Source behavior |
 | --- | --- |
 | Runtime environment, model profiles, named connections and bundles | Excluded from workload startup hashes; consumers that read these per task use the activated settings for new work without pod restarts |
