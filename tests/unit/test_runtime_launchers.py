@@ -427,4 +427,3 @@ def test_kubernetes_launcher_cancel_reraises_non_404_errors():
 
     with pytest.raises(kubernetes_client.exceptions.ApiException):
         launcher.cancel(runtime_id="session-606f90fc-aisti-alert-investigator")
-
