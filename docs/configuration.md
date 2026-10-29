@@ -732,7 +732,7 @@ Each environment has its own key, and a host holds only its environment's key.
 Generate a production key on its host (root-only
 `/etc/sage-run/<instance>/age.key`, for example with `age-keygen`) and copy
 only the public key into the overlay; local instances use
-`~/.config/sage-run/dev.agekey`.
+`dev.agekey` in the workflow repository root (gitignored).
 The overlay must therefore name its own `config.AGE_PUBLIC_KEY` and override
 every encrypted value in the base; `sage-run validate` rejects an overlay that
 reuses the base key or leaves a base ciphertext in place.

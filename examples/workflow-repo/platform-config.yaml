@@ -2,7 +2,7 @@
 # Edit the plain `config:` values directly for local development.
 # Keep sensitive values in `secrets:` encrypted with age.
 #
-# The private key is ~/.config/sage-run/dev.agekey locally and
+# The private key is dev.agekey in the workflow repository root (gitignored) locally and
 # /etc/sage-run/<instance>/age.key on the production host. Only public
 # recipients belong in Git. Replace every placeholder before deploying.
 

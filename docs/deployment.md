@@ -218,11 +218,11 @@ Start from [examples/workflow-repo](../examples/workflow-repo/). Replace all
 template values before deploying; it is deliberately not a runnable tenant.
 
 1. Configure the base `platform-config.yaml` for development/test.
-2. Generate a local key once:
+2. Generate a local key once in the workflow repository root (gitignored):
 
    ```sh
    uvx --from 'sage-run==1.0.4' sage-run keygen \
-     --out ~/.config/sage-run/dev.agekey
+     --out dev.agekey
    ```
 
    Put the printed public recipient in base `config.AGE_PUBLIC_KEY`.
@@ -503,12 +503,11 @@ From the workflow checkout:
 
 ```sh
 # Published platform images, no platform checkout required:
-uvx --from 'sage-run==1.0.4' sage-run up . \
-  --identity ~/.config/sage-run/dev.agekey
+uvx --from 'sage-run==1.0.4' sage-run up .
 
 # Test local platform changes without publishing a package or images:
 /path/to/sage-run/.venv/bin/python -m sage_run up . \
-  --source /path/to/sage-run --identity ~/.config/sage-run/dev.agekey
+  --source /path/to/sage-run
 
 # Reuse built images for workflow-only iterations:
 /path/to/sage-run/.venv/bin/python -m sage_run up . \
@@ -531,7 +530,7 @@ Node-bound UI ports or custom ingress can still conflict. Use distinct ports
 or stop the conflicting workload; namespaces do not isolate host ports.
 
 `--identity` or `SAGE_RUN_AGE_IDENTITY_FILE` overrides
-`~/.config/sage-run/dev.agekey`. Base configs must be encrypted to that key.
+`<workflow-repo>/dev.agekey` (gitignored). Base configs must be encrypted to that key.
 Separate dev integrations are strongly recommended: a development key does
 not make production endpoint values safe to use.
 

@@ -11,8 +11,8 @@ encrypt every secret to the correct environment key.
 ## Local development
 
 Prerequisites: Rancher Desktop Kubernetes with Moby and Traefik, shared
-home-directory checkout paths, `kubectl`, Helm and
-`~/.config/sage-run/dev.agekey`.
+home-directory checkout paths, `kubectl`, Helm and `dev.agekey` in the
+workflow repository root (gitignored).
 
 ```sh
 # Published platform:

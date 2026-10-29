@@ -27,8 +27,8 @@ from shared.lib.crypto import decrypt_named_secrets
 from shared.lib.platform_config import load_platform_config as load_merged_platform_config
 
 DEFAULT_CONTEXT = "rancher-desktop"
-# Development key shared by local instances; production keys live only on their hosts.
-DEFAULT_DEV_IDENTITY = "~/.config/sage-run/dev.agekey"
+# Per-repository development key in the workflow checkout root (gitignored); production keys live only on their hosts.
+DEFAULT_DEV_IDENTITY = "dev.agekey"
 IDENTITY_ENV = "SAGE_RUN_AGE_IDENTITY_FILE"
 INFRASTRUCTURE_SECRETS = ("LLM_API_KEY", "PG_PASSWORD", "OBJECT_STORE_SECRET_KEY")
 SANDBOX_PROFILES = ("local", "ci", "gvisor")
@@ -411,7 +411,9 @@ def up(
     else:
         instance.images = release_images(version("sage-run"))
 
-    identity = read_identity(identity_file or Path(os.environ.get(IDENTITY_ENV, DEFAULT_DEV_IDENTITY)))
+    env_identity = os.environ.get(IDENTITY_ENV)
+    default_identity = Path(env_identity) if env_identity else workflow_repo / DEFAULT_DEV_IDENTITY
+    identity = read_identity(identity_file or default_identity)
     with checkout_lock(workflow_repo):
         return _apply_local_instance(instance, config, identity, source)
 
