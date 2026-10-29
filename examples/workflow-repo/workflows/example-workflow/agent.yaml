@@ -64,8 +64,6 @@ runtime:
     time_budget_ratio: 0.75
     recent_question_turn_window: 8
   # Inherit the release-pinned runtime; do not override with a local :latest image.
-  memory_volumes:
-    - "agent-memory-example-workflow:/workspace/.claude/agent-memory"
 
 # ── Schedules ───────────────────────────────────────────────────────
 schedules: []

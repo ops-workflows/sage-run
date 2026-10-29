@@ -6,7 +6,6 @@
       "headers": {
         "X-Task-Id": "${TASK_ID}",
         "X-Task-Workflow": "${TASK_WORKFLOW}",
-        "X-Gateway-Url": "${GATEWAY_URL}",
         "X-Gateway-Event-Url": "${GATEWAY_EVENT_URL}",
         "X-Message-Channel": "${MESSAGE_CHANNEL}",
         "X-Message-Channel-Id": "${MESSAGE_CHANNEL_ID}",
