@@ -269,25 +269,30 @@ class KubernetesRuntimeLauncher:
             )
         return statuses
 
+    def _delete_job(self, name: str) -> bool:
+        try:
+            self.batch.delete_namespaced_job(
+                name=name,
+                namespace=self.namespace,
+                propagation_policy="Background",
+            )
+            return True
+        except Exception as exc:
+            if getattr(exc, "status", None) == 404:
+                return False
+            raise
+
     def cleanup_session(self, status: RuntimeSessionStatus) -> None:
-        self.batch.delete_namespaced_job(
-            name=status.id,
-            namespace=self.namespace,
-            propagation_policy="Background",
-        )
+        self._delete_job(status.id)
 
     def cancel(self, runtime_id: str | None = None, *, task_id: str | None = None) -> bool:
         if runtime_id:
-            self.cleanup_session(
-                RuntimeSessionStatus(runtime_id, runtime_id[:12], self.provider, task_id or "", "", "running")
-            )
-            return True
+            return self._delete_job(runtime_id)
         if not task_id:
             return False
         removed = False
         for status in self.list_sessions():
-            if status.task_id == task_id:
-                self.cleanup_session(status)
+            if status.task_id == task_id and self._delete_job(status.id):
                 removed = True
         return removed
 

@@ -410,3 +410,21 @@ def test_docker_launcher_accepts_profile_names(monkeypatch, mode, security_opt):
     kwargs = client.containers.run.call_args.kwargs
     assert kwargs["security_opt"] == security_opt
     assert kwargs["environment"]["CLAUDE_SANDBOX_ENABLE_WEAKER_NESTED"] == "1"
+
+
+def test_kubernetes_launcher_cancel_returns_false_when_job_already_deleted():
+    kubernetes_client = pytest.importorskip("kubernetes.client")
+    launcher = _kubernetes_launcher()
+    launcher.batch.delete_namespaced_job.side_effect = kubernetes_client.exceptions.ApiException(status=404)
+
+    assert launcher.cancel(runtime_id="session-606f90fc-aisti-alert-investigator") is False
+
+
+def test_kubernetes_launcher_cancel_reraises_non_404_errors():
+    kubernetes_client = pytest.importorskip("kubernetes.client")
+    launcher = _kubernetes_launcher()
+    launcher.batch.delete_namespaced_job.side_effect = kubernetes_client.exceptions.ApiException(status=500)
+
+    with pytest.raises(kubernetes_client.exceptions.ApiException):
+        launcher.cancel(runtime_id="session-606f90fc-aisti-alert-investigator")
+
