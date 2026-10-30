@@ -16,7 +16,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("PLATFORM_CONFIG_FILE", str(REPO_ROOT / "platform-config.yaml"))
 
-if importlib.util.find_spec("mcps.common") is None:  # pragma: no cover - fallback for wheels prior to 1.0.6
+if (
+    importlib.util.find_spec("mcps") is None or importlib.util.find_spec("mcps.common") is None
+):  # pragma: no cover - fallback for wheels prior to 1.0.6
     from shared.lib.platform_secrets import apply_platform_env_defaults
 
     try:
@@ -65,6 +67,7 @@ if importlib.util.find_spec("mcps.common") is None:  # pragma: no cover - fallba
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
 
     mcps_pkg = sys.modules.setdefault("mcps", types.ModuleType("mcps"))
+    mcps_pkg.__path__ = []  # type: ignore[attr-defined]
     common_mod = types.ModuleType("mcps.common")
     common_mod.PolicyReloadMiddleware = _PolicyReloadMiddleware  # type: ignore[attr-defined]
     common_mod.bootstrap_platform_env = _bootstrap_platform_env  # type: ignore[attr-defined]

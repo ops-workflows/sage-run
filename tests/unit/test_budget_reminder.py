@@ -52,7 +52,7 @@ async def test_all_questions_share_one_clarification_budget(monkeypatch):
 
     sep = _get_sep()
     monkeypatch.setattr(sep, "CLARIFICATION_TIMEOUT_SEC", 240)
-    clock = {"now": time.monotonic()}
+    clock = {"now": 1000.0}
     monkeypatch.setattr(sep.time, "monotonic", lambda: clock["now"])
     budgets = []
 
@@ -69,7 +69,7 @@ async def test_all_questions_share_one_clarification_budget(monkeypatch):
         {"questions": [{"question": "first"}, {"question": "second"}]}, {}, {}, AsyncMock()
     )
     assert result.updated_input["answers"] == {"first": "yes", "second": "yes"}
-    assert budgets == [240, 210]
+    assert budgets == pytest.approx([240, 210])
 
 
 @pytest.fixture(autouse=True)
