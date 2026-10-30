@@ -22,7 +22,13 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
-from sage_run.deployment import checkout_lock, configuration_checksums, deployment_plan
+from sage_run.deployment import (
+    build_deployment_plan,
+    checkout_lock,
+    configuration_checksums,
+    format_deployment_plan,
+    preflight_desired_tree,
+)
 from shared.lib.crypto import decrypt_named_secrets
 from shared.lib.platform_config import load_platform_config as load_merged_platform_config
 
@@ -414,6 +420,12 @@ def up(
     env_identity = os.environ.get(IDENTITY_ENV)
     default_identity = Path(env_identity) if env_identity else workflow_repo / DEFAULT_DEV_IDENTITY
     identity = read_identity(identity_file or default_identity)
+    preflight_desired_tree(
+        workflow_repo,
+        environment=environment,
+        identity=identity,
+        validate_repo=False,
+    )
     with checkout_lock(workflow_repo):
         return _apply_local_instance(instance, config, identity, source)
 
@@ -454,7 +466,17 @@ def _apply_local_instance(instance: Instance, config: dict, identity: str, sourc
             ],
             capture=True,
         )
-        plan = deployment_plan(previous, desired)
+        full_plan = build_deployment_plan(
+            previous,
+            desired,
+            desired_tree=instance.workflow_repo,
+            desired_config=config,
+            ref="working-tree",
+            current_version=version("sage-run"),
+            target_version=version("sage-run"),
+        )
+        plan = full_plan["resources"]
+        print(format_deployment_plan(full_plan), flush=True)
         print("Helm resource plan: " + json.dumps(plan, sort_keys=True), flush=True)
         previous_values = (
             json.loads(_run(["helm", "get", "values", RELEASE_NAME, *flags, "-o", "json"], capture=True))

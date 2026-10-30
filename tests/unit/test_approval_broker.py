@@ -99,7 +99,7 @@ def test_mattermost_resolution_payload_preserves_request_details() -> None:
         id=uuid.uuid4(),
         task_id=task.id,
         workflow=task.workflow,
-        tool_name="mcp__individual-provisioning__create_individual",
+        tool_name="mcp__user-provisioning__create_user",
         request_preview="birthdate=1990-01-01, first_name=Aino, last_name=Virtanen",
         approval_metadata={},
     )
@@ -112,7 +112,7 @@ def test_mattermost_resolution_payload_preserves_request_details() -> None:
     )
 
     assert "**Approval Approved**" in text
-    assert "`mcp__individual-provisioning__create_individual`" in text
+    assert "`mcp__user-provisioning__create_user`" in text
     assert "birthdate=1990-01-01" in text
     assert "Approval **approved** by @alice." not in text
     assert props["attachments"] == [{"text": ":white_check_mark: Approval **approved** by @alice."}]

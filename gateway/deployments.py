@@ -17,6 +17,8 @@ router = APIRouter(prefix="/platform/deployments")
 
 class DeploymentRequest(BaseModel):
     ref: str = "main"
+    expected_commit: str | None = None
+    target_version: str | None = None
 
 
 def _clients():
@@ -26,7 +28,13 @@ def _clients():
     return client.BatchV1Api(), client.AppsV1Api(), client.CoreV1Api(), client.ApiClient()
 
 
-def _operation(*, ref: str | None = None, logs: bool = False) -> dict:
+def _operation(
+    *,
+    ref: str | None = None,
+    logs: bool = False,
+    expected_commit: str | None = None,
+    target_version: str | None = None,
+) -> dict:
     from kubernetes.client.exceptions import ApiException
     from kubernetes.config.config_exception import ConfigException
 
@@ -51,8 +59,30 @@ def _operation(*, ref: str | None = None, logs: bool = False) -> dict:
             if len(nodes) != 1 or None in nodes:
                 raise HTTPException(503, "Cannot determine the serving Gateway node")
             gateway["metadata"].setdefault("annotations", {})["sage-run/node"] = nodes.pop()
+            target_image = None
+            if target_version:
+                from importlib.metadata import version
+
+                from sage_run.incluster import resolve_service_image, resolve_target_images
+
+                running_ver = version("sage-run")
+                if target_version != running_ver:
+                    target_image = resolve_service_image(
+                        resolve_target_images({}, current_version=running_ver, target_version=target_version),
+                        "gateway",
+                    )
             job = api.sanitize_for_serialization(
-                batch.create_namespaced_job(namespace, job_manifest(gateway, namespace=namespace, ref=ref))
+                batch.create_namespaced_job(
+                    namespace,
+                    job_manifest(
+                        gateway,
+                        namespace=namespace,
+                        ref=ref,
+                        expected_commit=expected_commit,
+                        target_version=target_version,
+                        target_image=target_image,
+                    ),
+                )
             )
             return job_status(job)
         if not jobs:
@@ -92,11 +122,35 @@ def _operation(*, ref: str | None = None, logs: bool = False) -> dict:
         raise HTTPException(503, "In-cluster deployment credentials are unavailable; use the CLI") from exc
 
 
+def _plan_operation(ref: str) -> dict:
+    from sage_run.incluster import plan_in_cluster
+
+    if not settings.workflow_repo_managed:
+        raise HTTPException(503, "Deployment Jobs are not enabled for this instance; use the CLI")
+    try:
+        return plan_in_cluster(ref)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Deployment plan computation failed")
+        raise HTTPException(503, f"Deployment plan computation failed: {exc}") from exc
+
+
 @router.get("")
 async def latest_deployment():
     return await asyncio.to_thread(_operation, logs=True)
 
 
+@router.get("/plan")
+async def get_deployment_plan(ref: str = "main"):
+    return await asyncio.to_thread(_plan_operation, ref)
+
+
 @router.post("", status_code=202)
 async def create_deployment(payload: DeploymentRequest):
-    return await asyncio.to_thread(_operation, ref=payload.ref)
+    return await asyncio.to_thread(
+        _operation,
+        ref=payload.ref,
+        expected_commit=payload.expected_commit,
+        target_version=payload.target_version,
+    )

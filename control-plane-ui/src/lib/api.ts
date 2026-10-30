@@ -292,12 +292,37 @@ export interface DeploymentStatus {
   id: string;
   ref: string;
   commit: string | null;
+  expected_commit?: string | null;
+  target_version?: string | null;
   status: 'pending' | 'running' | 'succeeded' | 'failed';
   phase: string;
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
   logs?: string;
+}
+
+export interface DeploymentPlan {
+  ref: string;
+  current_commit: string;
+  target_commit: string;
+  current_version: string;
+  target_version: string;
+  version_changed: boolean;
+  resources: {
+    create: string[];
+    roll: string[];
+    update: string[];
+    delete: string[];
+  };
+  workflows: {
+    create: string[];
+    update: string[];
+    delete: string[];
+  };
+  reloads: string[];
+  migrations: string[];
+  drift: string[];
 }
 
 export interface HindsightBank {

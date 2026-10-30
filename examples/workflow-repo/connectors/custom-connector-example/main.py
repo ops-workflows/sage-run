@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from shared.lib.config import settings
 from shared.lib.connector_state import connector_is_paused
 from shared.lib.platform_secrets import (
@@ -25,6 +23,7 @@ from shared.lib.platform_secrets import (
     load_enabled_connector_instance,
 )
 from shared.lib.task_queue import DedupeCheck, submit_task
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("custom-connector-example")
 

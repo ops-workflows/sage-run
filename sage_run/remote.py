@@ -20,7 +20,18 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sage_run.deployment import EXTRA_KINDS, deployment_plan, extra_manifests, job_manifest, owned_extras, validate_ref
+from sage_run.deployment import (
+    EXTRA_KINDS,
+    build_deployment_plan,
+    extra_manifests,
+    format_deployment_plan,
+    job_manifest,
+    owned_extras,
+    preflight_desired_tree,
+    validate_ref,
+    validate_upgrade_path,
+    verify_config_secrets,
+)
 from sage_run.local import (
     BOOTSTRAP_SECRET,
     INFRASTRUCTURE_SECRETS,
@@ -29,10 +40,10 @@ from sage_run.local import (
     Instance,
     _chart_path,
     instance_name,
+    load_platform_config,
     release_images,
     render_values,
 )
-from shared.lib.platform_config import load_platform_config
 
 KEY_DIR = "/etc/sage-run"
 STATE_DIR = "/var/lib/sage-run"
@@ -67,6 +78,21 @@ manifest = {"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
 subprocess.run(kubectl + ["apply", "-f", "-"], input=json.dumps(manifest), text=True, check=True,
                stdout=subprocess.DEVNULL)
 print("instance secret updated:", ", ".join(sorted(data)))
+"""
+
+# Runs on the host before any backup or mutation to verify every encrypted secret
+# in the desired config/workflows can be decrypted by the host age key.
+_VERIFY_KEY_PROGRAM = r"""
+import base64, json, subprocess, sys
+request = json.load(sys.stdin)
+identity = [line for line in open(request["key"]).read().splitlines() if line.startswith("AGE-SECRET-KEY-")]
+if len(identity) != 1:
+    sys.exit("[secrets] host key file must contain exactly one AGE-SECRET-KEY")
+for name, ciphertext in request["ciphertexts"].items():
+    blob = base64.b64decode(ciphertext[len("ENC[age,"):-1])
+    res = subprocess.run(["age", "-d", "-i", request["key"]], input=blob, capture_output=True)
+    if res.returncode != 0:
+        sys.exit(f"[secrets] Secret {name!r} cannot be decrypted with host key {request['key']}")
 """
 
 
@@ -290,7 +316,23 @@ def deploy(
     with tempfile.TemporaryDirectory() as temporary, remote_deploy_lock(host, checkout, plan_only=plan_only):
         tree = Path(temporary) / "tree"
         materialise(workflow_repo, commit, tree)
-        config = load_platform_config(tree / "platform-config.yaml", environment=environment)
+        config, pinned_version = preflight_desired_tree(
+            tree,
+            environment=environment,
+            current_version="",
+            require_llm_key=True,
+        )
+        if pinned_version and not image_tag and pinned_version != version:
+            raise ValueError(
+                f"[pin] Committed sage-run pin ({pinned_version}) does not match CLI version ({version}); "
+                "run via 'uv run sage-run deploy'"
+            )
+        all_ciphertexts = verify_config_secrets(
+            config,
+            require_llm_key=True,
+            tree=tree,
+            environment=environment,
+        )
         instance.workflow_repo = tree
         if image_tag:
             instance.images = {"registry": "", "tag": image_tag, "pullPolicy": "Never"}
@@ -302,10 +344,28 @@ def deploy(
         )
         print(f"  checkout {checkout}; key {key_file}; images {values['images']}", flush=True)
         print(f"  workflow MCPs: {', '.join(values['workflowMcps']) or 'none'}", flush=True)
-        if plan_only:
-            return 0
 
-        _ssh(host, f"sudo test -f {key_file} || {{ echo 'missing host key {key_file}' >&2; exit 1; }}")
+        _ssh(host, f"sudo test -f {key_file} || {{ echo '[secrets] missing host key {key_file}' >&2; exit 1; }}")
+        _ssh(
+            host,
+            f"sudo python3 -c {shlex.quote(_VERIFY_KEY_PROGRAM)}",
+            stdin=json.dumps({"key": key_file, "ciphertexts": all_ciphertexts}),
+        )
+        quoted_checkout = shlex.quote(checkout)
+        dirty = _ssh(
+            host,
+            f"if sudo test -d {quoted_checkout}/.git; then sudo git -C {quoted_checkout} status --porcelain; fi",
+            capture=True,
+        ).strip()
+        if dirty:
+            raise ValueError("[drift] Serving checkout has local changes; resolve drift before deploying")
+        current_commit = _ssh(
+            host,
+            f"if sudo test -d {quoted_checkout}/.git; then "
+            f"sudo git -C {quoted_checkout} rev-parse HEAD 2>/dev/null || true; fi",
+            capture=True,
+        ).strip()
+
         ensure_helm(host)
         remote_tmp = _ssh(host, "mktemp -d", capture=True).strip()
         bundle = io.BytesIO()
@@ -319,14 +379,21 @@ def deploy(
 
         namespace = shlex.quote(instance.name)
         kubectl = f"sudo k3s kubectl -n {namespace}"
-        _ssh(
-            host,
-            f"sudo k3s kubectl create namespace {namespace} --dry-run=client -o yaml | sudo k3s kubectl apply -f -",
-        )
+        if not plan_only:
+            _ssh(
+                host,
+                f"sudo k3s kubectl create namespace {namespace} --dry-run=client -o yaml | sudo k3s kubectl apply -f -",
+            )
         extras = extra_manifests(tree, host_checkout=checkout, namespace=instance.name)
-        live = json.loads(_ssh(host, f"{kubectl} get {','.join(EXTRA_KINDS)} -o json", capture=True))
-        old_extras = owned_extras(live["items"], instance.name, desired=extras)
+        live_raw = _ssh(
+            host,
+            f"{kubectl} get {','.join(EXTRA_KINDS)} -o json 2>/dev/null || echo '{{\"items\":[]}}'",
+            capture=True,
+        )
+        live = json.loads(live_raw or '{"items":[]}')
+        old_extras = owned_extras(live.get("items", []), instance.name, desired=extras)
         if any(kind == "PersistentVolumeClaim" for kind, _ in old_extras.keys() - extras.keys()):
+            _ssh(host, f"rm -rf {remote_tmp}")
             raise ValueError("Removing an extra PVC requires an explicit storage migration")
         helm = f"sudo helm --kubeconfig {KUBECONFIG} --namespace {namespace}"
         installed = _ssh(host, f"{helm} list --filter '^{RELEASE_NAME}$' -q", capture=True).strip()
@@ -334,14 +401,47 @@ def deploy(
         previous_values = (
             json.loads(_ssh(host, f"{helm} get values {RELEASE_NAME} -o json", capture=True)) if installed else None
         )
+        current_version = str(((previous_values or {}).get("images") or {}).get("tag") or "")
+        if current_version:
+            validate_upgrade_path(current_version, pinned_version or version)
         desired = _ssh(
             host,
             f"{helm} template {RELEASE_NAME} {remote_tmp}/chart -f {remote_tmp}/values.json"
             + (" --is-upgrade" if installed else ""),
             capture=True,
         )
-        plan = deployment_plan(previous, desired)
+        current_tree: Path | None = None
+        current_config: dict | None = None
+        if current_commit:
+            try:
+                candidate_current = Path(temporary) / "current-tree"
+                materialise(workflow_repo, current_commit, candidate_current)
+                current_tree = candidate_current
+                current_config = load_platform_config(candidate_current, environment=environment)
+            except Exception:
+                current_tree = None
+                current_config = None
+        full_plan = build_deployment_plan(
+            previous,
+            desired,
+            old_extras=old_extras,
+            wanted_extras=extras,
+            current_tree=current_tree,
+            desired_tree=tree,
+            current_config=current_config,
+            desired_config=config,
+            ref=ref,
+            current_commit=current_commit,
+            target_commit=commit,
+            current_version=current_version or version,
+            target_version=pinned_version or version,
+        )
+        plan = full_plan["resources"]
+        print(format_deployment_plan(full_plan), flush=True)
         print("Helm resource plan: " + json.dumps(plan, sort_keys=True), flush=True)
+        if plan_only:
+            _ssh(host, f"rm -rf {remote_tmp}")
+            return 0
         pre_deploy_backup(host, instance.name, values, remote_tmp=remote_tmp)
         sync_checkout(workflow_repo, host, commit, checkout, repo_url)
         request = json.dumps(
@@ -352,7 +452,8 @@ def deploy(
             f"sudo python3 -c {shlex.quote(_INSTANCE_KEY_PROGRAM)}",
             stdin=request,
         )
-        if any(plan.values()) or previous_values != values:
+        chart_only_plan = build_deployment_plan(previous, desired)["resources"]
+        if any(chart_only_plan.values()) or previous_values != values:
             _ssh(
                 host,
                 f"set -e; {helm} upgrade --install {RELEASE_NAME} {remote_tmp}/chart "

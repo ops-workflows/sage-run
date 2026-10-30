@@ -24,6 +24,7 @@ import {
 import type {
   KnowledgeSource,
   BackgroundJobRun,
+  DeploymentPlan,
   DeploymentStatus,
 } from '@/lib/api';
 import { MOCK_SCHEDULES } from './schedules';
@@ -106,12 +107,60 @@ export async function handleMockApiRequest(
   if (path === 'platform/deployments' && method === 'GET') {
     return { status: 200, data: { deployment: mockDeployment } };
   }
+  if (path === 'platform/deployments/plan' && method === 'GET') {
+    const ref = searchParams.get('ref') || 'main';
+    const versionEntry = MOCK_WORKFLOW_REPO_VERSIONS.find(
+      (v) => v.name === ref,
+    );
+    const targetCommit =
+      versionEntry?.commit_sha ||
+      MOCK_WORKFLOW_REPO_STATUS.last_synced_commit ||
+      'a1b2c3d4e5f6';
+    const plan: DeploymentPlan = {
+      ref,
+      current_commit:
+        MOCK_WORKFLOW_REPO_STATUS.last_synced_commit || 'a1b2c3d4e5f6',
+      target_commit: targetCommit,
+      current_version: '1.0.1',
+      target_version: '1.0.1',
+      version_changed: false,
+      resources: {
+        create: [],
+        roll:
+          ref === MOCK_WORKFLOW_REPO_STATUS.last_synced_ref
+            ? []
+            : ['Deployment/gateway'],
+        update: [],
+        delete: [],
+      },
+      workflows: {
+        create: [],
+        update:
+          ref === MOCK_WORKFLOW_REPO_STATUS.last_synced_ref
+            ? []
+            : MOCK_WORKFLOW_REPO_STATUS.discovered_workflows.slice(0, 1),
+        delete: [],
+      },
+      reloads: ['workflow_bundles'],
+      migrations: [],
+      drift: [],
+    };
+    return { status: 200, data: plan };
+  }
   if (path === 'platform/deployments' && method === 'POST') {
-    const ref = (body as { ref?: string })?.ref || 'main';
+    const payload = (body as {
+      ref?: string;
+      expected_commit?: string;
+      target_version?: string;
+    }) || { ref: 'main' };
+    const ref = payload.ref || 'main';
     mockDeployment = {
       id: `sage-run-deploy-${Date.now()}`,
       ref,
-      commit: MOCK_WORKFLOW_REPO_STATUS.last_synced_commit,
+      commit:
+        payload.expected_commit || MOCK_WORKFLOW_REPO_STATUS.last_synced_commit,
+      expected_commit: payload.expected_commit || null,
+      target_version: payload.target_version || '1.0.1',
       status: 'succeeded',
       phase: 'complete',
       started_at: new Date().toISOString(),

@@ -16,10 +16,9 @@ from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from fastmcp.dependencies import CurrentHeaders
-from starlette.responses import JSONResponse
-
 from mcps.common import bootstrap_platform_env, extract_bearer_token, require_header, validate_base_url
 from shared.lib.platform_secrets import load_mcp_server_config
+from starlette.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)

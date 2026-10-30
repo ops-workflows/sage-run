@@ -417,7 +417,7 @@ def test_kubernetes_launcher_cancel_returns_false_when_job_already_deleted():
     launcher = _kubernetes_launcher()
     launcher.batch.delete_namespaced_job.side_effect = kubernetes_client.exceptions.ApiException(status=404)
 
-    assert launcher.cancel(runtime_id="session-606f90fc-aisti-alert-investigator") is False
+    assert launcher.cancel(runtime_id="session-12345678-platform-test") is False
 
 
 def test_kubernetes_launcher_cancel_reraises_non_404_errors():
@@ -426,4 +426,4 @@ def test_kubernetes_launcher_cancel_reraises_non_404_errors():
     launcher.batch.delete_namespaced_job.side_effect = kubernetes_client.exceptions.ApiException(status=500)
 
     with pytest.raises(kubernetes_client.exceptions.ApiException):
-        launcher.cancel(runtime_id="session-606f90fc-aisti-alert-investigator")
+        launcher.cancel(runtime_id="session-12345678-platform-test")

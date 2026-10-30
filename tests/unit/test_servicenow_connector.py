@@ -59,7 +59,7 @@ def test_load_target_workflow_env_includes_target_workflow_connections(monkeypat
     platform_config = {
         "connections": {
             "servicenow-dev": {
-                "workflows": ["phs-ticket-triage"],
+                "workflows": ["servicenow-ticket-triage"],
                 "env": {"SERVICENOW_INSTANCE_URL": "https://dev.service-now.invalid"},
                 "secrets": {
                     "SERVICENOW_USERNAME": {"encrypted": "ENC[plain,connection-user]"},
@@ -71,7 +71,7 @@ def test_load_target_workflow_env_includes_target_workflow_connections(monkeypat
     monkeypatch.setattr(connector, "find_workflow_package", lambda workflow: package)
     monkeypatch.setattr(connector, "load_platform_config", lambda path: platform_config)
 
-    resolved = connector._load_target_workflow_env({"target": {"workflow": "phs-ticket-triage"}})
+    resolved = connector._load_target_workflow_env({"target": {"workflow": "servicenow-ticket-triage"}})
 
     assert resolved == {
         "TRIAGE_MODE": "shadow",

@@ -8,10 +8,17 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.types import ASGIApp
+try:
+    from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from starlette.types import ASGIApp
+except ImportError:  # pragma: no cover - minimal operator wheel without starlette
+    BaseHTTPMiddleware = object  # type: ignore[assignment,misc]
+    RequestResponseEndpoint = Callable[..., object]  # type: ignore[assignment,misc]
+    Request = object  # type: ignore[assignment,misc]
+    Response = object  # type: ignore[assignment,misc]
+    ASGIApp = object  # type: ignore[assignment,misc]
 
 from shared.lib.platform_secrets import apply_platform_env_defaults
 

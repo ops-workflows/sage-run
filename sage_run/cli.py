@@ -3,11 +3,54 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path
+
+
+def run_ci(workflow_repo: Path) -> int:
+    """Run workflow repository validation, ruff lint/format checks, and pytest."""
+    from sage_run.validation import validate_workflow_repo_report
+
+    repo = workflow_repo.expanduser().resolve()
+    report = validate_workflow_repo_report(repo, require_pin=True)
+    for warning in report.warnings:
+        print(f"warning: {warning}")
+    for error in report.errors:
+        print(error)
+    if report.errors:
+        return 1
+
+    code_dirs = [
+        name for name in ("connectors", "mcps", "tests") if (repo / name).is_dir() and any((repo / name).rglob("*.py"))
+    ]
+    if code_dirs:
+        for command in (
+            [sys.executable, "-m", "ruff", "check", *code_dirs],
+            [sys.executable, "-m", "ruff", "format", "--check", *code_dirs],
+        ):
+            result = subprocess.run(command, cwd=repo, check=False)  # noqa: S603
+            if result.returncode != 0:
+                return result.returncode
+
+    tests_dir = repo / "tests"
+    has_tests = tests_dir.is_dir() and (any(tests_dir.rglob("test_*.py")) or any(tests_dir.rglob("*_test.py")))
+    if has_tests:
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "pytest", "tests", "-q"],
+            cwd=repo,
+            env=env,
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -16,12 +59,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command")
     in_cluster = commands.add_parser("deploy-in-cluster", help="Run the namespace deployment Job")
     in_cluster.add_argument("--ref", required=True)
+    in_cluster.add_argument("--expected-commit", help="Require target ref to resolve to this exact commit SHA")
+    in_cluster.add_argument("--plan", action="store_true", help="Compute and print the live deployment plan only")
     backup = commands.add_parser("backup", help="Create and rotate namespace recovery sets")
     backup.add_argument("--kind", required=True, choices=("nightly", "deployment"))
     activate = commands.add_parser("activate", help="Activate the already prepared workflow checkout")
     activate.add_argument("--ref", required=True)
     validate = commands.add_parser("validate", help="Validate an existing workflow repository")
     validate.add_argument("workflow_repo", type=Path, nargs="?", default=Path.cwd())
+    ci = commands.add_parser("ci", help="Validate, lint, and test an existing workflow repository")
+    ci.add_argument("workflow_repo", type=Path, nargs="?", default=Path.cwd())
     for action, description in (
         ("up", "Create or update the local Kubernetes instance from the working tree"),
         ("down", "Remove the local instance's workloads (volumes are kept)"),
@@ -64,12 +111,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command in {"deploy-in-cluster", "backup", "activate"}:
         from sage_run.backups import create_backup
-        from sage_run.deployment import checkout_lock
-        from sage_run.incluster import activate_checkout, deploy_in_cluster
+        from sage_run.deployment import checkout_lock, format_deployment_plan
+        from sage_run.incluster import activate_checkout, deploy_in_cluster, plan_in_cluster
         from shared.lib.config import settings
 
         try:
             if args.command == "deploy-in-cluster":
+                if args.plan:
+                    print(format_deployment_plan(plan_in_cluster(args.ref)))
+                    return 0
+                if args.expected_commit:
+                    return deploy_in_cluster(args.ref, expected_commit=args.expected_commit)
                 return deploy_in_cluster(args.ref)
             if args.command == "activate":
                 import asyncio
@@ -92,6 +144,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         for error in report.errors:
             print(error)
         return int(bool(report.errors))
+    if args.command == "ci":
+        return run_ci(args.workflow_repo)
     if args.command == "deploy":
         from sage_run.remote import deploy as remote_deploy
 

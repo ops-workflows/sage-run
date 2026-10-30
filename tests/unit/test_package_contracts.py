@@ -57,6 +57,10 @@ def test_operator_wheel_includes_schemas_without_service_modules():
         "sage_run",
         "shared",
         "schemas",
+        "hooks",
+        "mcps/__init__.py",
+        "mcps/common.py",
+        "mcps/evidence.py",
     }
 
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   type Agent,
   apiFetch,
+  type DeploymentPlan,
   type DeploymentStatus,
   type WorkflowRepoStatus,
   type WorkflowRepoVersion,
@@ -87,6 +88,8 @@ function WorkflowRepoDeploySection() {
   const [status, setStatus] = useState<WorkflowRepoStatus | null>(null);
   const [versions, setVersions] = useState<WorkflowRepoVersion[]>([]);
   const [deployment, setDeployment] = useState<DeploymentStatus | null>(null);
+  const [plan, setPlan] = useState<DeploymentPlan | null>(null);
+  const [planning, setPlanning] = useState(false);
   const [selectedRef, setSelectedRef] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,16 +141,34 @@ function WorkflowRepoDeploySection() {
 
   const busy =
     submitting ||
+    planning ||
     deployment?.status === 'pending' ||
     deployment?.status === 'running';
   const remote = status?.source_mode === 'remote';
 
-  async function handleDeploy() {
+  async function handlePlanPreview() {
     if (!status || !selectedRef) return;
-    const explanation = remote
-      ? `Deploy ${selectedRef}? A production backup will be verified first (keep 3 deployment copies). Changed services may restart.`
-      : 'Deploy the current working tree? Changed services may restart.';
-    if (!window.confirm(explanation)) return;
+    setPlanning(true);
+    setError(null);
+    try {
+      const preview = await apiFetch<DeploymentPlan>(
+        `/api/platform/deployments/plan?ref=${encodeURIComponent(selectedRef)}`,
+      );
+      setPlan(preview);
+    } catch (planError) {
+      setPlan(null);
+      setError(
+        planError instanceof Error
+          ? planError.message
+          : 'Failed to compute deployment plan',
+      );
+    } finally {
+      setPlanning(false);
+    }
+  }
+
+  async function handleConfirmDeploy() {
+    if (!status || !plan) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -155,9 +176,14 @@ function WorkflowRepoDeploySection() {
         '/api/platform/deployments',
         {
           method: 'POST',
-          body: JSON.stringify({ ref: selectedRef }),
+          body: JSON.stringify({
+            ref: plan.ref,
+            expected_commit: plan.target_commit,
+            target_version: plan.target_version,
+          }),
         },
       );
+      setPlan(null);
       setDeployment(created);
     } catch (deployError) {
       setError(
@@ -176,8 +202,8 @@ function WorkflowRepoDeploySection() {
         Deploy
       </h2>
       <p className="mt-1 text-sm text-[var(--color-text-tertiary)]">
-        Deploy workflow bundles, configuration and MCPs from one checkout.
-        Platform version upgrades use the CLI.
+        Deploy workflow bundles, configuration, MCPs and pinned platform
+        versions from one checkout.
       </p>
       {error ? (
         <p role="alert" className="mt-4 text-sm text-[var(--color-error)]">
@@ -211,7 +237,10 @@ function WorkflowRepoDeploySection() {
               Workflow ref
               <select
                 value={selectedRef}
-                onChange={(event) => setSelectedRef(event.target.value)}
+                onChange={(event) => {
+                  setSelectedRef(event.target.value);
+                  setPlan(null);
+                }}
                 disabled={busy || !status.deployment_enabled}
                 className="rounded-btn border border-ops-border bg-ops-surface-raised px-3 py-2 text-sm text-[var(--color-text-primary)]"
               >
@@ -233,11 +262,15 @@ function WorkflowRepoDeploySection() {
             </label>
             <button
               type="button"
-              onClick={handleDeploy}
+              onClick={handlePlanPreview}
               disabled={busy || !status.deployment_enabled || !selectedRef}
               className="rounded-btn border border-ops-border bg-ops-surface px-4 py-2 text-sm text-[var(--color-text-secondary)] disabled:opacity-50"
             >
-              {busy ? 'Deploying...' : 'Deploy now'}
+              {planning
+                ? 'Planning...'
+                : submitting
+                  ? 'Deploying...'
+                  : 'Deploy now'}
             </button>
           </div>
           {!status.deployment_enabled ? (
@@ -246,12 +279,81 @@ function WorkflowRepoDeploySection() {
               the CLI first.
             </p>
           ) : null}
+          {plan ? (
+            <div
+              className="mt-5 space-y-3 rounded-card border border-ops-border bg-ops-surface-raised p-4"
+              aria-live="polite"
+            >
+              <div className="text-sm font-medium text-[var(--color-text-primary)]">
+                Deployment plan preview ({plan.ref})
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <ExpandableMeta
+                  label="Commit transition"
+                  value={`${plan.current_commit ? plan.current_commit.slice(0, 12) : 'none'} → ${plan.target_commit ? plan.target_commit.slice(0, 12) : 'none'}`}
+                />
+                <ExpandableMeta
+                  label="Platform version"
+                  value={
+                    plan.version_changed
+                      ? `${plan.current_version} → ${plan.target_version} (upgrade)`
+                      : `${plan.target_version} (unchanged)`
+                  }
+                />
+              </div>
+              <div className="space-y-1 text-xs text-[var(--color-text-secondary)]">
+                <p>
+                  Workloads — create:{' '}
+                  {plan.resources.create.join(', ') || 'none'} · roll:{' '}
+                  {plan.resources.roll.join(', ') || 'none'} · update:{' '}
+                  {plan.resources.update.join(', ') || 'none'} · delete:{' '}
+                  {plan.resources.delete.join(', ') || 'none'}
+                </p>
+                <p>
+                  Workflow bundles — create:{' '}
+                  {plan.workflows.create.join(', ') || 'none'} · update:{' '}
+                  {plan.workflows.update.join(', ') || 'none'} · delete:{' '}
+                  {plan.workflows.delete.join(', ') || 'none'}
+                </p>
+                <p>In-place reloads: {plan.reloads.join(', ') || 'none'}</p>
+                <p>Migrations: {plan.migrations.join(', ') || 'none'}</p>
+                {remote ? (
+                  <p className="text-[var(--color-text-tertiary)]">
+                    A production backup will be verified before applying
+                    changes. Target commit will be revalidated under the
+                    deployment lock.
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={handleConfirmDeploy}
+                  disabled={busy}
+                  className="rounded-btn border border-ops-border bg-ops-surface px-4 py-2 text-sm text-[var(--color-text-primary)] disabled:opacity-50"
+                >
+                  {submitting ? 'Starting...' : 'Confirm deploy'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlan(null)}
+                  disabled={busy}
+                  className="rounded-btn border border-ops-border bg-ops-surface px-4 py-2 text-sm text-[var(--color-text-tertiary)] disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
           {deployment ? (
             <div className="mt-5 space-y-3" aria-live="polite">
               <p
                 className={`text-sm ${deployment.status === 'failed' ? 'text-[var(--color-error)]' : 'text-[var(--color-text-secondary)]'}`}
               >
                 {deployment.status} · {deployment.phase} · {deployment.ref}
+                {deployment.target_version
+                  ? ` · v${deployment.target_version.replace(/^v/, '')}`
+                  : ''}
               </p>
               {deployment.started_at ? (
                 <ExpandableMeta

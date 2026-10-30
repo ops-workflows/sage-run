@@ -67,6 +67,10 @@ only-include = [
     "sage_run",
     "shared",
     "schemas",
+    "mcps/__init__.py",
+    "mcps/common.py",
+    "mcps/evidence.py",
+    "hooks",
 ]
 
 [tool.ruff]

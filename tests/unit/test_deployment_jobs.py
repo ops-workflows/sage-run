@@ -351,3 +351,254 @@ def test_logs_are_decoded_and_failed_job_is_preserved(monkeypatch):
     assert result["status"] == "failed"
     assert result["logs"] == "backup failed\n"
     core.read_namespaced_pod_log.return_value.release_conn.assert_called_once()
+
+
+def test_shared_build_deployment_plan_unifies_chart_extras_bundles_and_reloads(tmp_path):
+    from sage_run.deployment import build_deployment_plan, format_deployment_plan
+
+    prev_tree = tmp_path / "prev"
+    next_tree = tmp_path / "next"
+    for root, wf_name, prompt in ((prev_tree, "triage", "v1"), (next_tree, "triage", "v2"), (next_tree, "audit", "v1")):
+        wf_dir = root / "workflows" / wf_name
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        (wf_dir / "agent.yaml").write_text(f"name: {wf_name}\nprompt: {prompt}\n", encoding="utf-8")
+
+    before_manifest = (
+        "kind: Deployment\nmetadata: {name: gateway}\nspec: {template: {spec: {containers: [{image: a}]}}}\n"
+    )
+    after_manifest = (
+        "kind: Deployment\nmetadata: {name: gateway}\nspec: {template: {spec: {containers: [{image: b}]}}}\n"
+    )
+    old_extras = {
+        ("Deployment", "ingress"): {
+            "kind": "Deployment",
+            "metadata": {"name": "ingress"},
+            "spec": {"template": {"a": 1}},
+        },
+        ("ConfigMap", "old-cfg"): {"kind": "ConfigMap", "metadata": {"name": "old-cfg"}, "data": {"k": "v"}},
+    }
+    wanted_extras = {
+        ("Deployment", "ingress"): {
+            "kind": "Deployment",
+            "metadata": {"name": "ingress"},
+            "spec": {"template": {"a": 2}},
+        },
+        ("Service", "ingress"): {"kind": "Service", "metadata": {"name": "ingress"}, "spec": {"ports": [{"port": 80}]}},
+    }
+    plan = build_deployment_plan(
+        before_manifest,
+        after_manifest,
+        old_extras=old_extras,
+        wanted_extras=wanted_extras,
+        previous_tree=prev_tree,
+        desired_tree=next_tree,
+        previous_config={"message_bus": {"provider": "mattermost", "team_name": "ops"}},
+        desired_config={"message_bus": {"provider": "mattermost", "team_name": "platform"}},
+        ref="v1.3.0",
+        current_commit="111111111111",
+        target_commit="222222222222",
+        current_version="1.0.1",
+        target_version="1.0.5",
+    )
+    assert plan["version_changed"] is True
+    assert plan["resources"] == {
+        "create": ["Service/ingress"],
+        "roll": ["Deployment/gateway", "Deployment/ingress"],
+        "update": [],
+        "delete": ["ConfigMap/old-cfg"],
+    }
+    assert plan["workflows"] == {"create": ["audit"], "update": ["triage"], "delete": []}
+    assert plan["reloads"] == ["message_bus", "workflow_bundles"]
+    assert plan["migrations"] == ["platform_version:1.0.1->1.0.5"]
+    formatted = format_deployment_plan(plan)
+    assert "1.0.1 -> 1.0.5 (upgrade)" in formatted
+    assert "Deployment/ingress" in formatted
+
+    with pytest.raises(ValueError, match="Removing an extra PVC"):
+        build_deployment_plan(
+            before_manifest,
+            after_manifest,
+            old_extras={
+                ("PersistentVolumeClaim", "data"): {"kind": "PersistentVolumeClaim", "metadata": {"name": "data"}}
+            },
+            wanted_extras={},
+        )
+
+
+def test_preflight_gates_reject_mismatched_recipient_missing_overlay_and_downgrade(tmp_path):
+    from sage_run.deployment import preflight_desired_tree, validate_upgrade_path
+    from sage_run.keys import generate_key
+    from shared.lib.crypto import encrypt_secret
+
+    with pytest.raises(ValueError, match=r"\[upgrade\].*downgrade"):
+        validate_upgrade_path("2.0.0", "1.0.5")
+
+    key_a = tmp_path / "a.agekey"
+    key_b = tmp_path / "b.agekey"
+    pub_a = generate_key(key_a)
+    generate_key(key_b)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "w"\nversion = "0.1.0"\ndependencies = ["sage-run==1.0.5"]\n'
+    )
+    (repo / "uv.lock").write_text(
+        'version = 1\n[[package]]\nname = "sage-run"\nversion = "1.0.5"\n'
+        'source = { registry = "https://pypi.org/simple" }\n'
+    )
+    secret_val = "super-secret-token-value-do-not-leak"
+    encrypted_for_a = encrypt_secret(secret_val, public_key=pub_a)
+    (repo / "platform-config.yaml").write_text(
+        f"secrets:\n  LLM_API_KEY:\n    encrypted: {encrypted_for_a}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"\[secrets\]") as exc_info:
+        preflight_desired_tree(
+            repo,
+            current_version="1.0.1",
+            identity=str(key_b),
+            validate_repo=False,
+        )
+    assert secret_val not in str(exc_info.value)
+    assert encrypted_for_a not in str(exc_info.value)
+
+    (repo / "platform-config-prod.yaml").write_text("secrets: {}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"\[secrets\] Overlay platform-config-prod.yaml must override"):
+        preflight_desired_tree(
+            repo,
+            environment="prod",
+            current_version="1.0.1",
+            identity=str(key_a),
+            validate_repo=False,
+        )
+
+
+def test_stale_expected_commit_and_dirty_checkout_fail_before_backup_or_mutation(cluster_deploy):
+    deployment = cluster_deploy
+    with pytest.raises(ValueError, match=r"\[drift\] Target ref main moved from expected commit stale0000000"):
+        deployment.module.deploy_in_cluster("main", expected_commit="stale0000000")
+    deployment.backup.assert_not_called()
+    deployment.helm.assert_not_called()
+    assert not any("checkout" in call.args[1:] for call in deployment.git.call_args_list)
+
+
+def test_api_plan_endpoint_and_job_manifest_handover_parameters(gateway, monkeypatch):
+    from gateway import deployments
+
+    monkeypatch.setattr(deployments.settings, "workflow_repo_managed", True)
+    monkeypatch.setattr(deployments.settings, "workflow_repo_source", "remote")
+    monkeypatch.setattr(deployments.settings, "kubernetes_namespace", "corp")
+
+    fake_plan = {
+        "ref": "v1.2.3",
+        "current_commit": "111111111111",
+        "target_commit": "222222222222",
+        "current_version": "1.0.1",
+        "target_version": "1.0.5",
+        "version_changed": True,
+        "resources": {"create": [], "roll": ["Deployment/gateway"], "update": [], "delete": []},
+        "workflows": {"create": [], "update": ["incident_triage"], "delete": []},
+        "reloads": ["workflow_bundles"],
+        "migrations": ["platform_version:1.0.1->1.0.5"],
+        "drift": [],
+    }
+    import sage_run.incluster as incluster
+
+    monkeypatch.setattr(incluster, "plan_in_cluster", lambda ref: {**fake_plan, "ref": ref})
+    assert deployments._plan_operation("v1.2.3")["target_commit"] == "222222222222"
+
+    job = job_manifest(
+        gateway,
+        namespace="corp",
+        ref="v1.2.3",
+        expected_commit="222222222222",
+        target_version="1.0.5",
+        target_image="ghcr.io/ops-workflows/sage-run-gateway:1.0.5@sha256:newdigest",
+    )
+    container = job["spec"]["template"]["spec"]["containers"][0]
+    assert container["command"] == [
+        "python",
+        "-m",
+        "sage_run",
+        "deploy-in-cluster",
+        "--ref",
+        "v1.2.3",
+        "--expected-commit",
+        "222222222222",
+    ]
+    assert container["image"] == "ghcr.io/ops-workflows/sage-run-gateway:1.0.5@sha256:newdigest"
+    status = job_status(job)
+    assert status["expected_commit"] == "222222222222"
+    assert status["target_version"] == "1.0.5"
+
+
+def test_deploy_in_cluster_upgrades_to_target_pinned_version_and_restores_on_failure(cluster_deploy, monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    deployment = cluster_deploy
+    incluster = deployment.module
+
+    def materialise_upgrade(repo, commit, tree):
+        (tree / "workflows").mkdir(parents=True, exist_ok=True)
+        (tree / "pyproject.toml").write_text(
+            '[project]\nname = "corp"\nversion = "0.1.0"\ndependencies = ["sage-run==2.0.0"]\n',
+            encoding="utf-8",
+        )
+        (tree / "uv.lock").write_text(
+            'version = 1\n[[package]]\nname = "sage-run"\nversion = "2.0.0"\n'
+            'source = { registry = "https://pypi.org/simple" }\n',
+            encoding="utf-8",
+        )
+        (tree / "image-digests.json").write_text(
+            json.dumps({"gateway": "ghcr.io/ops-workflows/sage-run-gateway:2.0.0@sha256:target200"}),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(incluster, "materialise", materialise_upgrade)
+    monkeypatch.setattr(incluster, "version", lambda pkg: "1.0.1")
+
+    assert incluster.deploy_in_cluster("v2.0.0", expected_commit="candidate") == 0
+    applied_values = deployment.helm.call_args.args[0]
+    assert applied_values["images"]["tag"] == "2.0.0"
+    assert applied_values["images"]["overrides"] == {
+        "gateway": "ghcr.io/ops-workflows/sage-run-gateway:2.0.0@sha256:target200"
+    }
+
+    # Now verify recovery restores previous checkout and previous platform images on activation failure
+    deployment.helm.reset_mock()
+    deployment.run.side_effect = [
+        json.dumps(
+            {
+                "images": {
+                    "tag": "1.0.1",
+                    "overrides": {"gateway": "ghcr.io/ops-workflows/sage-run-gateway:1.0.1@sha256:old101"},
+                },
+                "workflowRepo": {"hostPath": "/srv/workflows", "ref": "main"},
+                "deployer": {"enabled": True},
+                "backups": {"enabled": True},
+                "infrastructure": {},
+                **dict.fromkeys(
+                    ("mcps", "connectors", "workflowMcps", "env", "serviceEnv", "hostAliases", "configChecksums"), {}
+                ),
+            }
+        ),
+        '{"items":[]}',
+        json.dumps(
+            {
+                "data": {
+                    key: base64.b64encode(b"unchanged").decode() for key in ("PG_PASSWORD", "OBJECT_STORE_SECRET_KEY")
+                }
+            }
+        ),
+        "",
+    ]
+    deployment.activation.side_effect = [SQLAlchemyError("db failed"), None]
+    with pytest.raises(SQLAlchemyError, match="db failed"):
+        incluster.deploy_in_cluster("v2.0.0", expected_commit="candidate")
+    assert deployment.helm.call_count == 2
+    restored_values = deployment.helm.call_args.args[0]
+    assert restored_values["images"]["tag"] == "1.0.1"
+    assert restored_values["images"]["overrides"] == {
+        "gateway": "ghcr.io/ops-workflows/sage-run-gateway:1.0.1@sha256:old101"
+    }

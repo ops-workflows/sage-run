@@ -93,7 +93,7 @@ def test_remote_sync_rejects_a_non_git_workflow_directory(monkeypatch, tmp_path)
 
     checkout = tmp_path / "workflows"
     checkout.mkdir()
-    (checkout / "individual-provisioning").mkdir()
+    (checkout / "example-workflow").mkdir()
     monkeypatch.setattr(settings, "workflow_repo_url", "https://github.com/acme/workflows.git")
     monkeypatch.setattr(settings, "workflow_repo_source", "remote")
     monkeypatch.setattr(settings, "workflow_repo_local_path", str(checkout))
