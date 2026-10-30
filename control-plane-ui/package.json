@@ -1,6 +1,6 @@
 {
   "name": "sage-run-control-plane-ui",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.cjs tests/*.test.mjs",
