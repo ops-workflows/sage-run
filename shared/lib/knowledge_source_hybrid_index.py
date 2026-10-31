@@ -95,7 +95,7 @@ def index_config_hash(options: HybridIndexOptions, embeddings: EmbeddingClient) 
             "overlap": options.overlap_chars,
             "lexical_config": options.lexical_config,
             "embedding_model": embeddings.options.model,
-            "embedding_dimensions": embeddings.options.dimensions,
+            "embedding_dimensions": embeddings.effective_dimensions,
         }
     )
 
@@ -142,6 +142,7 @@ async def _reusable_chunk_vectors(
         return {}
     chunk_model = KnowledgeChunk
     revision_model = KnowledgeDocumentRevision
+    dimensions = embeddings.effective_dimensions
     fingerprints = {_chunk_fingerprint(chunk) for chunk in missing}
     fingerprint_columns = (
         chunk_model.content_hash,
@@ -160,7 +161,7 @@ async def _reusable_chunk_vectors(
                 revision_model.id != document.id,
                 chunk_model.index_config_hash == config_hash,
                 chunk_model.embedding_model == embeddings.options.model,
-                chunk_model.embedding_dimensions == embeddings.options.dimensions,
+                chunk_model.embedding_dimensions == dimensions,
                 chunk_model.content_hash.in_({fingerprint[0] for fingerprint in fingerprints}),
                 or_(
                     *(
@@ -192,11 +193,11 @@ async def _reusable_chunk_vectors(
             fingerprint not in fingerprints
             or chunk.index_config_hash != config_hash
             or chunk.embedding_model != embeddings.options.model
-            or chunk.embedding_dimensions != embeddings.options.dimensions
+            or chunk.embedding_dimensions != dimensions
         ):
             continue
         vector = chunk.embedding.tolist() if hasattr(chunk.embedding, "tolist") else chunk.embedding
-        vectors[fingerprint] = validate_vector(vector, embeddings.options.dimensions)
+        vectors[fingerprint] = validate_vector(vector, dimensions)
     return vectors
 
 
@@ -211,6 +212,7 @@ async def _ensure_chunks(
     heartbeat: Callable[[], Awaitable[None]] | None,
 ) -> tuple[int, int]:
     chunk_model = KnowledgeChunk
+    dimensions = embeddings.effective_dimensions
     expected = chunk_document(
         normalized,
         document.title,
@@ -245,11 +247,11 @@ async def _ensure_chunks(
             or tuple(chunk.heading_path) != candidate.heading_path
             or chunk.estimated_tokens != candidate.estimated_tokens
             or chunk.embedding_model != embeddings.options.model
-            or chunk.embedding_dimensions != embeddings.options.dimensions
+            or chunk.embedding_dimensions != dimensions
         ):
             raise ValueError("Stored immutable chunk does not match index contract")
         vector = chunk.embedding.tolist() if hasattr(chunk.embedding, "tolist") else chunk.embedding
-        validate_vector(vector, embeddings.options.dimensions)
+        validate_vector(vector, dimensions)
         by_ordinal[chunk.ordinal] = chunk
     missing = [chunk for chunk in expected if chunk.ordinal not in by_ordinal]
     cached_vectors = await _reusable_chunk_vectors(session, document, missing, config_hash, embeddings)
@@ -287,9 +289,9 @@ async def _ensure_chunks(
                     estimated_tokens=chunk.estimated_tokens,
                     lexical_text=chunk.lexical_text,
                     search_vector=weighted_title.op("||")(weighted_body),
-                    embedding=validate_vector(vector, embeddings.options.dimensions),
+                    embedding=validate_vector(vector, dimensions),
                     embedding_model=embeddings.options.model,
-                    embedding_dimensions=embeddings.options.dimensions,
+                    embedding_dimensions=dimensions,
                 )
             )
         await session.flush()
@@ -480,7 +482,7 @@ async def build_hybrid_index(
         "provider_requests": provider.request_count - provider_start,
         "provider_revisions": provider_revisions,
         "embedding_model": embeddings.options.model,
-        "embedding_dimensions": embeddings.options.dimensions,
+        "embedding_dimensions": embeddings.effective_dimensions,
         "lexical_config": options.lexical_config,
         "scrub_signature": scrub_signature,
     }

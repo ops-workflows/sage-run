@@ -22,7 +22,7 @@ class EmbeddingError(RuntimeError):
 class EmbeddingOptions:
     base_url: str
     model: str
-    dimensions: int
+    dimensions: int = 0
     api_key: str = field(default="", repr=False)
     batch_size: int = 16
     timeout_sec: float = 60
@@ -36,7 +36,7 @@ class EmbeddingOptions:
             raise ValueError("Embedding endpoint and model are required")
         if (
             type(self.dimensions) is not int
-            or not 1 <= self.dimensions <= 65535
+            or not 0 <= self.dimensions <= 65535
             or type(self.batch_size) is not int
             or not 1 <= self.batch_size <= 1024
             or not math.isfinite(self.timeout_sec)
@@ -57,8 +57,10 @@ class EmbeddingOptions:
         )
 
 
-def validate_vector(value: Any, dimensions: int) -> list[float]:
-    if not isinstance(value, (list, tuple)) or len(value) != dimensions:
+def validate_vector(value: Any, dimensions: int = 0) -> list[float]:
+    if not isinstance(value, (list, tuple)) or (
+        len(value) != dimensions if dimensions > 0 else not 1 <= len(value) <= 65535
+    ):
         raise EmbeddingError("Embedding dimension mismatch")
     if any(isinstance(number, bool) or not isinstance(number, (int, float)) for number in value):
         raise EmbeddingError("Embedding contains nonnumeric values")
@@ -79,6 +81,11 @@ class EmbeddingClient:
         self.client = client
         self.request_count = 0
         self.input_characters = 0
+        self.detected_dimensions = 0
+
+    @property
+    def effective_dimensions(self) -> int:
+        return self.options.dimensions or self.detected_dimensions
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if any(
@@ -97,13 +104,16 @@ class EmbeddingClient:
     async def _batch(self, texts: list[str]) -> list[list[float]]:
         key = self.options.api_key or os.environ.get("LLM_API_KEY", "")
         headers = {"Authorization": f"Bearer {key}"} if key else {}
+        request_json: dict[str, Any] = {"model": self.options.model, "input": texts}
+        if self.options.dimensions > 0:
+            request_json["dimensions"] = self.options.dimensions
         try:
             self.request_count += 1
             self.input_characters += sum(map(len, texts))
             response = await self.client.post(
                 self.options.base_url.rstrip("/") + "/embeddings",
                 headers=headers,
-                json={"model": self.options.model, "input": texts, "dimensions": self.options.dimensions},
+                json=request_json,
                 timeout=self.options.timeout_sec,
                 follow_redirects=False,
             )
@@ -111,7 +121,8 @@ class EmbeddingClient:
             raise EmbeddingError("Embedding transport failed") from None
         if response.status_code != 200:
             raise EmbeddingError(f"Embedding endpoint failed (HTTP {response.status_code})")
-        if len(response.content) > max(4096, len(texts) * self.options.dimensions * 64):
+        expected_dimensions = self.effective_dimensions or 4096
+        if len(response.content) > max(4096, len(texts) * expected_dimensions * 64):
             raise EmbeddingError("Embedding response exceeds limit")
         try:
             payload = response.json()
@@ -123,11 +134,15 @@ class EmbeddingClient:
         if not isinstance(data, list) or len(data) != len(texts):
             raise EmbeddingError("Embedding response count mismatch")
         ordered: dict[int, list[float]] = {}
+        target_dimensions = self.effective_dimensions
         for item in data:
             if not isinstance(item, dict):
                 raise EmbeddingError("Malformed embedding item")
             index = item.get("index")
             if type(index) is not int or not 0 <= index < len(texts) or index in ordered:
                 raise EmbeddingError("Embedding response index mismatch")
-            ordered[index] = validate_vector(item.get("embedding"), self.options.dimensions)
+            vector = validate_vector(item.get("embedding"), target_dimensions)
+            target_dimensions = len(vector)
+            ordered[index] = vector
+        self.detected_dimensions = target_dimensions
         return [ordered[index] for index in range(len(texts))]

@@ -59,8 +59,17 @@ def test_only_infrastructure_ciphertexts_are_sent_to_the_host():
         }
     }
     assert remote.infrastructure_ciphertexts(config) == {"LLM_API_KEY": "ENC[age,llm]", "PG_PASSWORD": "ENC[age,pg]"}
+    custom_hindsight = {
+        "deployment": {"hindsight": {"api_key_secret": "PRIMARY_MODEL_KEY"}},
+        "secrets": {"PRIMARY_MODEL_KEY": {"encrypted": "ENC[age,primary]"}},
+    }
+    assert remote.infrastructure_ciphertexts(custom_hindsight) == {"LLM_API_KEY": "ENC[age,primary]"}
     with pytest.raises(ValueError, match="LLM_API_KEY"):
         remote.infrastructure_ciphertexts({"secrets": {}})
+    with pytest.raises(ValueError, match="PRIMARY_MODEL_KEY"):
+        remote.infrastructure_ciphertexts(
+            {"deployment": {"hindsight": {"api_key_secret": "PRIMARY_MODEL_KEY"}}, "secrets": {}}
+        )
 
 
 def test_host_program_compiles_and_never_prints_values():

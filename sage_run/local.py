@@ -111,6 +111,13 @@ def enabled_components(config: dict) -> tuple[set[str], set[str]]:
     return mcps, connectors
 
 
+def hindsight_secret_name(config: dict) -> str:
+    """Platform secret name that supplies the Hindsight LLM and embedding API key."""
+    hindsight = (config.get("deployment") or {}).get("hindsight") or {}
+    name = hindsight.get("api_key_secret") if isinstance(hindsight, dict) else None
+    return str(name).strip() if isinstance(name, str) and name.strip() else "LLM_API_KEY"
+
+
 def deployment_settings(config: dict) -> dict:
     """Validated ``deployment:`` section of the merged platform config."""
     section = config.get("deployment") or {}
@@ -122,9 +129,16 @@ def deployment_settings(config: dict) -> dict:
     for key in ("env", "extra_hosts", "service_env", "hindsight", "ui", "infrastructure_images"):
         if section.get(key) is not None and not isinstance(section[key], dict):
             raise ValueError(f"deployment.{key} must be a mapping")
-    hindsight_env = (section.get("hindsight") or {}).get("env")
+    hindsight = section.get("hindsight") or {}
+    if set(hindsight) - {"env", "api_key_secret"}:
+        raise ValueError("deployment.hindsight accepts env and api_key_secret")
+    hindsight_env = hindsight.get("env")
     if hindsight_env is not None and not isinstance(hindsight_env, dict):
         raise ValueError("deployment.hindsight.env must be a mapping")
+    if "api_key_secret" in hindsight and (
+        not isinstance(hindsight["api_key_secret"], str) or not hindsight["api_key_secret"].strip()
+    ):
+        raise ValueError("deployment.hindsight.api_key_secret must be a non-empty string")
     if set(section.get("infrastructure_images") or {}) - {"postgres", "objectStore", "hindsight"}:
         raise ValueError("deployment.infrastructure_images accepts postgres, objectStore and hindsight")
     ui = section.get("ui") or {}
@@ -250,18 +264,20 @@ def bootstrap_secret_data(existing: dict[str, str], identity: str, config: dict)
     newly generated) values, so running instances keep access to their data.
     """
     platform_secrets = config.get("secrets") or {}
-    wanted = {
-        name: platform_secrets[name] for name in INFRASTRUCTURE_SECRETS if isinstance(platform_secrets.get(name), dict)
-    }
+    llm_secret = hindsight_secret_name(config)
+    secret_names = {"PG_PASSWORD", "OBJECT_STORE_SECRET_KEY", llm_secret}
+    wanted = {name: platform_secrets[name] for name in secret_names if isinstance(platform_secrets.get(name), dict)}
     decrypted = decrypt_named_secrets(wanted, identity=identity)
-    if "LLM_API_KEY" not in decrypted:
-        raise ValueError("platform config needs an encrypted LLM_API_KEY secret for this environment's key")
+    if llm_secret not in decrypted:
+        raise ValueError(f"platform config needs an encrypted {llm_secret} secret for this environment's key")
     data = dict(existing)
     data["AGE_IDENTITY"] = identity
-    data.update(decrypted)
     for key in ("PG_PASSWORD", "OBJECT_STORE_SECRET_KEY"):
-        if not data.get(key):
+        if key in decrypted:
+            data[key] = decrypted[key]
+        elif not data.get(key):
             data[key] = secrets.token_urlsafe(24)
+    data["LLM_API_KEY"] = decrypted[llm_secret]
     return data
 
 

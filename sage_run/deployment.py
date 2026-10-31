@@ -365,10 +365,13 @@ def verify_config_secrets(
 
     platform_secrets = config.get("secrets") or {}
     if require_llm_key:
-        llm_spec = platform_secrets.get("LLM_API_KEY")
+        from sage_run.local import hindsight_secret_name
+
+        llm_secret = hindsight_secret_name(config)
+        llm_spec = platform_secrets.get(llm_secret)
         llm_enc = str((llm_spec or {}).get("encrypted") or "") if isinstance(llm_spec, dict) else ""
         if not (llm_enc.startswith("ENC[age,") or llm_enc.startswith("ENC[plain,")):
-            raise ValueError("[secrets] platform config needs an encrypted LLM_API_KEY secret for this environment")
+            raise ValueError(f"[secrets] platform config needs an encrypted {llm_secret} secret for this environment")
 
     all_secrets = collect_encrypted_secrets(config, tree=tree, environment=environment)
     age_ciphertexts: dict[str, str] = {}

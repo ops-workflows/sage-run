@@ -588,7 +588,7 @@ async def test_configuration_and_vector_failures_preserve_previous(
         monkeypatch.setattr(indexer.settings, "age_identity", "dummy-identity")
         monkeypatch.setattr(indexer, "load_confluence_connections", load_confluence_connections)
     elif failure == "dimensions":
-        monkeypatch.setattr(indexer.settings, "knowledge_embeddings_dimensions", 0)
+        monkeypatch.setattr(indexer.settings, "knowledge_embeddings_dimensions", -1)
     else:
         provider.vector = {"zero": [0, 0, 0], "nonfinite": [1e40, 0, 0], "mismatch": [1, 0]}[failure]
         if failure == "nonfinite":

@@ -352,6 +352,22 @@ def test_embedding_key_is_only_decrypted_for_dedicated_env_and_not_repr(knowledg
     assert "embedding-ciphertext" not in repr(settings)
 
 
+def test_shared_embedding_key_referenced_by_model_profile_is_also_loaded(knowledge_platform_file):
+    config = yaml.safe_load(knowledge_platform_file.read_text())
+    config["model_profiles"] = {"primary": {"ANTHROPIC_AUTH_TOKEN": "${EMBEDDING_KEY}"}}
+    knowledge_platform_file.write_text(yaml.safe_dump(config))
+    with patch(
+        "shared.lib.platform_secrets.decrypt_named_secrets",
+        side_effect=[
+            {"LLM_API_KEY": "llm-key", "EMBEDDING_KEY": "shared-key"},
+            {"EMBEDDING_KEY": "shared-key"},
+        ],
+    ):
+        loaded = load_platform_env(str(knowledge_platform_file), identity="identity")
+    assert loaded["EMBEDDING_KEY"] == "shared-key"
+    assert loaded["KNOWLEDGE_EMBEDDINGS_OPENAI_API_KEY"] == "shared-key"
+
+
 @pytest.mark.parametrize("override", ["environment", "config"])
 def test_overridden_embedding_key_is_not_decrypted(knowledge_platform_file, monkeypatch, override):
     env_var = "KNOWLEDGE_EMBEDDINGS_OPENAI_API_KEY"

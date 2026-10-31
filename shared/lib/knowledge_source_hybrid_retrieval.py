@@ -250,12 +250,13 @@ class HybridKnowledgeRetriever:
             )
         )
         if vector is not None:
+            dimensions = self.embeddings.effective_dimensions or len(vector)
             filtered = (
                 base.add_columns(chunk.embedding)
                 .where(
                     chunk.embedding_model == self.embeddings.options.model,
-                    chunk.embedding_dimensions == self.embeddings.options.dimensions,
-                    func.vector_dims(chunk.embedding) == self.embeddings.options.dimensions,
+                    chunk.embedding_dimensions == dimensions,
+                    func.vector_dims(chunk.embedding) == dimensions,
                 )
                 .cte("current_version_chunks")
                 .prefix_with("MATERIALIZED")
@@ -289,12 +290,14 @@ class HybridKnowledgeRetriever:
         mode = "hybrid"
         stats = version.stats or {}
         try:
-            if (
-                stats.get("embedding_model") != self.embeddings.options.model
-                or stats.get("embedding_dimensions") != self.embeddings.options.dimensions
+            if stats.get("embedding_model") != self.embeddings.options.model or (
+                self.embeddings.options.dimensions
+                and stats.get("embedding_dimensions") != self.embeddings.options.dimensions
             ):
                 raise EmbeddingError("Pinned version uses another embedding contract")
             vectors = await self.embeddings.embed([query])
+            if stats.get("embedding_dimensions") != len(vectors[0]):
+                raise EmbeddingError("Pinned version uses another embedding contract")
         except (EmbeddingError, httpx.HTTPError):
             mode = "lexical_fallback"
             warnings.append("Query embeddings unavailable or incompatible; used PostgreSQL full-text search")

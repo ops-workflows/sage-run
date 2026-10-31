@@ -34,11 +34,11 @@ from sage_run.deployment import (
 )
 from sage_run.local import (
     BOOTSTRAP_SECRET,
-    INFRASTRUCTURE_SECRETS,
     PLATFORM_COMPONENTS,
     RELEASE_NAME,
     Instance,
     _chart_path,
+    hindsight_secret_name,
     instance_name,
     load_platform_config,
     release_images,
@@ -125,13 +125,18 @@ def materialise(workflow_repo: Path, commit: str, target: Path) -> None:
 
 def infrastructure_ciphertexts(config: dict) -> dict[str, str]:
     platform_secrets = config.get("secrets") or {}
+    llm_secret = hindsight_secret_name(config)
     ciphertexts: dict[str, str] = {}
-    for name in INFRASTRUCTURE_SECRETS:
-        value = str((platform_secrets.get(name) or {}).get("encrypted") or "")
+    for key, source_name in (
+        ("LLM_API_KEY", llm_secret),
+        ("PG_PASSWORD", "PG_PASSWORD"),
+        ("OBJECT_STORE_SECRET_KEY", "OBJECT_STORE_SECRET_KEY"),
+    ):
+        value = str((platform_secrets.get(source_name) or {}).get("encrypted") or "")
         if value.startswith("ENC[age,"):
-            ciphertexts[name] = value
+            ciphertexts[key] = value
     if "LLM_API_KEY" not in ciphertexts:
-        raise ValueError("platform config has no encrypted LLM_API_KEY for this environment")
+        raise ValueError(f"platform config has no encrypted {llm_secret} for this environment")
     return ciphertexts
 
 

@@ -192,7 +192,14 @@ def test_restart_checksums_ignore_task_config_and_scope_startup_settings(tmp_pat
 
 @pytest.mark.parametrize(
     "deployment",
-    [{"unknown": 1}, {"env": []}, {"sandbox_profile": "none"}, {"hindsight": {"env": "x"}}],
+    [
+        {"unknown": 1},
+        {"env": []},
+        {"sandbox_profile": "none"},
+        {"hindsight": {"env": "x"}},
+        {"hindsight": {"unknown": "x"}},
+        {"hindsight": {"api_key_secret": ""}},
+    ],
 )
 def test_invalid_deployment_settings_are_rejected(tmp_path, deployment):
     with pytest.raises(ValueError):
@@ -214,10 +221,25 @@ def test_bootstrap_secret_decrypts_infrastructure_secrets_and_keeps_existing_pas
         "PG_PASSWORD": "pg",
         "OBJECT_STORE_SECRET_KEY": "kept",
     }
+    custom_hindsight = {
+        "deployment": {"hindsight": {"api_key_secret": "PRIMARY_MODEL_KEY"}},
+        "secrets": {"PRIMARY_MODEL_KEY": {"encrypted": "ENC[plain,primary-key]"}},
+    }
+    custom_data = bootstrap_secret_data(
+        {"OBJECT_STORE_SECRET_KEY": "kept", "PG_PASSWORD": "pg"}, "AGE-SECRET-KEY-1X", custom_hindsight
+    )
+    assert custom_data["LLM_API_KEY"] == "primary-key"
+    assert "PRIMARY_MODEL_KEY" not in custom_data
     generated = bootstrap_secret_data({}, "AGE-SECRET-KEY-1X", config)
     assert len(generated["OBJECT_STORE_SECRET_KEY"]) >= 24
     with pytest.raises(ValueError, match="LLM_API_KEY"):
         bootstrap_secret_data({}, "AGE-SECRET-KEY-1X", {"secrets": {}})
+    with pytest.raises(ValueError, match="PRIMARY_MODEL_KEY"):
+        bootstrap_secret_data(
+            {},
+            "AGE-SECRET-KEY-1X",
+            {"deployment": {"hindsight": {"api_key_secret": "PRIMARY_MODEL_KEY"}}, "secrets": {}},
+        )
 
 
 def test_read_identity_extracts_key_lines(tmp_path):

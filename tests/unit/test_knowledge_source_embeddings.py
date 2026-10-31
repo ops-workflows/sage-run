@@ -91,8 +91,35 @@ def test_settings_and_dimension_validation(monkeypatch):
     )
     options = EmbeddingOptions.from_settings(settings)
     assert options.api_key == "fallback-secret"
+    assert EmbeddingOptions("https://model.example/v1", "embed", 0).dimensions == 0
     with pytest.raises(ValueError):
-        EmbeddingOptions("https://model.example/v1", "embed", 0)
+        EmbeddingOptions("https://model.example/v1", "embed", -1)
+
+
+async def test_embeddings_omit_dimensions_when_unset_and_detect_native_dimensions():
+    requests = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        assert "dimensions" not in payload
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"index": index, "embedding": [float(index + 1), 2.0, 3.0]}
+                    for index in range(len(payload["input"]))
+                ]
+            },
+        )
+
+    options = EmbeddingOptions("https://model.example/v1", "embed")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        embeddings = EmbeddingClient(options, client)
+        assert embeddings.effective_dimensions == 0
+        assert await embeddings.embed(["first", "second"]) == [[1.0, 2.0, 3.0], [2.0, 2.0, 3.0]]
+        assert embeddings.effective_dimensions == 3
+    assert len(requests) == 1 and "dimensions" not in requests[0]
 
 
 def test_loader_matches_foundation_setting_names():

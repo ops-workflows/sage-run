@@ -434,6 +434,29 @@ def _github_app_secret_names(data: dict[str, Any]) -> set[str]:
     } - {""}
 
 
+def _referenced_runtime_secret_names(data: dict[str, Any]) -> set[str]:
+    referenced: set[str] = set()
+    runtime_env = data.get("runtime_env")
+    if isinstance(runtime_env, dict):
+        for value in runtime_env.values():
+            if isinstance(value, str) and (match := ENV_PLACEHOLDER_PATTERN.match(value.strip())):
+                referenced.add(match.group(1))
+    model_profiles = data.get("model_profiles")
+    if isinstance(model_profiles, dict):
+        for profile in model_profiles.values():
+            if not isinstance(profile, dict):
+                continue
+            env_map = profile.get("runtime_env") if isinstance(profile.get("runtime_env"), dict) else profile
+            for key, value in env_map.items():
+                if (
+                    key != "model_costs"
+                    and isinstance(value, str)
+                    and (match := ENV_PLACEHOLDER_PATTERN.match(value.strip()))
+                ):
+                    referenced.add(match.group(1))
+    return referenced
+
+
 def _structured_secret_names(data: dict[str, Any]) -> set[str]:
     confluence = data.get("confluence")
     connections = confluence.get("connections") if isinstance(confluence, dict) else None
@@ -450,7 +473,11 @@ def _structured_secret_names(data: dict[str, Any]) -> set[str]:
     knowledge = data.get("knowledge")
     embeddings = knowledge.get("embeddings") if isinstance(knowledge, dict) else None
     embedding_key = embeddings.get("api_key_secret") if isinstance(embeddings, dict) else None
-    embedding_secrets = {embedding_key.strip()} if isinstance(embedding_key, str) and embedding_key.strip() else set()
+    embedding_secrets = (
+        ({embedding_key.strip()} - _referenced_runtime_secret_names(data))
+        if isinstance(embedding_key, str) and embedding_key.strip()
+        else set()
+    )
     return _message_bus_secret_names(data) | _github_app_secret_names(data) | confluence_tokens | embedding_secrets
 
 
