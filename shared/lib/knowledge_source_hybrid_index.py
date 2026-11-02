@@ -84,6 +84,14 @@ class HybridIndexBuild:
     indexer_version: str = INDEXER_VERSION
 
 
+def _embedding_dimensions(embeddings: EmbeddingClient) -> int:
+    return int(
+        getattr(embeddings, "effective_dimensions", 0)
+        or embeddings.options.dimensions
+        or getattr(embeddings, "detected_dimensions", 0)
+    )
+
+
 def index_config_hash(options: HybridIndexOptions, embeddings: EmbeddingClient) -> str:
     return stable_hash(
         {
@@ -95,7 +103,7 @@ def index_config_hash(options: HybridIndexOptions, embeddings: EmbeddingClient) 
             "overlap": options.overlap_chars,
             "lexical_config": options.lexical_config,
             "embedding_model": embeddings.options.model,
-            "embedding_dimensions": embeddings.effective_dimensions,
+            "embedding_dimensions": _embedding_dimensions(embeddings),
         }
     )
 
@@ -142,7 +150,7 @@ async def _reusable_chunk_vectors(
         return {}
     chunk_model = KnowledgeChunk
     revision_model = KnowledgeDocumentRevision
-    dimensions = embeddings.effective_dimensions
+    dimensions = _embedding_dimensions(embeddings)
     fingerprints = {_chunk_fingerprint(chunk) for chunk in missing}
     fingerprint_columns = (
         chunk_model.content_hash,
@@ -212,7 +220,7 @@ async def _ensure_chunks(
     heartbeat: Callable[[], Awaitable[None]] | None,
 ) -> tuple[int, int]:
     chunk_model = KnowledgeChunk
-    dimensions = embeddings.effective_dimensions
+    dimensions = _embedding_dimensions(embeddings)
     expected = chunk_document(
         normalized,
         document.title,
@@ -482,7 +490,7 @@ async def build_hybrid_index(
         "provider_requests": provider.request_count - provider_start,
         "provider_revisions": provider_revisions,
         "embedding_model": embeddings.options.model,
-        "embedding_dimensions": embeddings.effective_dimensions,
+        "embedding_dimensions": _embedding_dimensions(embeddings),
         "lexical_config": options.lexical_config,
         "scrub_signature": scrub_signature,
     }

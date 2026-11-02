@@ -250,7 +250,9 @@ class HybridKnowledgeRetriever:
             )
         )
         if vector is not None:
-            dimensions = self.embeddings.effective_dimensions or len(vector)
+            dimensions = (
+                getattr(self.embeddings, "effective_dimensions", 0) or self.embeddings.options.dimensions or len(vector)
+            )
             filtered = (
                 base.add_columns(chunk.embedding)
                 .where(
