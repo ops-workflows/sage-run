@@ -55,7 +55,7 @@ If you identified an improvement worth persisting:
 1. **Read the current file** using the Read tool to get the exact current content
 2. **Compose the full updated content** — make the targeted change while preserving everything else
 3. **Submit via `mcp__platform__propose_skill_update`**:
-   - `file_path`: repo-relative path (e.g. `workflows/example-workflow/skills/log-analysis/SKILL.md`)
+   - `file_path`: workspace/manifest-relative path (e.g. `skills/log-analysis/SKILL.md`, `agents/coordinator.md`, `CLAUDE.md`) or repo-relative path (`workflows/{workflow}/skills/log-analysis/SKILL.md`); the tool automatically prefixes `workflows/{workflow}/` for workflow-scoped files during reflection
    - `content`: the complete updated file
    - `title`: concise description of what changed
    - `description`: evidence from this incident + reasoning
@@ -63,12 +63,14 @@ If you identified an improvement worth persisting:
 This creates a GitHub PR tagged `[reflect]` for human review. The update only takes effect after a human merges it.
 
 **Updatable files**:
-- Workflow skills: `workflows/{workflow}/skills/{skill}/SKILL.md`
-- Workflow agents: `workflows/{workflow}/agents/{agent}.md`
+- Workflow skills: `skills/{skill}/SKILL.md` or `workflows/{workflow}/skills/{skill}/SKILL.md`
+- Workflow agents: `agents/{agent}.md` or `workflows/{workflow}/agents/{agent}.md`
+- Workflow instructions: `CLAUDE.md` or `workflows/{workflow}/CLAUDE.md`
 - Shared skills: `skills/{skill}/SKILL.md`
 
-All paths are relative to the bootstrapped workflow repository. The PR always
-targets that repository; platform-core files are never PR targets.
+Paths may be passed relative to the runtime workspace/manifest or the bootstrapped
+workflow repository. The PR always targets that repository; platform-core files
+are never PR targets.
 
 If the issue is documentation drift rather than investigation procedure drift, create a visible message handoff to the `documentation` workflow instead of proposing a skill update.
 

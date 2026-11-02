@@ -57,6 +57,35 @@ def _workflow_github_context() -> tuple[str, str, str, str]:
     return connection.api_base_url, owner, repo, token
 
 
+def _strip_workspace_prefix(file_path: str) -> str:
+    normalized = file_path.strip()
+    if normalized.startswith("/workspace/"):
+        normalized = normalized.removeprefix("/workspace/")
+    while normalized.startswith("./"):
+        normalized = normalized.removeprefix("./")
+    if normalized.startswith(".claude/"):
+        normalized = normalized.removeprefix(".claude/")
+    return normalized
+
+
+def _normalize_skill_path(file_path: str, workflow: str | None = None) -> str:
+    normalized = _strip_workspace_prefix(file_path)
+    workflow_name = (workflow or "").strip().strip("/")
+    if (
+        workflow_name
+        and ".." not in workflow_name
+        and "/" not in workflow_name
+        and not normalized.startswith("workflows/")
+        and (
+            normalized == "CLAUDE.md"
+            or re.fullmatch(r"agents/[^/]+\.md", normalized)
+            or re.fullmatch(r"skills/[^/]+/SKILL\.md", normalized)
+        )
+    ):
+        return f"workflows/{workflow_name}/{normalized}"
+    return normalized
+
+
 def _validate_skill_path(file_path: str) -> None:
     if ".." in file_path or file_path.startswith("/"):
         raise ValueError("Path must be relative and must not contain '..'")
@@ -110,14 +139,18 @@ def create_workflow_task(
 
 @mcp.tool(annotations={"openWorldHint": True})
 def propose_skill_update(
-    file_path: Annotated[str, "Repository-relative path to a skill or agent definition markdown file."],
+    file_path: Annotated[str, "Repository-relative or workflow-relative path to a skill or agent markdown file."],
     content: Annotated[str, "Complete updated file content."],
     title: Annotated[str, "Short PR title describing the change."],
     description: Annotated[str, "PR body describing the evidence and reasoning for the update."],
     headers: dict[str, str] = CurrentHeaders(),
 ) -> dict[str, Any]:
     """Use this during reflection to propose a reusable skill or agent update as a GitHub PR."""
+    raw_relative = _strip_workspace_prefix(file_path)
+    file_path = _normalize_skill_path(file_path, headers.get("x-task-workflow"))
     _validate_skill_path(file_path)
+    clean_title = re.sub(r"^(?:\[reflect\]\s*)+", "", title.strip(), flags=re.IGNORECASE)
+    pr_title = f"[reflect] {clean_title}" if clean_title else "[reflect] Skill update"
     try:
         api_base_url, owner, repo, token = _workflow_github_context()
     except GitHubAppError as exc:
@@ -135,6 +168,26 @@ def propose_skill_update(
         ref_response.raise_for_status()
         base_sha = ref_response.json()["object"]["sha"]
 
+        existing = client.get(
+            f"{repo_api}/contents/{file_path}",
+            headers=github_headers,
+            params={"ref": default_branch},
+        )
+        if (
+            existing.status_code != 200
+            and raw_relative != file_path
+            and re.fullmatch(r"skills/[^/]+/SKILL\.md", raw_relative)
+        ):
+            shared_existing = client.get(
+                f"{repo_api}/contents/{raw_relative}",
+                headers=github_headers,
+                params={"ref": default_branch},
+            )
+            if shared_existing.status_code == 200:
+                file_path = raw_relative
+                existing = shared_existing
+        file_sha = existing.json().get("sha") if existing.status_code == 200 else None
+
         slug = re.sub(r"[^a-zA-Z0-9-]", "-", file_path.split("/")[-1].replace(".md", ""))
         branch_name = f"reflect/{slug}-{int(time.time())}"
         client.post(
@@ -143,15 +196,8 @@ def propose_skill_update(
             json={"ref": f"refs/heads/{branch_name}", "sha": base_sha},
         ).raise_for_status()
 
-        existing = client.get(
-            f"{repo_api}/contents/{file_path}",
-            headers=github_headers,
-            params={"ref": default_branch},
-        )
-        file_sha = existing.json().get("sha") if existing.status_code == 200 else None
-
         file_payload: dict[str, Any] = {
-            "message": title,
+            "message": clean_title or title,
             "content": base64.b64encode(content.encode()).decode(),
             "branch": branch_name,
         }
@@ -179,7 +225,7 @@ def propose_skill_update(
             f"{repo_api}/pulls",
             headers=github_headers,
             json={
-                "title": f"[reflect] {title}",
+                "title": pr_title,
                 "head": branch_name,
                 "base": default_branch,
                 "body": pr_body,
@@ -193,6 +239,7 @@ def propose_skill_update(
         "pr_number": pr_data["number"],
         "pr_url": pr_data["html_url"],
         "branch": branch_name,
+        "file_path": file_path,
     }
 
 
