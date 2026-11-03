@@ -5,10 +5,14 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import shutil
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 from fastapi import HTTPException
 
 from sage_run.deployment import checkout_lock, job_manifest, job_status, validate_ref
@@ -68,6 +72,150 @@ def test_job_avoids_helm_upgrade_when_values_and_resources_are_unchanged(monkeyp
     monkeypatch.setattr(incluster, "_run", run)
     incluster._helm_values({"images": {"tag": "pinned"}}, previous_values={"images": {"tag": "pinned"}})
     assert all("upgrade" not in call.args for call in run.call_args_list)
+
+
+@pytest.fixture
+def cluster_plan_fallback(tmp_path, monkeypatch):
+    from sage_run import incluster
+
+    for key, value in {
+        "workflow_repo_local_path": str(tmp_path),
+        "workflow_repo_display_path": "/srv/workflows",
+        "workflow_repo_source": "remote",
+        "workflow_repo_managed": True,
+        "workflow_repo_ref": "",
+        "workflow_repo_url": "https://example.invalid/workflows",
+        "kubernetes_namespace": "corp",
+        "age_identity": "",
+    }.items():
+        monkeypatch.setattr(incluster.settings, key, value)
+    for key in ("SAGE_RUN_ENV", "AGE_IDENTITY", "SAGE_RUN_BACKUP_HOST_PATH", "SAGE_RUN_BACKUP_ENABLED"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(incluster, "version", lambda package: "1.0.6")
+    monkeypatch.setattr(incluster, "_git", lambda checkout, *args: "original" if args == ("rev-parse", "HEAD") else "")
+    monkeypatch.setattr(incluster, "_fetch_commit_nonmutating", lambda checkout, ref, root: (checkout, "candidate"))
+    monkeypatch.setattr(incluster, "materialise", lambda source, commit, tree: tree.mkdir())
+    monkeypatch.setattr(incluster, "_validate_desired_tree_and_config", lambda *args, **kwargs: ("1.0.6", {}))
+    rendered = []
+    failure = {"stage": "values"}
+    real_run = incluster._run
+
+    def run(*command, **kwargs):
+        if command[:3] == ("helm", "get", "values"):
+            if failure["stage"] == "values":
+                raise subprocess.CalledProcessError(1, command, stderr="forbidden")
+            return json.dumps({"workflowRepo": {"hostPath": "/srv/workflows"}})
+        if command[0] == "kubectl":
+            if failure["stage"] == "inventory":
+                raise subprocess.CalledProcessError(1, command, stderr="forbidden")
+            return '{"items":[]}'
+        if command[:3] == ("helm", "get", "manifest"):
+            raise subprocess.CalledProcessError(1, command, stderr="forbidden")
+        if command[:2] == ("helm", "template"):
+            values = json.loads(Path(command[command.index("-f") + 1]).read_text(encoding="utf-8"))
+            manifest = real_run(*command, **kwargs)
+            rendered.append((values, list(yaml.safe_load_all(manifest))))
+            return manifest
+        pytest.fail(f"Unexpected command: {command}")
+
+    monkeypatch.setattr(incluster, "_run", run)
+    return SimpleNamespace(module=incluster, rendered=rendered, failure=failure)
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+@pytest.mark.parametrize("failure_stage", ["values", "inventory", "manifest"])
+def test_plan_fallback_handles_each_unavailable_live_input(cluster_plan_fallback, monkeypatch, failure_stage):
+    cluster_plan_fallback.failure["stage"] = failure_stage
+    monkeypatch.setenv("SAGE_RUN_BACKUP_HOST_PATH", "/var/backups/sage-run/corp/managed")
+
+    plan = cluster_plan_fallback.module.plan_in_cluster("main")
+
+    assert len(cluster_plan_fallback.rendered) == 2
+    assert any("approximate" in warning.lower() for warning in plan["drift"])
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+@pytest.mark.parametrize(
+    ("source", "backup_path", "enabled_env", "expected_enabled"),
+    [
+        ("remote", "/var/backups/sage-run/corp/managed", None, True),
+        ("remote", "/var/backups/sage-run/corp/managed", "true", True),
+        ("local", "", None, False),
+        ("local", "/var/backups/sage-run/corp/managed", "false", False),
+        ("local", "/var/backups/sage-run/corp/managed", "true", True),
+    ],
+)
+def test_plan_fallback_renders_real_backup_values(
+    cluster_plan_fallback, monkeypatch, source, backup_path, enabled_env, expected_enabled
+):
+    plan_fixture = cluster_plan_fallback
+    monkeypatch.setattr(plan_fixture.module.settings, "workflow_repo_source", source)
+    monkeypatch.setenv("SAGE_RUN_BACKUP_HOST_PATH", backup_path)
+    if enabled_env is not None:
+        monkeypatch.setenv("SAGE_RUN_BACKUP_ENABLED", enabled_env)
+
+    plan = plan_fixture.module.plan_in_cluster("main" if source == "remote" else "working-tree")
+
+    assert len(plan_fixture.rendered) == 2
+    for values, documents in plan_fixture.rendered:
+        assert values["backups"] == {"enabled": expected_enabled, "hostPath": backup_path}
+        assert values["workflowRepo"]["hostPath"] == "/srv/workflows"
+        cronjobs = [doc for doc in documents if doc and doc["kind"] == "CronJob"]
+        assert any(doc["metadata"]["name"] == "sage-run-nightly-backup" for doc in cronjobs) is expected_enabled
+        gateway = next(
+            doc for doc in documents if doc and doc["kind"] == "Deployment" and doc["metadata"]["name"] == "gateway"
+        )
+        environment = {
+            entry["name"]: entry.get("value") for entry in gateway["spec"]["template"]["spec"]["containers"][0]["env"]
+        }
+        assert environment["SAGE_RUN_BACKUP_HOST_PATH"] == backup_path
+        assert environment["SAGE_RUN_BACKUP_ENABLED"] == str(expected_enabled).lower()
+    assert plan["resources"] == {"create": [], "roll": [], "update": [], "delete": []}
+    assert any("approximate" in warning.lower() for warning in plan["drift"])
+
+
+@pytest.mark.parametrize(
+    ("source", "enabled_env"),
+    [("remote", None), ("remote", "true"), ("local", "true")],
+)
+def test_plan_fallback_rejects_missing_required_backup_path(cluster_plan_fallback, monkeypatch, source, enabled_env):
+    monkeypatch.setattr(cluster_plan_fallback.module.settings, "workflow_repo_source", source)
+    if enabled_env is not None:
+        monkeypatch.setenv("SAGE_RUN_BACKUP_ENABLED", enabled_env)
+    with pytest.raises(ValueError, match="SAGE_RUN_BACKUP_HOST_PATH"):
+        cluster_plan_fallback.module.plan_in_cluster("main" if source == "remote" else "working-tree")
+
+
+def test_plan_fallback_rejects_invalid_backup_enabled_value(cluster_plan_fallback, monkeypatch):
+    monkeypatch.setenv("SAGE_RUN_BACKUP_HOST_PATH", "/var/backups/sage-run/corp/managed")
+    monkeypatch.setenv("SAGE_RUN_BACKUP_ENABLED", "invalid")
+    with pytest.raises(ValueError, match="SAGE_RUN_BACKUP_ENABLED"):
+        cluster_plan_fallback.module.plan_in_cluster("main")
+
+
+def test_plan_uses_live_release_values_without_fallback(cluster_plan_fallback, monkeypatch, tmp_path):
+    incluster = cluster_plan_fallback.module
+    current = incluster.render_values(incluster.Instance(tmp_path, "corp", sandbox_profile="", local=False), {})
+    current["workflowRepo"]["hostPath"] = "/srv/workflows"
+    current["backups"] = {"enabled": True, "hostPath": "/var/backups/sage-run/corp/managed"}
+    manifest = "kind: ConfigMap\nmetadata: {name: current}\n"
+    calls = []
+
+    def run(*command, **kwargs):
+        calls.append(command)
+        if command[:3] == ("helm", "get", "values"):
+            return json.dumps(current)
+        if command[0] == "kubectl":
+            return '{"items":[]}'
+        if command[:3] == ("helm", "get", "manifest") or command[:2] == ("helm", "template"):
+            return manifest
+        pytest.fail(f"Unexpected command: {command}")
+
+    monkeypatch.setattr(incluster, "_run", run)
+    monkeypatch.setenv("SAGE_RUN_BACKUP_ENABLED", "invalid")
+    plan = incluster.plan_in_cluster("main")
+    assert plan["drift"] == []
+    assert sum(command[:2] == ("helm", "template") for command in calls) == 1
 
 
 def test_checkout_lock_rejects_competing_writers_and_releases_on_failure(tmp_path):

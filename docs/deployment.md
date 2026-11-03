@@ -112,6 +112,13 @@ unfinished. Avoid service-changing deploys while tasks are active.
 The deployment panel displays available start/finish timestamps in the browser's
 local time.
 
+When the Gateway cannot read the Helm release or resource inventory, its plan
+preview is approximate and displays an informational note. The fallback uses
+the Gateway's backup host path and enabled state; older Gateway deployments
+without an explicit enabled state infer it from the presence of the host path.
+The deployment Job still checks the live release, inventory and backup before
+apply.
+
 CLI recovery remains independent of the Gateway process. The updated SSH CLI
 uses the target release's Gateway image for its backup Job before updating
 the serving checkout, then reconciles and activates using the installed CLI's

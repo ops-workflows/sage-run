@@ -287,6 +287,19 @@ function WorkflowRepoDeploySection() {
               <div className="text-sm font-medium text-[var(--color-text-primary)]">
                 Deployment plan preview ({plan.ref})
               </div>
+              {plan.drift.length > 0 ? (
+                <div
+                  role="status"
+                  className="rounded-btn border border-[var(--color-info)]/20 bg-[var(--color-info-muted)] px-3 py-2 text-xs text-[var(--color-info)]"
+                >
+                  <p className="font-medium">Note:</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {plan.drift.map((note) => (
+                      <li key={note}>{note}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <div className="grid gap-3 md:grid-cols-2">
                 <ExpandableMeta
                   label="Commit transition"

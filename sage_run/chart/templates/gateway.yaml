@@ -33,6 +33,8 @@ spec:
               value: {{ .Values.workflowRepo.hostPath | quote }}
             - name: SAGE_RUN_BACKUP_HOST_PATH
               value: {{ .Values.backups.hostPath | quote }}
+            - name: SAGE_RUN_BACKUP_ENABLED
+              value: {{ .Values.backups.enabled | quote }}
             - name: SAGE_RUN_BACKUP_HINDSIGHT
               value: {{ and .Values.backups.enabled .Values.infrastructure.hindsight.enabled | quote }}
             - name: RUNTIME_BUNDLE_ROOT
