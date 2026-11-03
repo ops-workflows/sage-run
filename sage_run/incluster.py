@@ -6,6 +6,7 @@ import asyncio
 import base64
 import copy
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -38,6 +39,8 @@ from sage_run.local import (
 from sage_run.remote import materialise
 from shared.lib.config import settings
 from shared.lib.platform_config import load_platform_config, overlay_path, read_yaml_mapping, secrets_not_overridden
+
+logger = logging.getLogger(__name__)
 
 
 def _run(*command: str, stdin: str | None = None, capture: bool = False, env: dict | None = None) -> str:
@@ -364,6 +367,7 @@ def plan_in_cluster(ref: str) -> dict:
             identity=identity,
         )
 
+        drift = []
         try:
             current = json.loads(
                 _run("helm", "get", "values", RELEASE_NAME, "-n", namespace, "-o", "json", capture=True)
@@ -375,9 +379,10 @@ def plan_in_cluster(ref: str) -> dict:
             wanted_extras = extra_manifests(tree, host_checkout=host_checkout, namespace=namespace)
             old_extras = owned_extras(inventory.get("items", []), namespace, desired=wanted_extras)
             previous_manifest = _run("helm", "get", "manifest", RELEASE_NAME, "-n", namespace, capture=True)
-        except (subprocess.SubprocessError, FileNotFoundError):
+        except (subprocess.SubprocessError, FileNotFoundError) as exc:
             # Fallback when called from the read-only Gateway ServiceAccount without Helm Secret RBAC.
-            host_checkout = str(checkout)
+            logger.warning("Using an approximate deployment plan because live release data is unavailable: %s", exc)
+            host_checkout = settings.workflow_repo_display_path.strip() or str(checkout)
             current_instance = Instance(
                 checkout, namespace, sandbox_profile="", local=not remote, environment=environment
             )
@@ -390,9 +395,24 @@ def plan_in_cluster(ref: str) -> dict:
                 "ref": settings.workflow_repo_ref,
             }
             current["deployer"] = {"enabled": True}
-            current["backups"] = {"enabled": True}
+            backup_path = os.environ.get("SAGE_RUN_BACKUP_HOST_PATH", "").strip()
+            backup_enabled_setting = os.environ.get("SAGE_RUN_BACKUP_ENABLED")
+            if backup_enabled_setting is None:
+                if remote and not backup_path:
+                    raise ValueError("SAGE_RUN_BACKUP_HOST_PATH is required to plan a production deployment") from exc
+                backup_enabled = bool(backup_path)
+            elif backup_enabled_setting.lower() in {"true", "false"}:
+                backup_enabled = backup_enabled_setting.lower() == "true"
+            else:
+                raise ValueError("SAGE_RUN_BACKUP_ENABLED must be true or false") from exc
+            if backup_enabled and not backup_path:
+                raise ValueError("SAGE_RUN_BACKUP_HOST_PATH is required when backups are enabled") from exc
+            current["backups"] = {"enabled": backup_enabled, "hostPath": backup_path}
             wanted_extras = extra_manifests(tree, host_checkout=host_checkout, namespace=namespace)
             old_extras = extra_manifests(checkout, host_checkout=host_checkout, namespace=namespace)
+            drift.append(
+                "The preview is approximate because live Helm release or resource inventory data was unavailable."
+            )
             prev_values_path = temp_root / "previous-values.json"
             prev_values_path.write_text(json.dumps(current), encoding="utf-8")
             previous_manifest = _run(
@@ -454,6 +474,7 @@ def plan_in_cluster(ref: str) -> dict:
             target_commit=commit,
             current_version=running_version,
             target_version=target_version,
+            drift=drift,
         )
 
 
