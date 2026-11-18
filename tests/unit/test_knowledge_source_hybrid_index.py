@@ -207,6 +207,21 @@ async def test_embedding_failure_never_creates_membership_or_promotes():
     session.commit.assert_not_awaited()
 
 
+async def test_normalization_failure_names_page_without_content(monkeypatch):
+    source, version, page, provider, embeddings = inputs()
+
+    def broken(body):
+        raise AttributeError(f"cannot parse {body}")
+
+    monkeypatch.setattr("shared.lib.knowledge_source_hybrid_index.normalize_storage", broken)
+    session = Session(["simple", None], [[]])
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ConfluenceError) as error:
+            await build_hybrid_index(session, source, version, None, client, embeddings, confluence=provider)
+    assert str(error.value) == "Normalization failed for page 1 (AttributeError)"
+    assert not any(isinstance(item, KnowledgeSourceVersionDocument) for item in session.added)
+
+
 async def test_missing_root_prevents_complete_snapshot():
     source, version, page, provider, embeddings = inputs()
     provider.discover.return_value = SourceSnapshot((), ())

@@ -197,6 +197,34 @@ def test_confluence_links_keep_label_and_target_and_malformed_html_is_stable():
     assert normalized == normalize_storage(body)
 
 
+def _macro(name: str, inner: str = "") -> str:
+    return f"<ac:structured-macro ac:name='{name}'><ac:rich-text-body>{inner}</ac:rich-text-body></ac:structured-macro>"
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        _macro("info", "<p>hidden</p>"),
+        _macro("status"),
+        "<ac:structured-macro ac:name='code'>"
+        "<ac:plain-text-body><![CDATA[hidden]]></ac:plain-text-body></ac:structured-macro>",
+        _macro("info", _macro("anchor", "<p>hidden</p>")),
+    ],
+    ids=["supported", "unsupported", "code", "three-levels"],
+)
+def test_macro_nested_in_unsupported_macro_is_dropped_with_its_parent(inner):
+    normalized = normalize_storage(f"<p>Before</p>{_macro('details', inner)}<p>After</p>")
+    assert normalized.content == "Before\n\nAfter"
+
+
+def test_layout_macros_keep_their_content():
+    columns = _macro("column", "<p>Left side</p>") + _macro("column", "<h2>Right</h2><p>Right side</p>")
+    normalized = normalize_storage(_macro("panel", _macro("section", columns)) + "<p>After</p>")
+    assert "Left side" in normalized.content
+    assert "# Right\n\nRight side" in normalized.content
+    assert normalized.content.endswith("After")
+
+
 async def test_cloud_webui_links_keep_wiki_prefix():
     payload = {"id": "1", "title": "Root", "version": {"number": 1}, "_links": {"webui": "/spaces/OPS/pages/1/Root"}}
     async with httpx.AsyncClient(

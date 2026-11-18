@@ -20,8 +20,10 @@ from urllib.parse import unquote, urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
-NORMALIZER_VERSION = "confluence-storage-1"
+NORMALIZER_VERSION = "confluence-storage-2"
 CHUNKER_VERSION = "heading-paragraph-1"
+# Macros whose rich-text body is kept. Layout macros (section, column) only arrange content.
+BODY_MACROS = frozenset({"info", "note", "warning", "tip", "panel", "expand", "section", "column"})
 
 
 class ConfluenceError(RuntimeError):
@@ -140,13 +142,16 @@ def normalize_storage(xhtml: str) -> NormalizedDocument:
     for node in soup.find_all(["script", "style"]):
         node.decompose()
     for macro in soup.find_all("ac:structured-macro"):
+        # find_all() is a snapshot: a macro nested in one removed earlier is destroyed or detached.
+        if macro.decomposed or macro.parent is None:
+            continue
         name = macro.get("ac:name", "")
         body = macro.find("ac:plain-text-body" if name == "code" else "ac:rich-text-body")
         if name == "code" and body is not None:
             replacement = soup.new_tag("pre")
             replacement.string = body.get_text()
             macro.replace_with(replacement)
-        elif name in {"info", "note", "warning", "tip", "panel", "expand"} and body is not None:
+        elif name in BODY_MACROS and body is not None:
             macro.replace_with(body)
         else:
             macro.decompose()
