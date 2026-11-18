@@ -25,6 +25,25 @@ async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_o
 _schema_ready = False
 
 
+async def _ensure_servicenow_connector_schema(conn: AsyncConnection) -> None:
+    await conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS control_plane.servicenow_connector_records ("
+            "connector_id TEXT NOT NULL, source_key TEXT NOT NULL, sys_id TEXT NOT NULL, "
+            "processed_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
+            "PRIMARY KEY (connector_id, source_key, sys_id))"
+        )
+    )
+    await conn.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS control_plane.servicenow_connector_checkpoints ("
+            "connector_id TEXT NOT NULL, source_key TEXT NOT NULL, query_hash TEXT NOT NULL, "
+            "page_offset INTEGER NOT NULL CHECK (page_offset >= 0), "
+            "PRIMARY KEY (connector_id, source_key))"
+        )
+    )
+
+
 async def _ensure_knowledge_schema(conn: AsyncConnection) -> None:
     """Extend legacy Git registries without replacing identities or promoted pointers."""
     statements = (
@@ -146,6 +165,7 @@ async def ensure_runtime_schema() -> None:
             )
         )
         await conn.execute(text("ALTER TABLE control_plane.connector_states ALTER COLUMN paused SET DEFAULT TRUE"))
+        await _ensure_servicenow_connector_schema(conn)
         await conn.execute(text("ALTER TABLE control_plane.session_events DROP COLUMN IF EXISTS artifact_key"))
         await conn.execute(
             text(
