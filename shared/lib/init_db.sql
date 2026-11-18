@@ -87,6 +87,22 @@ CREATE TABLE control_plane.connector_states (
     updated         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE control_plane.servicenow_connector_records (
+    connector_id    TEXT NOT NULL,
+    source_key      TEXT NOT NULL,
+    sys_id          TEXT NOT NULL,
+    processed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (connector_id, source_key, sys_id)
+);
+
+CREATE TABLE control_plane.servicenow_connector_checkpoints (
+    connector_id    TEXT NOT NULL,
+    source_key      TEXT NOT NULL,
+    query_hash      TEXT NOT NULL,
+    page_offset     INTEGER NOT NULL CHECK (page_offset >= 0),
+    PRIMARY KEY (connector_id, source_key)
+);
+
 CREATE TABLE control_plane.sessions (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     task_id         UUID REFERENCES task_queue.tasks(id) ON DELETE SET NULL,

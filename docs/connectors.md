@@ -173,9 +173,11 @@ type: servicenow
 source:
   type: polling
   interval_sec: 60
+  page_size: 50                                # optional; local testing can use 3
   table: incident
   query: "state=1^priority<=3"                 # encoded sysparm_query
   fields:                                      # optional; limits sysparm_fields
+    - sys_id
     - number
     - priority
     - caller_id
@@ -203,7 +205,21 @@ through its selected named connection (legacy workflow `env`/`secrets` still
 work). Polling, parsing, and coalescing
 behavior remains in the platform connector instance. When exactly one enabled
 instance has `type: servicenow`, the connector selects it automatically;
-`SERVICENOW_CONNECTOR_INSTANCE_ID` can select an instance explicitly.
+`CONNECTOR_INSTANCE_ID` can select an instance explicitly.
+
+The connector reads all pages and persists the current page offset and processed
+record IDs in the platform PostgreSQL database. The receipt and task submission
+commit together; failed submissions are retried. A restart resumes the current
+scan and completed scans restart at the first page so records shifted by changes
+in the source can be found on a later pass. Record IDs are scoped to the
+connector instance, ServiceNow URL, table and workflow; changing the query
+restarts the scan but does not resubmit previously processed records. Updates to
+an already processed record do not create a new task. `sys_id` is automatically
+included in a configured field list. The default page size is 50 (valid range
+1–10000); `X-Total-Count` is used to continue past pages shortened by row ACLs.
+If that header is absent, shortened pages cannot reliably reveal later records.
+Existing in-memory history cannot be recovered on the first upgrade, so matching
+records without persisted receipts may be submitted again.
 
 ## Adding a new connector implementation
 

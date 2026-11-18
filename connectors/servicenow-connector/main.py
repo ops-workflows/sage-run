@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -146,8 +147,51 @@ def _build_prompt(parsed: dict, config: dict) -> str:
     return template.format_map(values)
 
 
-async def _create_task_from_record(parsed: dict, config: dict) -> None:
-    """Create a task in Postgres from a parsed ServiceNow record."""
+def _source_key(instance_url: str, table: str, workflow: str) -> str:
+    identity = json.dumps([instance_url.rstrip("/"), table, workflow], separators=(",", ":"))
+    return hashlib.sha256(identity.encode()).hexdigest()
+
+
+async def _load_page_offset(connector_id: str, source_key: str, query_hash: str) -> int:
+    from sqlalchemy import text
+
+    from shared.lib.db import async_session_factory
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            text(
+                "SELECT page_offset, query_hash FROM control_plane.servicenow_connector_checkpoints "
+                "WHERE connector_id = :connector_id AND source_key = :source_key"
+            ),
+            {"connector_id": connector_id, "source_key": source_key},
+        )
+        checkpoint = result.one_or_none()
+        return checkpoint.page_offset if checkpoint and checkpoint.query_hash == query_hash else 0
+
+
+async def _save_page_offset(connector_id: str, source_key: str, query_hash: str, offset: int) -> None:
+    from sqlalchemy import text
+
+    from shared.lib.db import async_session_factory
+
+    async with async_session_factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO control_plane.servicenow_connector_checkpoints "
+                "(connector_id, source_key, query_hash, page_offset) "
+                "VALUES (:connector_id, :source_key, :query_hash, :offset) "
+                "ON CONFLICT (connector_id, source_key) DO UPDATE "
+                "SET query_hash = EXCLUDED.query_hash, page_offset = EXCLUDED.page_offset"
+            ),
+            {"connector_id": connector_id, "source_key": source_key, "query_hash": query_hash, "offset": offset},
+        )
+        await session.commit()
+
+
+async def _create_task_from_record(parsed: dict, config: dict, source_key: str, sys_id: str) -> bool:
+    """Commit the record receipt in the same transaction as its task."""
+    from sqlalchemy import text
+
     from shared.lib.db import async_session_factory
     from shared.lib.task_queue import DedupeCheck, submit_task
 
@@ -168,6 +212,16 @@ async def _create_task_from_record(parsed: dict, config: dict) -> None:
     metadata = {**parsed, "source": "servicenow-connector"}
 
     async with async_session_factory() as session:
+        receipt = await session.execute(
+            text(
+                "INSERT INTO control_plane.servicenow_connector_records (connector_id, source_key, sys_id) "
+                "VALUES (:connector_id, :source_key, :sys_id) "
+                "ON CONFLICT DO NOTHING RETURNING sys_id"
+            ),
+            {"connector_id": config["_instance_id"], "source_key": source_key, "sys_id": sys_id},
+        )
+        if receipt.scalar_one_or_none() is None:
+            return False
         submission = await submit_task(
             session,
             workflow=target["workflow"],
@@ -177,6 +231,84 @@ async def _create_task_from_record(parsed: dict, config: dict) -> None:
             dedupe=dedupe,
         )
         logger.info("Submitted ServiceNow record to task %s", submission.task.id)
+    return True
+
+
+async def _poll_pages(client: httpx.AsyncClient, config: dict, instance_url: str, username: str, password: str) -> None:
+    source = config["source"]
+    table = str(source["table"])
+    connector_id = str(config["_instance_id"])
+    workflow = str(config["target"]["workflow"])
+    source_key = _source_key(instance_url, table, workflow)
+    query = str(source.get("query") or "")
+    query_hash = hashlib.sha256(query.encode()).hexdigest()
+    page_size = source.get("page_size", 50)
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 10000:
+        raise ValueError("ServiceNow source.page_size must be an integer between 1 and 10000")
+
+    fields = list(source.get("fields") or [])
+    if fields and "sys_id" not in fields:
+        fields.append("sys_id")
+    offset = await _load_page_offset(connector_id, source_key, query_hash)
+    api_url = f"{instance_url.rstrip('/')}/api/now/table/{table}"
+    new_count = 0
+    while not _shutdown:
+        if await _connector_is_paused(connector_id):
+            break
+        params = {
+            "sysparm_query": query,
+            "sysparm_display_value": "true",
+            "sysparm_limit": str(page_size),
+            "sysparm_offset": str(offset),
+        }
+        if fields:
+            params["sysparm_fields"] = ",".join(fields)
+        resp = await client.get(api_url, params=params, auth=(username, password))
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict) or not isinstance(data.get("result"), list):
+            raise ValueError("ServiceNow returned an invalid list response")
+        records = data["result"]
+        total_header = resp.headers.get("X-Total-Count")
+        if total_header is not None:
+            try:
+                total = int(total_header)
+            except ValueError as exc:
+                raise ValueError("ServiceNow returned an invalid X-Total-Count") from exc
+            if total < 0:
+                raise ValueError("ServiceNow returned a negative X-Total-Count")
+        else:
+            total = None
+            logger.warning("ServiceNow omitted X-Total-Count; ACL-filtered pages may not be fully discoverable")
+        logger.info(
+            "ServiceNow poll: connector=%s table=%s query=%r fetched=%d limit=%s offset=%d",
+            connector_id,
+            table,
+            query,
+            len(records),
+            page_size,
+            offset,
+        )
+        for record in records:
+            if (
+                not isinstance(record, dict)
+                or not isinstance(record.get("sys_id"), str)
+                or not record["sys_id"].strip()
+            ):
+                raise ValueError("ServiceNow record is missing a valid sys_id")
+            sys_id = record["sys_id"].strip()
+            parsed = _parse_record(record, config)
+            if await _create_task_from_record(parsed, config, source_key, sys_id):
+                new_count += 1
+
+        next_offset = offset + page_size
+        finished = next_offset >= total if total is not None else len(records) < page_size
+        await _save_page_offset(connector_id, source_key, query_hash, 0 if finished else next_offset)
+        if finished:
+            break
+        offset = next_offset
+    if new_count:
+        logger.info("Processed %d new records from ServiceNow", new_count)
 
 
 async def run_polling_consumer(config: dict | None = None) -> None:
@@ -184,9 +316,7 @@ async def run_polling_consumer(config: dict | None = None) -> None:
     revision = await active_config_revision()
     config = config if config is not None else _load_instance_config()
     workflow_env = _load_target_workflow_env(config)
-    seen_sys_ids: set[str] = set()
     next_poll = 0.0
-    source_identity = None
     async with httpx.AsyncClient(headers={"Accept": "application/json"}, timeout=30.0) as client:
         while not _shutdown:
             latest = await active_config_revision()
@@ -202,61 +332,16 @@ async def run_polling_consumer(config: dict | None = None) -> None:
             password = workflow_env.get("SERVICENOW_PASSWORD", "")
             if not instance_url or not username or not password:
                 raise RuntimeError("ServiceNow connection requires INSTANCE_URL, USERNAME and PASSWORD")
-            table = str(source["table"])
             interval = float(source.get("interval_sec", 60))
             if interval <= 0:
                 raise ValueError("ServiceNow source.interval_sec must be positive")
-            identity = (instance_url, table, (config.get("target") or {}).get("workflow"))
-            if identity != source_identity:
-                seen_sys_ids.clear()
-                source_identity = identity
             now = asyncio.get_running_loop().time()
             if now < next_poll or await _connector_is_paused(str(config.get("_instance_id") or "")):
                 await asyncio.sleep(1)
                 continue
             next_poll = now + interval
-            api_url = f"{instance_url.rstrip('/')}/api/now/table/{table}"
-            query = str(source.get("query") or "")
-            params = {
-                "sysparm_query": query,
-                "sysparm_display_value": "true",
-                "sysparm_limit": "50",
-            }
-            fields = source.get("fields", [])
-            if fields:
-                params["sysparm_fields"] = ",".join(fields)
             try:
-                resp = await client.get(api_url, params=params, auth=(username, password))
-                resp.raise_for_status()
-                data = resp.json()
-
-                records = data.get("result", [])
-                logger.info(
-                    "ServiceNow poll: connector=%s table=%s query=%r fetched=%d limit=%s",
-                    config.get("_instance_id", "unknown"),
-                    table,
-                    query,
-                    len(records),
-                    params["sysparm_limit"],
-                )
-                new_count = 0
-                for record in records:
-                    sys_id = record.get("sys_id", "")
-                    if sys_id in seen_sys_ids:
-                        continue
-                    seen_sys_ids.add(sys_id)
-
-                    parsed = _parse_record(record, config)
-                    await _create_task_from_record(parsed, config)
-                    new_count += 1
-
-                if new_count:
-                    logger.info("Processed %d new records from ServiceNow", new_count)
-
-                # Prevent unbounded memory growth — keep only recent IDs
-                if len(seen_sys_ids) > 10000:
-                    seen_sys_ids.clear()
-
+                await _poll_pages(client, config, instance_url, username, password)
             except httpx.HTTPStatusError as e:
                 logger.error("ServiceNow API error: %s %s", e.response.status_code, e.response.text[:200])
             except Exception:
@@ -266,10 +351,12 @@ async def run_polling_consumer(config: dict | None = None) -> None:
 
 
 async def main_async() -> None:
+    from shared.lib.db import ensure_runtime_schema
     from shared.lib.health_server import start_health_server
 
     start_health_server()
     _bootstrap_platform_env()
+    await ensure_runtime_schema()
     config = _load_instance_config()
     logger.info("ServiceNow Connector starting (config: %s)", config.get("name", "unknown"))
     await run_polling_consumer()

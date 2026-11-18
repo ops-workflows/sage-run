@@ -122,6 +122,8 @@ async def async_engine(database_dsn: str):
                 "control_plane.sessions, "
                 "control_plane.schedules, "
                 "control_plane.connector_states, "
+                "control_plane.servicenow_connector_records, "
+                "control_plane.servicenow_connector_checkpoints, "
                 "control_plane.agents, "
                 "task_queue.task_events, "
                 "task_queue.tasks "
