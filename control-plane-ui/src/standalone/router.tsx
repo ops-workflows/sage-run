@@ -13,7 +13,7 @@ import MemoryPage from '@/app/memory/page';
 import BackgroundJobsPage from '@/app/background-jobs/page';
 import KnowledgeSourcesPage from '@/app/knowledge-sources/page';
 import KnowledgeSourceDetailPage from '@/app/knowledge-sources/[sourceId]/page';
-import AnalyticsPage from '@/app/analytics/page';
+import { AnalyticsView } from '@/app/analytics/analytics-view';
 
 export function RouteRenderer() {
   const pathname = usePathname();
@@ -58,7 +58,7 @@ export function RouteRenderer() {
     return <KnowledgeSourceDetailPage />;
   }
   if (pathname === '/analytics') {
-    return <AnalyticsPage />;
+    return <AnalyticsView referenceDate={new Date(2026, 10, 20)} />;
   }
   if (pathname === '/platform') {
     window.location.hash = '#/';

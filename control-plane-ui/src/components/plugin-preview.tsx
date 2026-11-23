@@ -174,7 +174,7 @@ function parseConfiguredHooks(files: Record<string, string>): ConfiguredHook[] {
             .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
             .join(' ');
           configured.push({
-            label: `${eventName} → ${friendlyName}`,
+            label: `${eventName}${entry.matcher ? ` (${entry.matcher})` : ''} → ${friendlyName}`,
             scriptName: commandName,
           });
         }

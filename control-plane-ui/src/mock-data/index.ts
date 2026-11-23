@@ -200,14 +200,13 @@ export async function handleMockApiRequest(
 
   const taskReplyMatch = path.match(/^tasks\/([^/]+)\/message-reply$/);
   if (taskReplyMatch && method === 'GET') {
-    return {
-      status: 200,
-      data: {
-        message: 'Proceed with rolling restart of auth replica pool.',
-        user_id: 'alex.morales',
-        username: 'Alex Morales',
-      },
-    };
+    if (taskReplyMatch[1] === 'run-1050') {
+      return {
+        status: 200,
+        data: { message: '1 — production.', user_id: 'jules.park', username: 'Jules Park' },
+      };
+    }
+    return { status: 404, data: { detail: 'No clarification reply recorded' } };
   }
 
   const taskRerunMatch = path.match(/^tasks\/([^/]+)\/rerun$/);
@@ -223,73 +222,10 @@ export async function handleMockApiRequest(
   // ── Sessions ──
   const sessionMatch = path.match(/^sessions\/([^/]+)$/);
   if (sessionMatch && method === 'GET') {
-    const taskId = sessionMatch[1];
-    const session = MOCK_SESSIONS[taskId];
+    const session = Object.hasOwn(MOCK_SESSIONS, sessionMatch[1])
+      ? MOCK_SESSIONS[sessionMatch[1]]
+      : undefined;
     if (session) return { status: 200, data: session };
-    // fallback minimal session if task exists
-    const task = MOCK_TASKS.find((t) => t.id === taskId);
-    if (task) {
-      return {
-        status: 200,
-        data: {
-          id: `sess-${taskId}`,
-          task_id: taskId,
-          agent_id: 'agent-001',
-          status: task.status,
-          started: task.created,
-          ended: task.updated,
-          duration_sec: task.duration_sec,
-          tokens_input: Math.round(task.tokens_used * 0.7),
-          tokens_output: Math.round(task.tokens_used * 0.3),
-          turns: 10,
-          task,
-          tools_used: [],
-          subagents_used: [],
-          error: null,
-          trace: {
-            root: {
-              id: 'root',
-              kind: 'session',
-              timestamp: task.created,
-              label: 'coordinator',
-              children: [
-                {
-                  id: 'req',
-                  kind: 'lifecycle',
-                  timestamp: task.created,
-                  label: 'REQUEST',
-                  badge: 'REQUEST',
-                  body: task.prompt,
-                  children: [],
-                },
-                {
-                  id: 'res',
-                  kind: 'result',
-                  timestamp: task.updated,
-                  label: 'Final',
-                  badge: 'RESULT',
-                  body: 'Task executed successfully.',
-                  children: [],
-                },
-              ],
-            },
-            stats: {
-              toolCalls: 0,
-              toolErrors: 0,
-              assistantMessages: 1,
-              subagentSpawns: 0,
-              totalTurns: 10,
-              tokensIn: Math.round(task.tokens_used * 0.7),
-              tokensOut: Math.round(task.tokens_used * 0.3),
-            },
-            heartbeats: [],
-            skillsUsed: [],
-            mcpsUsed: [],
-            eventCount: 4,
-          },
-        },
-      };
-    }
     return { status: 404, data: { detail: 'Session not found' } };
   }
 

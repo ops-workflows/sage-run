@@ -141,12 +141,18 @@ export default function ApprovalsPage() {
                       {item.resolved_by || item.resolved_by_user_id || '-'}
                     </td>
                     <td className="px-4 py-3">
-                      <a
-                        href={`/tasks/${item.task_id}`}
-                        className="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
-                      >
-                        {item.task_id.slice(0, 8)}
-                      </a>
+                      {item.task_status ? (
+                        <a
+                          href={`/tasks/${item.task_id}`}
+                          className="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]"
+                        >
+                          {item.task_id.slice(0, 8)}
+                        </a>
+                      ) : (
+                        <span className="text-[var(--color-text-tertiary)]" title="Task unavailable">
+                          {item.task_id.slice(0, 8)}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

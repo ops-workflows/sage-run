@@ -78,12 +78,13 @@ test('detail page renders each linked version once in one compact history', () =
 test('merged history retains unlinked versions, failures and active syncs in date order', () => {
   const source = MOCK_KNOWLEDGE_SOURCES.find((item) => item.source_kind === 'confluence');
   const version = structuredClone(MOCK_KNOWLEDGE_SOURCE_VERSIONS[source.id][0]);
+  const daysFromVersion = (days) => new Date(Date.parse(version.created_at) + days * 86_400_000).toISOString();
   const olderVersion = { ...version, id: 'older', source_revision: 'older-snapshot', status: 'failed',
-    created_at: '2026-10-01T08:00:00Z', error: 'Historical failure', warnings: ['Historical warning'] };
+    created_at: daysFromVersion(-1), error: 'Historical failure', warnings: ['Historical warning'] };
   const html = renderSourceDetail(source, [olderVersion, version], [
-    { id: 'failed', trigger: 'scheduled', started_at: '2026-10-03T08:00:00Z', status: 'failed', duration_sec: 3,
+    { id: 'failed', trigger: 'scheduled', started_at: daysFromVersion(1), status: 'failed', duration_sec: 3,
       knowledge_source_version_id: null, error: 'Provider unavailable', warnings: ['Retry later'] },
-    { id: 'active', trigger: 'manual', started_at: '2026-10-04T08:00:00Z', status: 'queued', duration_sec: null,
+    { id: 'active', trigger: 'manual', started_at: daysFromVersion(2), status: 'queued', duration_sec: null,
       knowledge_source_version_id: null, error: null, warnings: [] },
     { id: 'success', trigger: 'manual', started_at: version.created_at, status: 'succeeded', duration_sec: 6,
       knowledge_source_version_id: version.id, error: null, warnings: ['Shared warning'] },
@@ -108,6 +109,80 @@ afterEach(() => {
   global.fetch = originalFetch;
 });
 const request = (method, route, body, params = new URLSearchParams()) => handleMockApiRequest(method, route.split('/'), params, body);
+
+test('presentation keeps linked traces separate from queued work and historical approvals', async () => {
+  const { data: { items: tasks } } = await request('GET', 'tasks');
+  const { data: { items: approvals, counts_by_status } } = await request('GET', 'platform/approvals');
+  assert.deepEqual(counts_by_status, { pending: 1, approved: 2, rejected: 1 });
+  const queued = await request('GET', 'tasks', undefined, new URLSearchParams({ status: 'queued' }));
+  assert.equal(queued.data.total, 2);
+  assert.ok(Date.parse(tasks[6].created) > Date.parse(queued.data.items[0].created));
+  for (const task of tasks) {
+    const response = await request('GET', `sessions/${task.id}`);
+    if (task.status === 'queued') {
+      assert.equal(response.status, 404);
+      assert.equal((await request('GET', `tasks/${task.id}`)).status, 200);
+      continue;
+    }
+    assert.equal(response.status, 200);
+    const session = response.data;
+    assert.equal(session.task_id, task.id);
+    assert.equal(session.tokens_input + session.tokens_output, task.tokens_used);
+    assert.equal(session.trace.root.children.at(-1).meta.result_role, 'session_result');
+    if (task.metadata.source_task_id) {
+      assert.ok(tasks.some((parent) => parent.id === task.metadata.source_task_id));
+    }
+  }
+  for (const approval of approvals) {
+    const task = tasks.find((task) => task.id === approval.task_id);
+    if (approval.status !== 'approved') {
+      assert.equal(approval.task_status, null);
+      assert.equal(task, undefined);
+      continue;
+    }
+    assert.equal(approval.workflow, task?.workflow);
+    assert.equal(approval.id, task?.metadata.approval);
+    const { data: session } = await request('GET', `sessions/${task.id}`);
+    const steps = session.trace.root.children;
+    const resolved = steps.findIndex((step) =>
+      Date.parse(step.timestamp) === Date.parse(approval.resolved_at) && step.label.includes(approval.id),
+    );
+    assert.ok(resolved >= 0);
+    const tool = approval.tool_name.slice(5).replace('__', ' · ');
+    assert.ok(steps.findIndex((step) => step.label === tool) > resolved);
+  }
+  assert.equal((await request('GET', 'sessions/missing')).status, 404);
+  assert.equal((await request('GET', 'tasks/run-1042/message-reply')).status, 404);
+  const query = new URLSearchParams({ start_date: '2026-11-16', end_date: '2026-11-16' });
+  const { data: analytics } = await request('GET', 'analytics', undefined, query);
+  const onDay = tasks.filter((task) => task.created.startsWith('2026-11-16'));
+  assert.equal(analytics.total_tasks, onDay.length);
+  assert.equal(analytics.total_tokens, onDay.reduce((sum, task) => sum + task.tokens_used, 0));
+  const { data: allAnalytics } = await request('GET', 'analytics');
+  assert.equal(allAnalytics.total_tasks, tasks.length);
+  assert.equal(allAnalytics.tasks_by_status.queued, queued.data.total);
+});
+
+test('checkout trace skill loads and retention hooks match the workflow preview', async () => {
+  const { data: session } = await request('GET', 'sessions/run-1042');
+  const { data: { files } } = await request('GET', 'agents/online-alerts-investigator/files');
+  const steps = session.trace.root.children;
+  for (const entry of JSON.parse(files['hooks/hooks.json']).hooks.SubagentStop) {
+    const subagent = steps.find((step) => step.kind === 'subagent' && step.label === entry.matcher);
+    const skill = subagent.children.find((step) => step.badge === 'SKILL');
+    assert.ok(files[`skills/${skill.label}/SKILL.md`]);
+    assert.ok(session.trace.skillsUsed.includes(skill.label));
+    assert.ok(subagent.children.some((step) =>
+      step.kind === 'result' && step.label.startsWith('Branch findings') && step.body,
+    ));
+    assert.equal(steps[steps.indexOf(subagent) + 1].kind, 'hook');
+  }
+  assert.match(steps.find((step) => step.label.startsWith('Stop ·')).body, /checkout-incidents/);
+  const { data: { agent_yaml } } = await request('GET', 'agents/documentation/files');
+  const { data: schedules } = await request('GET', 'schedules');
+  const nightly = schedules.find((schedule) => schedule.schedule_name === 'nightly-docs-review');
+  assert.ok(agent_yaml.includes(`cron: "${nightly.cron_expression}"`));
+});
 
 test('toggle payload clones Confluence config and never invents GitHub fields', () => {
   const source = MOCK_KNOWLEDGE_SOURCES.find((item) => item.source_kind === 'confluence');

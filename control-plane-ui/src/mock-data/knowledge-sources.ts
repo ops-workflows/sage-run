@@ -9,11 +9,11 @@ import type {
 export const MOCK_GITHUB_CONNECTIONS: GitHubConnection[] = [
   {
     name: 'github-enterprise',
-    web_base_url: 'https://github.corp.internal',
+    web_base_url: 'https://github.example',
   },
   {
     name: 'github-public',
-    web_base_url: 'https://github.com',
+    web_base_url: 'https://public-github.example',
   },
 ];
 
@@ -24,23 +24,23 @@ export const MOCK_CONFLUENCE_CONNECTIONS: ConfluenceConnection[] = [
 export const MOCK_KNOWLEDGE_SOURCES: KnowledgeSource[] = [
   {
     id: 'ks-001',
-    canonical_alias: 'checkout-service',
-    display_name: 'Checkout service',
+    canonical_alias: 'checkout-platform',
+    display_name: 'Checkout Platform',
     source_kind: 'github',
     index_kind: 'code_graph',
     source_config: {
       repository_url:
-        'https://github.corp.internal/cloud-core/checkout-service.git',
+        'https://github.example/northstar-retail/checkout-platform.git',
       default_ref: 'main',
-      include_paths: ['src/**', 'config/**', 'docs/architecture/**'],
+      include_paths: ['services/checkout/**', 'docs/**'],
       exclude_paths: ['tests/**', 'node_modules/**'],
     },
     serving_suspended_at: null,
     serving_suspension_reason: null,
     repository_url:
-      'https://github.corp.internal/cloud-core/checkout-service.git',
+      'https://github.example/northstar-retail/checkout-platform.git',
     default_ref: 'main',
-    include_paths: ['src/**', 'config/**', 'docs/architecture/**'],
+    include_paths: ['services/checkout/**', 'docs/**'],
     exclude_paths: ['tests/**', 'node_modules/**'],
     credential_ref: 'github-enterprise',
     sync_policy: {
@@ -59,7 +59,7 @@ export const MOCK_KNOWLEDGE_SOURCES: KnowledgeSource[] = [
     index_kind: 'code_graph',
     source_config: {
       repository_url:
-        'https://github.corp.internal/cloud-infra/terraform-aws-production.git',
+        'https://github.example/northstar-retail/terraform-aws-production.git',
       default_ref: 'main',
       include_paths: ['modules/**', 'environments/production/**'],
       exclude_paths: ['environments/dev/**', '.terraform/**'],
@@ -67,7 +67,7 @@ export const MOCK_KNOWLEDGE_SOURCES: KnowledgeSource[] = [
     serving_suspended_at: null,
     serving_suspension_reason: null,
     repository_url:
-      'https://github.corp.internal/cloud-infra/terraform-aws-production.git',
+      'https://github.example/northstar-retail/terraform-aws-production.git',
     default_ref: 'main',
     include_paths: ['modules/**', 'environments/production/**'],
     exclude_paths: ['environments/dev/**', '.terraform/**'],
@@ -88,7 +88,7 @@ export const MOCK_KNOWLEDGE_SOURCES: KnowledgeSource[] = [
     index_kind: 'code_graph',
     source_config: {
       repository_url:
-        'https://github.corp.internal/enterprise/billing-engine.git',
+        'https://github.example/northstar-retail/billing-engine.git',
       default_ref: 'main',
       include_paths: ['src/classes/**', 'src/triggers/**', 'docs/**'],
       exclude_paths: ['test-data/**'],
@@ -96,7 +96,7 @@ export const MOCK_KNOWLEDGE_SOURCES: KnowledgeSource[] = [
     serving_suspended_at: null,
     serving_suspension_reason: null,
     repository_url:
-      'https://github.corp.internal/enterprise/billing-engine.git',
+      'https://github.example/northstar-retail/billing-engine.git',
     default_ref: 'main',
     include_paths: ['src/classes/**', 'src/triggers/**', 'docs/**'],
     exclude_paths: ['test-data/**'],
@@ -111,8 +111,8 @@ export const MOCK_KNOWLEDGE_SOURCES: KnowledgeSource[] = [
   },
   {
     id: 'ks-004',
-    canonical_alias: 'platform-runbooks',
-    display_name: 'Platform runbooks',
+    canonical_alias: 'checkout-operations',
+    display_name: 'Checkout Operations',
     source_kind: 'confluence',
     index_kind: 'hybrid_vector',
     source_config: {
@@ -131,9 +131,9 @@ export const MOCK_KNOWLEDGE_SOURCES: KnowledgeSource[] = [
     enabled: true,
     serving_suspended_at: null,
     serving_suspension_reason: null,
-    current_successful_version_id: 'ksv-004-latest',
+    current_successful_version_id: 'checkout-operations-v12',
     created_at: '2026-09-01T10:00:00Z',
-    updated_at: '2026-10-02T08:00:00Z',
+    updated_at: '2026-11-16T08:01:00Z',
   },
 ];
 
@@ -144,12 +144,12 @@ export const MOCK_KNOWLEDGE_SOURCE_VERSIONS: Record<
   'ks-001': [
     {
       id: 'ksv-001-latest',
-      source_revision: '4d89a2b8e104f992a01948bc',
+      source_revision: '8f42c71b3ad02c608cc8b6a36ec769013f52bfc1',
       index_kind: 'code_graph',
       indexer_version: '1.4.2',
       index_config_hash: 'a9b8c7d6e5f4',
       stats: {},
-      commit_sha: '4d89a2b8e104f992a01948bc',
+      commit_sha: '8f42c71b3ad02c608cc8b6a36ec769013f52bfc1',
       status: 'succeeded',
       graphify_version: '1.4.2',
       extraction_config_hash: 'a9b8c7d6e5f4',
@@ -254,8 +254,8 @@ export const MOCK_KNOWLEDGE_SOURCE_VERSIONS: Record<
   ],
   'ks-004': [
     {
-      id: 'ksv-004-latest',
-      source_revision: 'snapshot-20261002-8f41922e',
+      id: 'checkout-operations-v12',
+      source_revision: 'snapshot-v12-8f41922e',
       index_kind: 'hybrid_vector',
       indexer_version: 'hybrid-1',
       index_config_hash: 'hybrid-config-1',
@@ -278,9 +278,9 @@ export const MOCK_KNOWLEDGE_SOURCE_VERSIONS: Record<
       edge_count: 0,
       warnings: [],
       error: null,
-      started_at: '2026-10-02T08:00:00Z',
-      finished_at: '2026-10-02T08:01:00Z',
-      created_at: '2026-10-02T08:00:00Z',
+      started_at: '2026-11-16T08:00:00Z',
+      finished_at: '2026-11-16T08:01:00Z',
+      created_at: '2026-11-16T08:00:00Z',
     },
   ],
 };
