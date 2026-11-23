@@ -56,8 +56,7 @@ export const MOCK_BACKGROUND_JOBS: BackgroundJobRun[] = [
     duration_sec: 4,
     summary: {
       bytes_uploaded: 412890,
-      object_key:
-        'agent-memory/documentation/latest.tar.gz',
+      object_key: 'agent-memory/documentation/latest.tar.gz',
     },
     warnings: [],
     error: null,
@@ -129,7 +128,9 @@ export function getMockBackgroundJobs(params: {
   const limit = params.limit ?? 20;
   const offset = params.offset ?? 0;
   return {
-    items: filtered.toSorted((a, b) => b.started_at.localeCompare(a.started_at)).slice(offset, offset + limit),
+    items: filtered
+      .toSorted((a, b) => b.started_at.localeCompare(a.started_at))
+      .slice(offset, offset + limit),
     total: filtered.length,
     limit,
     offset,

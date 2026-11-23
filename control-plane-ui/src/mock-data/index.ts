@@ -203,7 +203,11 @@ export async function handleMockApiRequest(
     if (taskReplyMatch[1] === 'run-1050') {
       return {
         status: 200,
-        data: { message: '1 — production.', user_id: 'jules.park', username: 'Jules Park' },
+        data: {
+          message: '1 — production.',
+          user_id: 'jules.park',
+          username: 'Jules Park',
+        },
       };
     }
     return { status: 404, data: { detail: 'No clarification reply recorded' } };

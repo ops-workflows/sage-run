@@ -149,7 +149,10 @@ export default function ApprovalsPage() {
                           {item.task_id.slice(0, 8)}
                         </a>
                       ) : (
-                        <span className="text-[var(--color-text-tertiary)]" title="Task unavailable">
+                        <span
+                          className="text-[var(--color-text-tertiary)]"
+                          title="Task unavailable"
+                        >
                           {item.task_id.slice(0, 8)}
                         </span>
                       )}

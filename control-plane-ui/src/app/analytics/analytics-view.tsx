@@ -13,7 +13,11 @@ function monthRange(date: Date) {
   return { start, end };
 }
 
-export function AnalyticsView({ referenceDate = new Date() }: { referenceDate?: Date }) {
+export function AnalyticsView({
+  referenceDate = new Date(),
+}: {
+  referenceDate?: Date;
+}) {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentMonth, setCurrentMonth] = useState(referenceDate);

@@ -10,7 +10,9 @@ export function initMockAdapter() {
     );
     if (!url.pathname.startsWith('/api/')) return originalFetch(input, init);
 
-    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+    const method = (
+      init?.method ?? (input instanceof Request ? input.method : 'GET')
+    ).toUpperCase();
     if (method !== 'GET') {
       return new Response(
         JSON.stringify({ detail: 'Standalone export is read-only' }),
