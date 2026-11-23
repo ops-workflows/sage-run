@@ -6,6 +6,7 @@ import importlib.util
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -163,13 +164,18 @@ async def test_poll_logs_fetched_count_on_every_pass(monkeypatch, caplog, record
             return None
 
         async def get(self, url, *, params, auth):
-            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"result": records})
+            return SimpleNamespace(
+                raise_for_status=lambda: None, json=lambda: {"result": records}, headers={"X-Total-Count": "2"}
+            )
 
     async def is_paused(connector_id):
         return False
 
-    async def submit(parsed, config):
-        submitted.append(parsed)
+    async def submit(parsed, config, source_key, sys_id):
+        if sys_id not in submitted:
+            submitted.append(sys_id)
+            return True
+        return False
 
     async def next_pass(interval):
         nonlocal passes
@@ -197,18 +203,25 @@ async def test_poll_logs_fetched_count_on_every_pass(monkeypatch, caplog, record
     monkeypatch.setattr(connector, "_connector_is_paused", is_paused)
     monkeypatch.setattr(connector, "active_config_revision", revision)
     monkeypatch.setattr(connector, "_create_task_from_record", submit)
+    monkeypatch.setattr(connector, "_load_page_offset", AsyncMock(return_value=0))
+    monkeypatch.setattr(connector, "_save_page_offset", AsyncMock())
     monkeypatch.setattr(connector.asyncio, "sleep", next_pass)
     caplog.set_level("INFO", logger=connector.logger.name)
 
     await connector.run_polling_consumer(
-        {"_instance_id": "test-intake", "source": {"table": "incident", "query": "active=true", "interval_sec": 0.001}}
+        {
+            "_instance_id": "test-intake",
+            "source": {"table": "incident", "query": "active=true", "interval_sec": 0.001},
+            "target": {"workflow": "triage"},
+        }
     )
 
     poll_logs = [record.getMessage() for record in caplog.records if "ServiceNow poll:" in record.getMessage()]
     assert (
         poll_logs
         == [
-            f"ServiceNow poll: connector=test-intake table=incident query='active=true' fetched={record_count} limit=50"
+            f"ServiceNow poll: connector=test-intake table=incident query='active=true' "
+            f"fetched={record_count} limit=50 offset=0"
         ]
         * 2
     )
@@ -219,8 +232,6 @@ async def test_poll_logs_fetched_count_on_every_pass(monkeypatch, caplog, record
 @pytest.mark.asyncio
 @pytest.mark.parametrize("paused", [False, True])
 async def test_polling_reloads_credentials_without_restarting_or_reprocessing_seen_records(monkeypatch, paused):
-    from unittest.mock import AsyncMock
-
     connector = _load_connector_module()
     old = {
         "_instance_id": "intake",
@@ -244,6 +255,7 @@ async def test_polling_reloads_credentials_without_restarting_or_reprocessing_se
             return SimpleNamespace(
                 raise_for_status=lambda: None,
                 json=lambda: {"result": [{"sys_id": "same-record"}]},
+                headers={"X-Total-Count": "1"},
             )
 
     async def sleep(seconds):
@@ -252,8 +264,11 @@ async def test_polling_reloads_credentials_without_restarting_or_reprocessing_se
         if polls == 2:
             connector._shutdown = True
 
-    async def submit(record, config):
-        submitted.append(record)
+    async def submit(record, config, source_key, sys_id):
+        if sys_id not in submitted:
+            submitted.append(sys_id)
+            return True
+        return False
 
     revision = datetime.now(UTC)
     monkeypatch.setattr(
@@ -273,8 +288,131 @@ async def test_polling_reloads_credentials_without_restarting_or_reprocessing_se
     )
     monkeypatch.setattr(connector, "_connector_is_paused", AsyncMock(return_value=paused))
     monkeypatch.setattr(connector, "_create_task_from_record", submit)
+    monkeypatch.setattr(connector, "_load_page_offset", AsyncMock(return_value=0))
+    monkeypatch.setattr(connector, "_save_page_offset", AsyncMock())
     monkeypatch.setattr(connector.httpx, "AsyncClient", lambda **kwargs: Client())
     monkeypatch.setattr(connector.asyncio, "sleep", sleep)
     await connector.run_polling_consumer(old)
     assert calls == ([] if paused else [("user", "old"), ("user", "new")])
     assert len(submitted) == (0 if paused else 1)
+
+
+@pytest.mark.asyncio
+async def test_pages_resume_after_failure_and_rescan_moved_records(monkeypatch):
+    connector = _load_connector_module()
+    records = [{"sys_id": f"id-{index:03}"} for index in range(75)]
+    submitted = set()
+    checkpoint = {}
+    requested_offsets = []
+    fail = True
+    config = {
+        "_instance_id": "intake",
+        "source": {"table": "incident", "query": "active=true", "page_size": 3, "fields": ["number"]},
+        "target": {"workflow": "triage"},
+    }
+
+    class Client:
+        async def get(self, url, *, params, auth):
+            offset = int(params["sysparm_offset"])
+            requested_offsets.append(offset)
+            assert params["sysparm_limit"] == "3"
+            assert params["sysparm_fields"] == "number,sys_id"
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"result": records[offset : offset + 3]},
+                headers={"X-Total-Count": str(len(records))},
+            )
+
+    async def load_offset(connector_id, source_key, query_hash):
+        return checkpoint.get((connector_id, source_key, query_hash), 0)
+
+    async def save_offset(connector_id, source_key, query_hash, offset):
+        checkpoint[(connector_id, source_key, query_hash)] = offset
+
+    async def submit(parsed, config, source_key, sys_id):
+        if sys_id == "id-010" and fail:
+            raise RuntimeError("submission failed")
+        if sys_id in submitted:
+            return False
+        submitted.add(sys_id)
+        return True
+
+    monkeypatch.setattr(connector, "_connector_is_paused", AsyncMock(return_value=False))
+    monkeypatch.setattr(connector, "_load_page_offset", load_offset)
+    monkeypatch.setattr(connector, "_save_page_offset", save_offset)
+    monkeypatch.setattr(connector, "_create_task_from_record", submit)
+
+    async def poll():
+        await connector._poll_pages(Client(), config, "https://example.invalid", "user", "password")
+
+    with pytest.raises(RuntimeError, match="submission failed"):
+        await poll()
+    assert requested_offsets == [0, 3, 6, 9]
+    assert len(submitted) == 10
+    assert list(checkpoint.values()) == [9]
+
+    fail = False
+    records.insert(0, {"sys_id": "new-early-record"})
+    requested_offsets.clear()
+    await poll()
+    assert requested_offsets[0] == 9
+    assert "new-early-record" not in submitted
+    assert list(checkpoint.values()) == [0]
+    await poll()
+    assert len(submitted) == 76
+    assert "new-early-record" in submitted
+    await poll()
+    assert len(submitted) == 76
+
+
+@pytest.mark.asyncio
+async def test_acl_shortened_page_uses_total_count_and_invalid_records_do_not_advance(monkeypatch):
+    connector = _load_connector_module()
+    config = {
+        "_instance_id": "intake",
+        "source": {"table": "incident", "page_size": 3},
+        "target": {"workflow": "triage"},
+    }
+    offsets = []
+    saved = []
+    records = [{}, {"sys_id": "visible"}]
+
+    class Client:
+        async def get(self, url, *, params, auth):
+            offset = int(params["sysparm_offset"])
+            offsets.append(offset)
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"result": [] if offset == 0 else records},
+                headers={"X-Total-Count": "6"},
+            )
+
+    async def save_offset(connector_id, source_key, query_hash, offset):
+        saved.append(offset)
+
+    monkeypatch.setattr(connector, "_connector_is_paused", AsyncMock(return_value=False))
+    monkeypatch.setattr(connector, "_load_page_offset", AsyncMock(return_value=0))
+    monkeypatch.setattr(connector, "_save_page_offset", save_offset)
+    submit = AsyncMock(return_value=True)
+    monkeypatch.setattr(connector, "_create_task_from_record", submit)
+
+    with pytest.raises(ValueError, match="missing a valid sys_id"):
+        await connector._poll_pages(Client(), config, "https://example.invalid", "user", "password")
+    assert offsets == [0, 3]
+    assert saved == [3]
+    submit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page_size", [0, -1, 10001, True, 1.5, "3"])
+async def test_invalid_page_size_fails_before_request(page_size):
+    connector = _load_connector_module()
+    client = SimpleNamespace(get=AsyncMock())
+    config = {
+        "_instance_id": "intake",
+        "source": {"table": "incident", "page_size": page_size},
+        "target": {"workflow": "triage"},
+    }
+    with pytest.raises(ValueError, match="source.page_size"):
+        await connector._poll_pages(client, config, "https://example.invalid", "user", "password")
+    client.get.assert_not_awaited()
