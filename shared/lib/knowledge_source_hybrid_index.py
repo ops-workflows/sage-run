@@ -397,7 +397,14 @@ async def build_hybrid_index(
                 continue
             if len(body) > options.max_body_chars:
                 raise ConfluenceLimitError("Source body limit exceeded")
-            normalized = scrub_document(normalize_storage(body), scrub_rules)
+            try:
+                parsed = normalize_storage(body)
+            except Exception as exc:
+                # Name the page, but keep page content out of the stored error.
+                raise ConfluenceError(
+                    f"Normalization failed for page {page.page_id} ({exc.__class__.__name__})"
+                ) from exc
+            normalized = scrub_document(parsed, scrub_rules)
         total_chars += len(normalized.content)
         if total_chars > options.max_total_chars:
             raise ConfluenceLimitError("Source text limit exceeded")
