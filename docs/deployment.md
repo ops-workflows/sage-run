@@ -403,6 +403,9 @@ them unchanged. Full hot reload and bounded active-session drain remain open.
 
 Managed instances reject the legacy Sync/pin writers. Production Deploy now
 selects `main` or a `v`-prefixed tag; local uses the working tree.
+When the production deploy Job runs the target release, it still resolves
+workload image changes against the installed Helm `images.tag`, not the Job's
+own version.
 Platform upgrades and recovery remain CLI operations. There is no published
 `make deploy`/`make plan` wrapper in the workflow templates yet: use the commands
 above rather than assuming such targets exist.

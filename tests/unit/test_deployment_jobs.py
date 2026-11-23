@@ -374,7 +374,10 @@ def cluster_deploy(tmp_path, monkeypatch):
     }.items():
         monkeypatch.setattr(incluster.settings, key, value)
     current = {
-        "images": {"tag": "pinned"},
+        "images": {
+            "tag": "1.0.1",
+            "overrides": {"gateway": "ghcr.io/ops-workflows/sage-run-gateway:1.0.1@sha256:old101"},
+        },
         "workflowRepo": {"hostPath": "/srv/workflows", "ref": "main"},
         "deployer": {"enabled": True},
         "backups": {"enabled": True},
@@ -681,7 +684,10 @@ def test_api_plan_endpoint_and_job_manifest_handover_parameters(gateway, monkeyp
     assert status["target_version"] == "1.0.5"
 
 
-def test_deploy_in_cluster_upgrades_to_target_pinned_version_and_restores_on_failure(cluster_deploy, monkeypatch):
+@pytest.mark.parametrize("job_version", ["1.0.1", "2.0.0"], ids=["installed-version-job", "target-version-job"])
+def test_deploy_in_cluster_upgrades_to_target_pinned_version_and_restores_on_failure(
+    cluster_deploy, monkeypatch, capsys, job_version
+):
     from sqlalchemy.exc import SQLAlchemyError
 
     deployment = cluster_deploy
@@ -704,7 +710,7 @@ def test_deploy_in_cluster_upgrades_to_target_pinned_version_and_restores_on_fai
         )
 
     monkeypatch.setattr(incluster, "materialise", materialise_upgrade)
-    monkeypatch.setattr(incluster, "version", lambda pkg: "1.0.1")
+    monkeypatch.setattr(incluster, "version", lambda pkg: job_version)
 
     assert incluster.deploy_in_cluster("v2.0.0", expected_commit="candidate") == 0
     applied_values = deployment.helm.call_args.args[0]
@@ -712,6 +718,7 @@ def test_deploy_in_cluster_upgrades_to_target_pinned_version_and_restores_on_fai
     assert applied_values["images"]["overrides"] == {
         "gateway": "ghcr.io/ops-workflows/sage-run-gateway:2.0.0@sha256:target200"
     }
+    assert "platform images updated to 2.0.0" in capsys.readouterr().out
 
     # Now verify recovery restores previous checkout and previous platform images on activation failure
     deployment.helm.reset_mock()

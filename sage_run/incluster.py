@@ -276,15 +276,20 @@ def _compose_candidate_values(
 ) -> dict:
     instance = Instance(tree, namespace, sandbox_profile="", local=not remote, environment=environment)
     changes = render_values(instance, config)
+    current_images = current.get("images") or {}
+    # A remote deploy Job may already be running the target version.
+    installed_version = str(current_images.get("tag") or running_version) if remote else running_version
+    validate_upgrade_path(installed_version, target_version)
     changes["images"] = resolve_target_images(
-        current.get("images") or {},
-        current_version=running_version,
+        current_images,
+        current_version=installed_version,
         target_version=target_version,
         tree=tree,
     )
     changes["workflowRepo"] = {**current.get("workflowRepo", {}), "ref": ref if remote else ""}
     changes["ingress"] = current.get("ingress", {"enabled": False})
     values = merge_values(current, changes)
+    values["images"] = changes["images"]
     # Explicit enable maps must replace old maps, otherwise removed MCPs survive a recursive merge.
     for key in ("mcps", "connectors", "workflowMcps", "env", "serviceEnv", "hostAliases", "configChecksums"):
         values[key] = changes[key]
@@ -602,7 +607,7 @@ def deploy_in_cluster(ref: str, *, expected_commit: str | None = None) -> int:
             _phase("failed; previous checkout and Helm values restored", commit=commit, target_version=target_version)
             raise
         _phase("complete", commit=commit, target_version=target_version)
-        if target_version != running_version:
+        if values["images"] != (current.get("images") or {}):
             print(f"Deployed {commit[:12]} ({ref}); platform images updated to {target_version}", flush=True)
         else:
             print(f"Deployed {commit[:12]} ({ref}); platform images unchanged", flush=True)
