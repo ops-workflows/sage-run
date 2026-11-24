@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import logging
 import os
 import re
 import sys
+import time
+from threading import Lock
 from typing import Annotated, Any, Literal
 
 import httpx
@@ -15,13 +18,7 @@ from fastmcp.dependencies import CurrentHeaders
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
-from mcps.common import (
-    PolicyReloadMiddleware,
-    bootstrap_platform_env,
-    extract_bearer_token,
-    require_header,
-    validate_base_url,
-)
+from mcps.common import PolicyReloadMiddleware, bootstrap_platform_env, require_header
 from shared.lib.platform_secrets import load_mcp_server_config
 
 bootstrap_platform_env()
@@ -48,15 +45,21 @@ def _string_map(raw: dict[str, Any], key: str) -> dict[str, str]:
     return {str(name): str(fields) for name, fields in mapping.items()}
 
 
-# Object policy is instance-specific and loaded from platform config
-# (mcps.config.salesforce). The public server ships no hardcoded org policy.
+# Org URL and object policy come from mcps.config.salesforce.
 def _reload_policy() -> None:
-    global API_VERSION, MAX_QUERY_LIMIT, MAX_QUERY_FIELDS
+    global INSTANCE_URL, API_VERSION, MAX_QUERY_LIMIT, MAX_QUERY_FIELDS
     global ALLOWED_OBJECTS, ALLOWED_TOOLING_OBJECTS, FILTER_REQUIRED_OBJECTS, OBJECT_FIELDS, TOOLING_OBJECT_FIELDS
     policy = load_mcp_server_config(
         os.environ.get("PLATFORM_CONFIG_FILE", "/app/platform-config.yaml"), "salesforce", strict=True
     )
+    instance_url = str(policy.get("instance_url") or "").strip()
+    if instance_url:
+        url = httpx.URL(instance_url)
+        if url.scheme != "https" or not url.host or url.userinfo or url.path != "/" or url.query or url.fragment:
+            raise ValueError("mcps.config.salesforce.instance_url must be an HTTPS My Domain origin")
+        instance_url = str(url).rstrip("/")
     values = (
+        instance_url,
         str(policy.get("api_version") or DEFAULT_API_VERSION),
         int(policy.get("max_query_limit") or DEFAULT_MAX_QUERY_LIMIT),
         int(policy.get("max_query_fields") or DEFAULT_MAX_QUERY_FIELDS),
@@ -67,6 +70,7 @@ def _reload_policy() -> None:
         _string_map(policy, "tooling_object_fields"),
     )
     (
+        INSTANCE_URL,
         API_VERSION,
         MAX_QUERY_LIMIT,
         MAX_QUERY_FIELDS,
@@ -237,54 +241,86 @@ class SortSpec(BaseModel):
 
 
 mcp = FastMCP("Salesforce MCP Server")
+_token_cache: dict[bytes, tuple[str, float]] = {}
+_token_lock = Lock()
+
+
+def _exchange_token(client: httpx.Client, instance_url: str, client_id: str, client_secret: str) -> tuple[str, float]:
+    try:
+        response = client.post(
+            f"{instance_url}/services/oauth2/token",
+            data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret},
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise ValueError(f"Salesforce OAuth token exchange failed (HTTP {exc.response.status_code})") from None
+    except httpx.RequestError:
+        raise ValueError("Salesforce OAuth token endpoint could not be reached") from None
+
+    try:
+        payload = response.json()
+        token = payload.get("access_token") if isinstance(payload, dict) else None
+        if not isinstance(token, str) or not re.fullmatch(r"[!-~]+", token):
+            raise ValueError("Missing or invalid access token")
+        # Salesforce can omit expires_in; a rejected session then triggers renewal.
+        expires_in = payload.get("expires_in")
+        expires_at = time.monotonic() + int(expires_in) if expires_in is not None else float("inf")
+    except (ValueError, TypeError, OverflowError):
+        raise ValueError("Salesforce OAuth token endpoint returned an invalid token response") from None
+    return token, expires_at
 
 
 def _sf_request(
-    method: str,
     endpoint: str,
-    token: str,
     *,
+    headers: dict[str, str],
     api_prefix: str = "",
     **kwargs: Any,
 ) -> dict[str, Any]:
-    if not token:
-        return {"error": "Authorization header required"}
-
+    instance_url = INSTANCE_URL
+    if not instance_url:
+        return {"error": "mcps.config.salesforce.instance_url is not configured"}
     try:
-        instance_url = validate_base_url(
-            require_header(
-                headers=kwargs.pop("headers"),
-                header_name="x-salesforce-instance-url",
-                description="Salesforce instance URL",
-            ),
-            header_name="x-salesforce-instance-url",
-        )
+        client_id = require_header(headers, "x-salesforce-client-id", "Salesforce client ID")
+        client_secret = require_header(headers, "x-salesforce-client-secret", "Salesforce client secret")
     except ValueError as exc:
         return {"error": str(exc)}
 
+    cache_key = hashlib.sha256(repr((instance_url, client_id, client_secret)).encode()).digest()
     url = f"{instance_url}/services/data/{API_VERSION}{api_prefix}{endpoint}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
     try:
-        with httpx.Client(timeout=30.0, headers=headers) as client:
-            if method == "POST":
-                response = client.post(url, json=kwargs.get("json"))
-            else:
-                response = client.get(url, params=kwargs.get("params", {}))
+        with httpx.Client(timeout=30.0) as client:
+            for _ in range(2):
+                with _token_lock:
+                    entry = _token_cache.get(cache_key)
+                if entry is None or entry[1] <= time.monotonic():
+                    try:
+                        entry = _exchange_token(client, instance_url, client_id, client_secret)
+                    except ValueError as exc:
+                        logger.warning("%s", exc)
+                        return {"error": str(exc)}
+                    with _token_lock:
+                        if len(_token_cache) >= 32:
+                            _token_cache.pop(next(iter(_token_cache)))
+                        _token_cache[cache_key] = entry
+
+                response = client.get(url, params=kwargs.get("params"), headers={"Authorization": f"Bearer {entry[0]}"})
+                if response.status_code != 401:
+                    break
+                with _token_lock:
+                    if _token_cache.get(cache_key) is entry:
+                        _token_cache.pop(cache_key)
             response.raise_for_status()
             return response.json()
     except httpx.HTTPStatusError as exc:
-        logger.error("Salesforce request failed: %s %s — %s", method, url, exc)
+        logger.error("Salesforce request failed: GET %s — %s", url, exc)
         return _format_salesforce_http_error(
             exc,
             object_type=kwargs.get("object_type"),
             soql=kwargs.get("soql"),
         )
     except httpx.HTTPError as exc:
-        logger.error("Salesforce request failed: %s %s — %s", method, url, exc)
+        logger.error("Salesforce request failed: GET %s — %s", url, exc)
         return {"error": str(exc)}
 
 
@@ -508,9 +544,7 @@ def _describe_live_object_capability(object_api_name: str, headers: dict[str, st
         }
 
     result = _sf_request(
-        "GET",
         f"/sobjects/{object_api_name}/describe",
-        extract_bearer_token(headers),
         headers=headers,
         object_type=object_api_name,
     )
@@ -538,9 +572,7 @@ def _describe_live_object_capability(object_api_name: str, headers: dict[str, st
 
 def _describe_live_object(object_api_name: str, headers: dict[str, str]) -> dict[str, Any]:
     return _sf_request(
-        "GET",
         f"/sobjects/{object_api_name}/describe",
-        extract_bearer_token(headers),
         headers=headers,
         object_type=object_api_name,
     )
@@ -888,14 +920,14 @@ def get_record(
 
     soql = f"SELECT {fields} FROM {object_type} WHERE Id = '{valid_id}' LIMIT 1"
     result = _sf_request(
-        "GET",
         "/query",
-        extract_bearer_token(headers),
         headers=headers,
         params={"q": soql},
         object_type=object_type,
         soql=soql,
     )
+    if result.get("error"):
+        return result
     records = result.get("records", [])
     if not records:
         return {"record": None, "error": f"No {object_type} found with ID {valid_id}"}
@@ -916,7 +948,7 @@ def get_case_comments(
         "SELECT Id, CommentBody, CreatedDate, CreatedBy.Name, IsPublished "
         f"FROM CaseComment WHERE ParentId = '{valid_id}' ORDER BY CreatedDate DESC LIMIT 50"
     )
-    return _sf_request("GET", "/query", extract_bearer_token(headers), headers=headers, params={"q": soql})
+    return _sf_request("/query", headers=headers, params={"q": soql})
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
@@ -991,9 +1023,7 @@ def query_records(
 
     soql += f" LIMIT {safe_limit}"
     return _sf_request(
-        "GET",
         "/query",
-        extract_bearer_token(headers),
         headers=headers,
         params={"q": soql},
         object_type=object_type,
@@ -1029,9 +1059,7 @@ def find_record(
     comparator = "LIKE" if "%" in search_value else "="
     soql = f"SELECT {base_fields} FROM {object_type} WHERE {search_field} {comparator} '{escaped_value}' LIMIT 10"
     return _sf_request(
-        "GET",
         "/query",
-        extract_bearer_token(headers),
         headers=headers,
         params={"q": soql},
         object_type=object_type,
@@ -1109,9 +1137,7 @@ def query_tooling_records(
 
     soql += f" LIMIT {safe_limit}"
     return _sf_request(
-        "GET",
         "/query",
-        extract_bearer_token(headers),
         api_prefix="/tooling",
         headers=headers,
         params={"q": soql},

@@ -194,10 +194,10 @@ allow-list entries here only for cases that must bypass the automatic deny.
   "mcpServers": {
     "salesforce": {
       "type": "http",
-      "url": "http://mcp-salesforce:8100/mcp",
+      "url": "http://mcp-salesforce:8102/mcp",
       "headers": {
-        "Authorization": "Bearer ${SALESFORCE_TOKEN}",
-        "X-Salesforce-Instance-Url": "${SALESFORCE_INSTANCE_URL}"
+        "X-Salesforce-Client-Id": "${SALESFORCE_CLIENT_ID}",
+        "X-Salesforce-Client-Secret": "${SALESFORCE_CLIENT_SECRET}"
       }
     }
   }

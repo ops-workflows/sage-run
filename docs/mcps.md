@@ -55,11 +55,11 @@ mcps:
       # ...per-server policy, see below
 ```
 
-Every server is an HTTP MCP endpoint; auth and instance context (Salesforce
-instance URL, Splunk base URL, AWS region, ...) travel as request headers set
-in the workflow's `.mcp.json`, expanded from `${VAR}` at bundle/runtime time —
-not from `mcps.config`. `mcps.config.<server_id>` in `platform-config.yaml`
-is for **policy**, not per-request credentials.
+Every server is an HTTP MCP endpoint. Per-request credentials and context
+(Splunk base URL, AWS region, ...) travel as headers set in the workflow's
+`.mcp.json`, expanded from `${VAR}` at bundle/runtime time.
+`mcps.config.<server_id>` in `platform-config.yaml` is for server-wide settings
+and policy, not per-request credentials.
 
 ## Core servers (`mcps/core/`)
 
@@ -184,6 +184,7 @@ Read-only. Config lives under `mcps.config.salesforce`:
 
 | Field | Default | Purpose |
 | --- | --- | --- |
+| `instance_url` | unset | Required HTTPS Salesforce My Domain origin for OAuth and API requests, e.g. `https://<my-domain>.my.salesforce.com`. |
 | `api_version` | `v60.0` | Salesforce REST API version. |
 | `max_query_limit` | `200` | Max records any query tool can return. |
 | `max_query_fields` | `10` | Max fields any query tool can request. |
@@ -193,8 +194,12 @@ Read-only. Config lives under `mcps.config.salesforce`:
 | `object_fields` | `{}` | Default field list per object, used when a tool call omits `fields`. |
 | `tooling_object_fields` | `{}` | Default field list per tooling object. |
 
-Auth/context travels via `Authorization: Bearer <token>` and
-`x-salesforce-instance-url` headers, not `mcps.config`.
+Send the Salesforce External Client App consumer key and secret as
+`X-Salesforce-Client-Id` and `X-Salesforce-Client-Secret`. Enable the OAuth
+client credentials flow and assign a least-privilege integration user with
+API access. The MCP obtains an access token on the first tool call that
+needs Salesforce, caches it per credential pair, and obtains a new one
+on expiry or retries once if Salesforce rejects it with HTTP 401.
 
 | Tool | Purpose |
 | --- | --- |
