@@ -285,10 +285,11 @@ gateway secret. Mattermost receives it only inside the approval button context
 and returns it to the approval callback. It is not a Mattermost token and is
 not used for WebSocket authentication.
 
-For `AskUserQuestion`, the runtime asks the gateway to post the prompt. When a
-provider inbound message arrives in the same provider/thread, gateway ingress
-persists a `user_question_reply` session event. The runtime polls the Gateway
-reply API for that event; it never polls Mattermost or Slack threads directly.
+For `AskUserQuestion`, the runtime asks the gateway to post the prompt. If the
+task doesn't already have a thread, the gateway saves the new thread ID on the
+task. Gateway ingress persists a `user_question_reply` session event for human
+replies in that thread on the configured provider, regardless of task origin.
+The runtime polls the Gateway reply API, not Mattermost or Slack threads.
 
 ### Human-wait deadlines (unreleased source)
 

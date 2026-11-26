@@ -146,6 +146,7 @@ async def async_engine(database_dsn: str):
         "gateway.message",
         "gateway.api",
         "gateway.event_collector",
+        "gateway.message_ingress",
         "shared.lib.config_reload",
     ):
         mod = sys.modules.get(modname)

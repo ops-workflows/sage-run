@@ -7,6 +7,7 @@ in-process without spawning a network server.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -179,6 +180,72 @@ async def test_message_reply_endpoint_returns_websocket_ingested_reply(
 
     assert response.status_code == 200
     assert response.json() == {"message": "the answer", "user_id": "user-1", "username": "alice"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("channel", "existing_thread"), [("gcp-pubsub", None), ("mattermost", "existing-thread")])
+async def test_mattermost_question_reply_reaches_task(
+    async_engine, fixture_workflows_dir: Path, db_session, monkeypatch, channel, existing_thread
+) -> None:
+    from gateway.message_ingress import GatewayMessageIngress
+    from shared.lib import message_bus
+    from shared.lib.config import settings
+    from shared.lib.message_ingress import InboundMessage
+    from shared.lib.models import Task
+
+    task = Task(
+        id=uuid.uuid4(),
+        workflow="platform-test",
+        prompt="Investigate alert",
+        status="waiting_user_input",
+        channel=channel,
+        message_channel="platform-test-channel",
+        message_thread=existing_thread,
+    )
+    db_session.add(task)
+    await db_session.commit()
+
+    async def create_post(_client, *, root_id, **_kwargs):
+        assert root_id == (existing_thread or "")
+        return {"id": "question-post"}
+
+    monkeypatch.setattr(message_bus, "create_post", create_post)
+    monkeypatch.setattr(settings.message_bus, "provider", "mattermost")
+    monkeypatch.setattr(settings.message_bus, "bot_token", "test-token")
+
+    task_path = f"/api/tasks/{task.id}"
+    async with await _make_client(fixture_workflows_dir) as client:
+        posted = await client.post(f"{task_path}/message", json={"text": "Question?"})
+        assert posted.status_code == 200
+        reply = InboundMessage(
+            provider="mattermost",
+            message_id="answer-post",
+            thread_id=existing_thread or "question-post",
+            channel_id="channel-1",
+            channel_name="platform-test-channel",
+            team_id="team-1",
+            team_name="team",
+            user_id="user-1",
+            username="alice",
+            text="the answer",
+        )
+        ingress = GatewayMessageIngress()
+        try:
+            await ingress.handle_event(replace(reply, thread_id="another-thread"))
+            await ingress.handle_event(replace(reply, provider="slack"))
+            assert (await client.get(f"{task_path}/message-reply")).json() is None
+            await ingress.handle_event(reply)
+        finally:
+            await ingress.stop()
+
+        assert (await client.get(f"{task_path}/message-reply")).json() == {
+            "message": "the answer",
+            "user_id": "user-1",
+            "username": "alice",
+        }
+        stored = (await client.get(task_path)).json()
+        assert stored["message_thread"] == reply.thread_id
+        assert stored["channel"] == channel
 
 
 @pytest.mark.asyncio
