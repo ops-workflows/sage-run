@@ -1687,36 +1687,40 @@ async def get_message_reply(task_id: str, after_ms: int = 0):
 @router.post("/tasks/{task_id}/message", response_model=TaskMessageResponse)
 async def post_task_message(task_id: str, body: TaskMessageRequest):
     """Post a runtime message through the gateway-owned configured provider."""
-    async with async_session_factory() as session:
-        task = await session.get(Task, uuid.UUID(task_id))
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+    async with async_session_factory.begin() as session:
+        task = await session.get(Task, uuid.UUID(task_id), with_for_update=True)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
 
-    metadata = task.task_metadata if isinstance(task.task_metadata, dict) else {}
-    thread_id = task.message_thread or ""
+        metadata = task.task_metadata if isinstance(task.task_metadata, dict) else {}
+        thread_id = task.message_thread or ""
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
 
-        async def client_factory() -> httpx.AsyncClient:
-            return client
+            async def client_factory() -> httpx.AsyncClient:
+                return client
 
-        message_bus = build_message_bus(
-            provider=settings.message_bus.provider,
-            client_factory=client_factory,
-            api_url=settings.message_bus.api_url,
-            bot_token=settings.message_bus.bot_token,
-            channel_id=str(metadata.get("channel_id") or ""),
-            channel_name=task.message_channel or "",
-            team_id=str(metadata.get("team_id") or ""),
-            team_name=str(metadata.get("team_domain") or metadata.get("team_name") or settings.message_bus.team_name),
-            get_thread_id=lambda: thread_id,
-            set_thread_id=lambda _thread_id: None,
-        )
-        posted = await message_bus.post_to_thread(body.text)
+            message_bus = build_message_bus(
+                provider=settings.message_bus.provider,
+                client_factory=client_factory,
+                api_url=settings.message_bus.api_url,
+                bot_token=settings.message_bus.bot_token,
+                channel_id=str(metadata.get("channel_id") or ""),
+                channel_name=task.message_channel or "",
+                team_id=str(metadata.get("team_id") or ""),
+                team_name=str(
+                    metadata.get("team_domain") or metadata.get("team_name") or settings.message_bus.team_name
+                ),
+                get_thread_id=lambda: thread_id,
+                set_thread_id=lambda _thread_id: None,
+            )
+            posted = await message_bus.post_to_thread(body.text)
 
-    if posted is None:
-        detail = getattr(message_bus, "last_error", "") or "Message provider did not return a post"
-        raise HTTPException(status_code=503, detail=detail)
+        if posted is None or not posted.thread_id:
+            detail = getattr(message_bus, "last_error", "") or "Message provider did not return a thread"
+            raise HTTPException(status_code=503, detail=detail)
+        if not thread_id:
+            task.message_thread = posted.thread_id
     return TaskMessageResponse(post_id=posted.id, thread_id=posted.thread_id)
 
 

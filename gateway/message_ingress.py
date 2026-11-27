@@ -468,12 +468,14 @@ class GatewayMessageIngress:
         return "\n".join(rendered), len(normalized_messages)
 
     async def _record_question_reply(self, message: InboundMessage) -> bool:
+        if message.provider != settings.message_bus.provider or not message.thread_id:
+            return False
+
         async with async_session_factory() as session:
             task = await session.scalar(
                 select(Task)
                 .where(
                     Task.status == "waiting_user_input",
-                    Task.channel == message.provider,
                     Task.message_thread == message.thread_id,
                 )
                 .with_for_update()
